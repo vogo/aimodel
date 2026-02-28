@@ -27,24 +27,25 @@ import (
 )
 
 func main() {
-	client, err := aimodel.NewClient()
+	client, err := aimodel.NewClient(
+		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
+		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	model := os.Getenv("AI_MODEL")
+	model := os.Getenv("ANTHROPIC_MODEL")
 	if model == "" {
-		model = aimodel.ModelOpenaiGPT4o
+		model = aimodel.ModelAnthropicClaude4Sonnet
 	}
 
-	req := &aimodel.ChatRequest{
+	resp, err := client.AnthropicChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Model: model,
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
 		},
-	}
-
-	resp, err := client.ChatCompletion(context.Background(), req)
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

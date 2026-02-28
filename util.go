@@ -15,54 +15,16 @@
  * limitations under the License.
  */
 
-package main
+package aimodel
 
-import (
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"os"
+import "os"
 
-	"github.com/vogo/aimodel"
-)
-
-func main() {
-	client, err := aimodel.NewClient()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	model := os.Getenv("AI_MODEL")
-	if model == "" {
-		model = aimodel.ModelOpenaiGPT4o
-	}
-
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Model: model,
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() { _ = stream.Close() }()
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if len(chunk.Choices) > 0 {
-			fmt.Print(chunk.Choices[0].Delta.Content.Text())
+func GetEnv(key ...string) string {
+	for _, k := range key {
+		if value := os.Getenv(k); value != "" {
+			return value
 		}
 	}
 
-	fmt.Println()
+	return ""
 }

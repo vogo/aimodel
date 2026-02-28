@@ -18,11 +18,7 @@
 package aimodel
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -35,24 +31,8 @@ const maxStreamLineSize = 1 << 20
 type Stream struct {
 	mu     sync.Mutex
 	reader io.ReadCloser
-	scan   *bufio.Scanner
+	recv   func() (*StreamChunk, error)
 	closed atomic.Bool
-}
-
-func newStream(body io.ReadCloser) *Stream {
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineSize)
-
-	return &Stream{
-		reader: body,
-		scan:   sc,
-	}
-}
-
-// streamChunkOrError combines StreamChunk and Error for single-pass unmarshal.
-type streamChunkOrError struct {
-	StreamChunk
-	Error *Error `json:"error,omitempty"`
 }
 
 // Recv reads the next chunk from the stream.
@@ -69,46 +49,7 @@ func (s *Stream) Recv() (*StreamChunk, error) {
 		return nil, ErrStreamClosed
 	}
 
-	for s.scan.Scan() {
-		line := s.scan.Text()
-
-		// Skip empty lines, SSE comments, and non-data lines.
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		data := strings.TrimPrefix(line, "data: ")
-
-		if data == "[DONE]" {
-			return nil, io.EOF
-		}
-
-		var parsed streamChunkOrError
-		if err := json.Unmarshal([]byte(data), &parsed); err != nil {
-			return nil, fmt.Errorf("aimodel: decode stream chunk: %w", err)
-		}
-
-		if parsed.Error != nil {
-			return nil, &APIError{
-				Code:    parsed.Error.Code,
-				Message: parsed.Error.Message,
-				Type:    parsed.Error.Type,
-			}
-		}
-
-		chunk := parsed.StreamChunk
-		return &chunk, nil
-	}
-
-	if err := s.scan.Err(); err != nil {
-		return nil, err
-	}
-
-	return nil, io.EOF
+	return s.recv()
 }
 
 // Close closes the stream and releases resources.

@@ -18,6 +18,7 @@
 package aimodel
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -199,11 +200,36 @@ func TestNewClientNoAPIKeyError(t *testing.T) {
 	}
 }
 
-func TestNewClientNoBaseURLError(t *testing.T) {
+func TestNewClientNoBaseURLAllowed(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "")
 	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
 
-	_, err := NewClient(WithAPIKey("sk-test"))
+	// NewClient no longer requires baseURL (Anthropic models use a default).
+	c, err := NewClient(WithAPIKey("sk-test"))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if c.baseURL != "" {
+		t.Errorf("baseURL = %q, want empty", c.baseURL)
+	}
+}
+
+func TestNoBaseURLErrorAtRequestTime(t *testing.T) {
+	t.Setenv("AI_BASE_URL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	c, err := NewClient(WithAPIKey("sk-test"))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// OpenAI model without baseURL should fail at request time.
+	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	})
 	if !errors.Is(err, ErrNoBaseURL) {
 		t.Errorf("err = %v, want ErrNoBaseURL", err)
 	}

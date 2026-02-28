@@ -19,7 +19,6 @@ package aimodel
 
 import (
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -72,24 +71,19 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // NewClient creates a new Client with the given options.
-// If no API key is provided, it falls back to the OPENAI_API_KEY environment variable.
-// If no base URL is provided, it falls back to the OPENAI_BASE_URL environment variable,
-// then to the default OpenAI API URL.
+// If no API key is provided, it falls back to OPENAI_API_KEY then ANTHROPIC_API_KEY.
+// If no base URL is provided, it falls back to OPENAI_BASE_URL then ANTHROPIC_BASE_URL.
+// For Anthropic models (claude-*), baseURL defaults to https://api.anthropic.com at request time.
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
 		timeout: defaultTimeout,
 	}
 
-	// Apply env defaults first (AI_ preferred, OPENAI_ as fallback).
-	if key := os.Getenv("AI_API_KEY"); key != "" {
-		c.apiKey = key
-	} else if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+	if key := GetEnv("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"); key != "" {
 		c.apiKey = key
 	}
 
-	if base := os.Getenv("AI_BASE_URL"); base != "" {
-		c.baseURL = strings.TrimRight(base, "/")
-	} else if base := os.Getenv("OPENAI_BASE_URL"); base != "" {
+	if base := GetEnv("AI_BASE_URL", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"); base != "" {
 		c.baseURL = strings.TrimRight(base, "/")
 	}
 
@@ -100,10 +94,6 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	if c.apiKey == "" {
 		return nil, ErrNoAPIKey
-	}
-
-	if c.baseURL == "" {
-		return nil, ErrNoBaseURL
 	}
 
 	// Apply timeout to the HTTP client at the end, ensuring correct ordering.

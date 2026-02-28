@@ -18,11 +18,9 @@
 package aimodel
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 )
 
@@ -82,55 +80,4 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*S
 	}
 
 	return newStream(resp.Body), nil
-}
-
-func (c *Client) doRequest(ctx context.Context, req *ChatRequest) (*http.Response, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("aimodel: marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("aimodel: create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("aimodel: send request: %w", err)
-	}
-
-	return resp, nil
-}
-
-func (c *Client) parseErrorResponse(resp *http.Response) error {
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-	if err != nil {
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    "failed to read error response",
-			Err:        err,
-		}
-	}
-
-	var errResp struct {
-		Error *Error `json:"error"`
-	}
-
-	if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == nil {
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    string(body),
-		}
-	}
-
-	return &APIError{
-		StatusCode: resp.StatusCode,
-		Code:       errResp.Error.Code,
-		Message:    errResp.Error.Message,
-		Type:       errResp.Error.Type,
-	}
 }

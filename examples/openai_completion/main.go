@@ -15,34 +15,46 @@
  * limitations under the License.
  */
 
-package aimodel
+package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"log"
+	"os"
+
+	"github.com/vogo/aimodel"
 )
 
-// Sentinel errors for common failure conditions.
-var (
-	ErrNoAPIKey      = errors.New("aimodel: API key is required")
-	ErrNoBaseURL     = errors.New("aimodel: base URL is required")
-	ErrStreamClosed  = errors.New("aimodel: stream is closed")
-	ErrEmptyResponse = errors.New("aimodel: empty response from API")
-)
+func main() {
+	client, err := aimodel.NewClient(
+		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
+		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-// APIError represents an error returned by an AI API.
-type APIError struct {
-	StatusCode int
-	Code       string
-	Message    string
-	Type       string
-	Err        error
-}
+	model := os.Getenv("OPENAI_MODEL")
+	if model == "" {
+		model = aimodel.ModelOpenaiGPT4o
+	}
 
-func (e *APIError) Error() string {
-	return fmt.Sprintf("aimodel: API error (status %d): %s - %s", e.StatusCode, e.Code, e.Message)
-}
+	req := &aimodel.ChatRequest{
+		Model: model,
+		Messages: []aimodel.Message{
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+		},
+	}
 
-func (e *APIError) Unwrap() error {
-	return e.Err
+	resp, err := client.ChatCompletion(context.Background(), req)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(resp.Choices) == 0 {
+		log.Fatal("no choices in response")
+	}
+
+	fmt.Println(resp.Choices[0].Message.Content.Text())
 }
