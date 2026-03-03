@@ -20,14 +20,16 @@ package aimodel
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Sentinel errors for common failure conditions.
 var (
-	ErrNoAPIKey      = errors.New("aimodel: API key is required")
-	ErrNoBaseURL     = errors.New("aimodel: base URL is required")
-	ErrStreamClosed  = errors.New("aimodel: stream is closed")
-	ErrEmptyResponse = errors.New("aimodel: empty response from API")
+	ErrNoAPIKey       = errors.New("aimodel: API key is required")
+	ErrNoBaseURL      = errors.New("aimodel: base URL is required")
+	ErrStreamClosed   = errors.New("aimodel: stream is closed")
+	ErrEmptyResponse  = errors.New("aimodel: empty response from API")
+	ErrNoActiveModels = errors.New("aimodel: no active models available")
 )
 
 // APIError represents an error returned by an AI API.
@@ -45,4 +47,58 @@ func (e *APIError) Error() string {
 
 func (e *APIError) Unwrap() error {
 	return e.Err
+}
+
+// ModelError associates an error with a specific model name.
+type ModelError struct {
+	Model string
+	Err   error
+}
+
+func (e *ModelError) Error() string {
+	return fmt.Sprintf("aimodel: model %s: %v", e.Model, e.Err)
+}
+
+func (e *ModelError) Unwrap() error {
+	return e.Err
+}
+
+// MultiError collects errors from multiple model attempts.
+type MultiError struct {
+	Errors []ModelError
+}
+
+func (e *MultiError) Error() string {
+	if len(e.Errors) == 0 {
+		return ErrNoActiveModels.Error()
+	}
+
+	var b strings.Builder
+
+	b.WriteString("aimodel: all models failed: ")
+
+	for i, me := range e.Errors {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+
+		fmt.Fprintf(&b, "%s: %v", me.Model, me.Err)
+	}
+
+	return b.String()
+}
+
+// Unwrap returns all wrapped errors for Go 1.20+ multi-error unwrapping.
+// This allows errors.Is and errors.As to match any model's error.
+func (e *MultiError) Unwrap() []error {
+	if len(e.Errors) == 0 {
+		return []error{ErrNoActiveModels}
+	}
+
+	errs := make([]error, len(e.Errors))
+	for i := range e.Errors {
+		errs[i] = &e.Errors[i]
+	}
+
+	return errs
 }

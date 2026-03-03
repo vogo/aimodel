@@ -29,6 +29,7 @@ const defaultTimeout = 60 * time.Second
 type Client struct {
 	apiKey     string
 	baseURL    string
+	model      string
 	timeout    time.Duration
 	httpClient *http.Client
 }
@@ -40,6 +41,14 @@ type Option func(*Client)
 func WithAPIKey(key string) Option {
 	return func(c *Client) {
 		c.apiKey = key
+	}
+}
+
+// WithDefaultModel sets the default model name.
+// If a ChatRequest has an empty Model field, this default is used.
+func WithDefaultModel(model string) Option {
+	return func(c *Client) {
+		c.model = model
 	}
 }
 
@@ -77,6 +86,10 @@ func WithTimeout(d time.Duration) Option {
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
 		timeout: defaultTimeout,
+	}
+
+	if model := GetEnv("AI_MODEL"); model != "" {
+		c.model = model
 	}
 
 	if key := GetEnv("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"); key != "" {

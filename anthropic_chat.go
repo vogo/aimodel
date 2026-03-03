@@ -31,6 +31,8 @@ func (c *Client) AnthropicChatCompletion(ctx context.Context, req *ChatRequest) 
 	r := *req
 	r.Stream = false
 
+	c.applyDefaultModel(&r)
+
 	ar, err := toAnthropicRequest(&r)
 	if err != nil {
 		return nil, err
@@ -75,6 +77,8 @@ func (c *Client) AnthropicChatCompletion(ctx context.Context, req *ChatRequest) 
 func (c *Client) AnthropicChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
 	r := *req
 	r.Stream = true
+
+	c.applyDefaultModel(&r)
 
 	ar, err := toAnthropicRequest(&r)
 	if err != nil {

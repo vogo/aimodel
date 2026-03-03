@@ -15,40 +15,39 @@
  * limitations under the License.
  */
 
-package main
+package composehelper
 
 import (
-	"context"
-	"fmt"
-	"log"
-
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	client, err := aimodel.NewClient(
+func BuildComposeClient() ([]*aimodel.Client, error) {
+	openaiClient, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
 	)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	req := &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
-		},
-	}
-
-	resp, err := client.ChatCompletion(context.Background(), req)
+	anthropicClient, err := aimodel.NewClient(
+		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
+		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
+		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
+	)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	if len(resp.Choices) == 0 {
-		log.Fatal("no choices in response")
+	deepseekClient, err := aimodel.NewClient(
+		aimodel.WithAPIKey(aimodel.GetEnv("DEEPSEEK_API_KEY")),
+		aimodel.WithBaseURL(aimodel.GetEnv("DEEPSEEK_BASE_URL")),
+		aimodel.WithDefaultModel(aimodel.GetEnv("DEEPSEEK_MODEL")),
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	fmt.Println(resp.Choices[0].Message.Content.Text())
+	return []*aimodel.Client{openaiClient, anthropicClient, deepseekClient}, nil
 }

@@ -27,10 +27,19 @@ import (
 // maxErrorBodySize limits the error response body read to 1 MB.
 const maxErrorBodySize = 1 << 20
 
+// applyDefaultModel sets the request model to the client default if empty.
+func (c *Client) applyDefaultModel(r *ChatRequest) {
+	if r.Model == "" {
+		r.Model = c.model
+	}
+}
+
 // ChatCompletion sends a non-streaming chat completion request.
 func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	r := *req
 	r.Stream = false
+
+	c.applyDefaultModel(&r)
 
 	resp, err := c.doRequest(ctx, &r)
 	if err != nil {
@@ -68,6 +77,8 @@ func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatRes
 func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
 	r := *req
 	r.Stream = true
+
+	c.applyDefaultModel(&r)
 
 	resp, err := c.doRequest(ctx, &r)
 	if err != nil {

@@ -15,33 +15,45 @@
  * limitations under the License.
  */
 
+// compose_failover demonstrates using ComposeClient with failover strategy.
+// The primary model is tried first; if it fails, the secondary is used.
+//
+// Environment variables:
+//
+//	PRIMARY_API_KEY, PRIMARY_BASE_URL, PRIMARY_MODEL   - primary backend
+//	SECONDARY_API_KEY, SECONDARY_BASE_URL, SECONDARY_MODEL - fallback backend
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/examples/composehelper"
 )
 
 func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
-	)
+	clients, err := composehelper.BuildComposeClient()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
+		{Client: clients[0]},
+		{Client: clients[1]},
+		{Client: clients[2]},
+	}, composes.WithRecoveryInterval(30*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	req := &aimodel.ChatRequest{
+	resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
 		},
-	}
-
-	resp, err := client.ChatCompletion(context.Background(), req)
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -50,5 +62,5 @@ func main() {
 		log.Fatal("no choices in response")
 	}
 
-	fmt.Println(resp.Choices[0].Message.Content.Text())
+	fmt.Printf("[%s] %s\n", resp.Model, resp.Choices[0].Message.Content.Text())
 }

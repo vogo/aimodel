@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 
 	"github.com/vogo/aimodel"
 )
@@ -32,18 +31,13 @@ func main() {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
+		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	model := os.Getenv("ANTHROPIC_MODEL")
-	if model == "" {
-		model = aimodel.ModelAnthropicClaude4Sonnet
-	}
-
 	stream, err := client.AnthropicChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Model: model,
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
 		},

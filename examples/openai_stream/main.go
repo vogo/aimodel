@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 
 	"github.com/vogo/aimodel"
 )
@@ -32,18 +31,13 @@ func main() {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
+		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	model := os.Getenv("OPENAI_MODEL")
-	if model == "" {
-		model = aimodel.ModelOpenaiGPT4o
-	}
-
 	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Model: model,
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
 		},
