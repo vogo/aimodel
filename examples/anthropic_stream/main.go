@@ -32,12 +32,13 @@ func main() {
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
+		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	stream, err := client.AnthropicChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
 		},

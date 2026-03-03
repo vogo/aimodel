@@ -35,15 +35,14 @@ type ModelEntry struct {
 	// If empty, the underlying client's default model is used.
 	Name string
 	// Client is the underlying API client for this model.
-	Client aimodel.ChatClient
-	// Protocol selects the API protocol (default: aimodel.ProtocolOpenAI).
-	Protocol aimodel.Protocol
+	// Protocol routing is handled internally by each Client.
+	Client aimodel.ChatCompleter
 	// Weight is used by StrategyWeight. Zero is treated as 1.
 	Weight int
 }
 
 // ComposeClient dispatches chat requests across multiple model backends.
-// It implements aimodel.ChatClient and can be nested.
+// It implements aimodel.ChatCompleter and can be nested.
 type ComposeClient struct {
 	entries          []ModelEntry
 	health           []*modelHealth
@@ -99,42 +98,18 @@ func NewComposeClient(strategy Strategy, entries []ModelEntry, opts ...ComposeOp
 }
 
 // ChatCompletion sends a non-streaming request, routing via the configured strategy.
-// The entry's Protocol field determines whether OpenAI or Anthropic API is used.
+// Protocol routing is handled internally by each entry's Client.
 func (c *ComposeClient) ChatCompletion(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.ChatResponse, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatClient, r *aimodel.ChatRequest, proto aimodel.Protocol) (*aimodel.ChatResponse, error) {
-		if proto == aimodel.ProtocolAnthropic {
-			return client.AnthropicChatCompletion(ctx, r)
-		}
-
+	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *aimodel.ChatRequest) (*aimodel.ChatResponse, error) {
 		return client.ChatCompletion(ctx, r)
 	})
 }
 
 // ChatCompletionStream sends a streaming request, routing via the configured strategy.
-// The entry's Protocol field determines whether OpenAI or Anthropic API is used.
+// Protocol routing is handled internally by each entry's Client.
 func (c *ComposeClient) ChatCompletionStream(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.Stream, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatClient, r *aimodel.ChatRequest, proto aimodel.Protocol) (*aimodel.Stream, error) {
-		if proto == aimodel.ProtocolAnthropic {
-			return client.AnthropicChatCompletionStream(ctx, r)
-		}
-
+	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *aimodel.ChatRequest) (*aimodel.Stream, error) {
 		return client.ChatCompletionStream(ctx, r)
-	})
-}
-
-// AnthropicChatCompletion sends a non-streaming request using the Anthropic protocol,
-// regardless of the entry's Protocol field.
-func (c *ComposeClient) AnthropicChatCompletion(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.ChatResponse, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatClient, r *aimodel.ChatRequest, _ aimodel.Protocol) (*aimodel.ChatResponse, error) {
-		return client.AnthropicChatCompletion(ctx, r)
-	})
-}
-
-// AnthropicChatCompletionStream sends a streaming request using the Anthropic protocol,
-// regardless of the entry's Protocol field.
-func (c *ComposeClient) AnthropicChatCompletionStream(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.Stream, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatClient, r *aimodel.ChatRequest, _ aimodel.Protocol) (*aimodel.Stream, error) {
-		return client.AnthropicChatCompletionStream(ctx, r)
 	})
 }
 
@@ -143,7 +118,7 @@ func dispatchUnary[T any](
 	ctx context.Context,
 	c *ComposeClient,
 	req *aimodel.ChatRequest,
-	call func(context.Context, aimodel.ChatClient, *aimodel.ChatRequest, aimodel.Protocol) (T, error),
+	call func(context.Context, aimodel.ChatCompleter, *aimodel.ChatRequest) (T, error),
 ) (T, error) {
 	var zero T
 
@@ -173,7 +148,7 @@ func dispatchUnary[T any](
 			r.Model = entry.Name
 		}
 
-		result, err := call(ctx, entry.Client, &r, entry.Protocol)
+		result, err := call(ctx, entry.Client, &r)
 		if err != nil {
 			// Do not poison model health on context cancellation.
 			if ctx.Err() != nil {
@@ -224,5 +199,5 @@ func (c *ComposeClient) prependRecoveryProbes(candidates []int) []int {
 	return append(probes, candidates...)
 }
 
-// Compile-time check: ComposeClient implements aimodel.ChatClient.
-var _ aimodel.ChatClient = (*ComposeClient)(nil)
+// Compile-time check: ComposeClient implements aimodel.ChatCompleter.
+var _ aimodel.ChatCompleter = (*ComposeClient)(nil)

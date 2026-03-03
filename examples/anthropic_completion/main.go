@@ -30,12 +30,13 @@ func main() {
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
+		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	resp, err := client.AnthropicChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
 			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
 		},

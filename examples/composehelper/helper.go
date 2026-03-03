@@ -35,6 +35,7 @@ func BuildComposeClient() ([]*aimodel.Client, error) {
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
+		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
 		return nil, err

@@ -18,6 +18,7 @@
 package aimodel
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -26,10 +27,12 @@ import (
 const defaultTimeout = 60 * time.Second
 
 // Client is an AI API client compatible with OpenAI-style endpoints.
+// Set the protocol with WithProtocol to use vendor-specific APIs (e.g., Anthropic).
 type Client struct {
 	apiKey     string
 	baseURL    string
 	model      string
+	protocol   Protocol
 	timeout    time.Duration
 	httpClient *http.Client
 }
@@ -71,6 +74,14 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
+// WithProtocol sets the API protocol used by this client.
+// The default (zero value) uses the OpenAI-compatible protocol.
+func WithProtocol(p Protocol) Option {
+	return func(c *Client) {
+		c.protocol = p
+	}
+}
+
 // WithTimeout sets the HTTP client timeout.
 // The timeout is applied after all options, so it works regardless of option ordering.
 func WithTimeout(d time.Duration) Option {
@@ -107,6 +118,15 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	if c.apiKey == "" {
 		return nil, ErrNoAPIKey
+	}
+
+	switch c.protocol {
+	case "", ProtocolOpenAI:
+		c.protocol = ProtocolOpenAI
+	case ProtocolAnthropic:
+		// valid
+	default:
+		return nil, fmt.Errorf("aimodel: unsupported protocol %q", c.protocol)
 	}
 
 	// Apply timeout to the HTTP client at the end, ensuring correct ordering.

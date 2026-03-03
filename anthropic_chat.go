@@ -26,8 +26,8 @@ import (
 	"net/http"
 )
 
-// AnthropicChatCompletion sends a non-streaming request to the Anthropic Messages API.
-func (c *Client) AnthropicChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+// anthropicChatCompletion sends a non-streaming request to the Anthropic Messages API.
+func (c *Client) anthropicChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	r := *req
 	r.Stream = false
 
@@ -73,8 +73,8 @@ func (c *Client) AnthropicChatCompletion(ctx context.Context, req *ChatRequest) 
 	return cr, nil
 }
 
-// AnthropicChatCompletionStream sends a streaming request to the Anthropic Messages API.
-func (c *Client) AnthropicChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
+// anthropicChatCompletionStream sends a streaming request to the Anthropic Messages API.
+func (c *Client) anthropicChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
 	r := *req
 	r.Stream = true
 

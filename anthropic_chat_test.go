@@ -77,12 +77,12 @@ func TestAnthropicChatCompletion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL))
+	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	result, err := c.AnthropicChatCompletion(context.Background(), &ChatRequest{
+	result, err := c.ChatCompletion(context.Background(), &ChatRequest{
 		Model: ModelAnthropicClaude4Sonnet,
 		Messages: []Message{
 			{Role: RoleSystem, Content: NewTextContent("You are helpful.")},
@@ -90,7 +90,7 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("AnthropicChatCompletion: %v", err)
+		t.Fatalf("ChatCompletion: %v", err)
 	}
 
 	if result.ID != "msg_test" {
@@ -124,12 +124,12 @@ func TestAnthropicChatCompletionAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-bad"), WithBaseURL(srv.URL))
+	c, err := NewClient(WithAPIKey("sk-bad"), WithBaseURL(srv.URL), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.AnthropicChatCompletion(context.Background(), &ChatRequest{
+	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
 		Model:    ModelAnthropicClaude4Sonnet,
 		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
 	})
@@ -150,7 +150,7 @@ func TestAnthropicChatCompletionAPIError(t *testing.T) {
 }
 
 func TestAnthropicChatCompletionDefaultBaseURL(t *testing.T) {
-	c, err := NewClient(WithAPIKey("sk-ant-test"))
+	c, err := NewClient(WithAPIKey("sk-ant-test"), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -197,17 +197,17 @@ func TestAnthropicChatCompletionStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL))
+	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	stream, err := c.AnthropicChatCompletionStream(context.Background(), &ChatRequest{
+	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
 		Model:    ModelAnthropicClaude4Sonnet,
 		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
 	})
 	if err != nil {
-		t.Fatalf("AnthropicChatCompletionStream: %v", err)
+		t.Fatalf("ChatCompletionStream: %v", err)
 	}
 	defer func() { _ = stream.Close() }()
 
@@ -258,12 +258,12 @@ func TestAnthropicChatCompletionStreamAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL))
+	c, err := NewClient(WithAPIKey("sk-ant-test"), WithBaseURL(srv.URL), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.AnthropicChatCompletionStream(context.Background(), &ChatRequest{
+	_, err = c.ChatCompletionStream(context.Background(), &ChatRequest{
 		Model:    ModelAnthropicClaude4Sonnet,
 		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
 	})

@@ -19,20 +19,15 @@ package aimodel
 
 import "context"
 
-// ChatCompleter defines the minimal contract for AI chat completion.
-// Consumers that only need basic completion should depend on this interface.
+// ChatCompleter defines the contract for AI chat completion.
+// Protocol routing is handled internally by each Client based on its configuration.
 type ChatCompleter interface {
 	ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
 	ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error)
 }
 
-// ChatClient extends ChatCompleter with Anthropic-native protocol support.
-// Use this when protocol-specific routing is needed (e.g., compose dispatch).
-type ChatClient interface {
-	ChatCompleter
-	AnthropicChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
-	AnthropicChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error)
-}
+// Compile-time check: *Client implements ChatCompleter.
+var _ ChatCompleter = (*Client)(nil)
 
 // Protocol determines which API protocol to use for a model.
 type Protocol string

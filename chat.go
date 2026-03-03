@@ -35,7 +35,30 @@ func (c *Client) applyDefaultModel(r *ChatRequest) {
 }
 
 // ChatCompletion sends a non-streaming chat completion request.
+// The client's protocol setting determines which API is used.
 func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+	switch c.protocol {
+	case ProtocolAnthropic:
+		return c.anthropicChatCompletion(ctx, req)
+	default:
+		return c.openaiChatCompletion(ctx, req)
+	}
+}
+
+// ChatCompletionStream sends a streaming chat completion request
+// and returns a Stream for reading chunks.
+// The client's protocol setting determines which API is used.
+func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
+	switch c.protocol {
+	case ProtocolAnthropic:
+		return c.anthropicChatCompletionStream(ctx, req)
+	default:
+		return c.openaiChatCompletionStream(ctx, req)
+	}
+}
+
+// openaiChatCompletion sends a non-streaming request using the OpenAI-compatible API.
+func (c *Client) openaiChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	r := *req
 	r.Stream = false
 
@@ -72,9 +95,8 @@ func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatRes
 	return &result, nil
 }
 
-// ChatCompletionStream sends a streaming chat completion request
-// and returns a Stream for reading chunks.
-func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
+// openaiChatCompletionStream sends a streaming request using the OpenAI-compatible API.
+func (c *Client) openaiChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
 	r := *req
 	r.Stream = true
 

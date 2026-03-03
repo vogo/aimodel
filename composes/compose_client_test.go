@@ -125,7 +125,7 @@ func newStreamServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func newClientForServer(t *testing.T, server *httptest.Server) aimodel.ChatClient {
+func newClientForServer(t *testing.T, server *httptest.Server) *aimodel.Client {
 	t.Helper()
 
 	c, err := aimodel.NewClient(
@@ -574,19 +574,20 @@ func TestAnthropicChatCompletion(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey("test-key"),
 		aimodel.WithBaseURL(s.URL),
+		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "claude-test", Client: client, Protocol: aimodel.ProtocolAnthropic},
+		{Name: "claude-test", Client: client},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// ChatCompletion with Protocol=Anthropic should route to AnthropicChatCompletion.
+	// ChatCompletion with ProtocolAnthropic should route via the Anthropic protocol.
 	resp, err := cc.ChatCompletion(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
