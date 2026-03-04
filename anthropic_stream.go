@@ -97,7 +97,8 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 					return nil, fmt.Errorf("aimodel: decode content_block_start: %w", err)
 				}
 
-				if cbs.ContentBlock.Type == "tool_use" {
+				switch cbs.ContentBlock.Type {
+				case "tool_use":
 					return &StreamChunk{
 						ID:    msgID,
 						Model: model,
@@ -120,6 +121,8 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 							},
 						},
 					}, nil
+				case "thinking":
+					continue
 				}
 
 				continue
@@ -145,6 +148,17 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 							},
 						},
 					}
+				case "thinking_delta":
+					chunk.Choices = []StreamChunkChoice{
+						{
+							Index: 0,
+							Delta: Message{
+								Thinking: cbd.Delta.Thinking,
+							},
+						},
+					}
+				case "signature_delta":
+					continue
 				case "input_json_delta":
 					chunk.Choices = []StreamChunkChoice{
 						{

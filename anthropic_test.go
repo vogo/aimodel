@@ -554,6 +554,144 @@ func TestParseDataURI(t *testing.T) {
 	}
 }
 
+func TestToAnthropicRequestThinking(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Think step by step")},
+		},
+		Thinking: &Thinking{
+			Type:         "enabled",
+			BudgetTokens: 10000,
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.Thinking == nil {
+		t.Fatal("thinking is nil")
+	}
+
+	if ar.Thinking.Type != "enabled" {
+		t.Errorf("thinking.type = %q, want enabled", ar.Thinking.Type)
+	}
+
+	if ar.Thinking.BudgetTokens != 10000 {
+		t.Errorf("thinking.budget_tokens = %d, want 10000", ar.Thinking.BudgetTokens)
+	}
+}
+
+func TestFromAnthropicResponseThinking(t *testing.T) {
+	ar := &anthropicResponse{
+		ID:    "msg_think",
+		Model: ModelAnthropicClaude4Sonnet,
+		Content: []anthropicContentBlock{
+			{Type: "thinking", Thinking: "Let me analyze this step by step."},
+			{Type: "thinking", Thinking: "The answer involves calculus."},
+			{Type: "text", Text: "The answer is 42."},
+		},
+		StopReason: "end_turn",
+		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 50},
+	}
+
+	cr := fromAnthropicResponse(ar)
+
+	if len(cr.Choices) != 1 {
+		t.Fatalf("choices len = %d", len(cr.Choices))
+	}
+
+	msg := cr.Choices[0].Message
+	if msg.Thinking != "Let me analyze this step by step.\nThe answer involves calculus." {
+		t.Errorf("thinking = %q", msg.Thinking)
+	}
+
+	if msg.Content.Text() != "The answer is 42." {
+		t.Errorf("content = %q", msg.Content.Text())
+	}
+}
+
+func TestToAnthropicMessageThinkingRoundTrip(t *testing.T) {
+	msg := Message{
+		Role:     RoleAssistant,
+		Thinking: "Step 1: analyze.\nStep 2: conclude.",
+		Content:  NewTextContent("The answer is 42."),
+	}
+
+	am, err := toAnthropicMessage(msg)
+	if err != nil {
+		t.Fatalf("toAnthropicMessage: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(am.Content, &blocks); err != nil {
+		t.Fatalf("unmarshal blocks: %v", err)
+	}
+
+	if len(blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2", len(blocks))
+	}
+
+	if blocks[0].Type != "thinking" {
+		t.Errorf("block[0].type = %q, want thinking", blocks[0].Type)
+	}
+
+	if blocks[0].Thinking != "Step 1: analyze.\nStep 2: conclude." {
+		t.Errorf("block[0].thinking = %q", blocks[0].Thinking)
+	}
+
+	if blocks[1].Type != "text" || blocks[1].Text != "The answer is 42." {
+		t.Errorf("block[1] = %+v", blocks[1])
+	}
+}
+
+func TestToAnthropicMessageThinkingWithToolCalls(t *testing.T) {
+	msg := Message{
+		Role:     RoleAssistant,
+		Thinking: "I should use the calculator.",
+		Content:  NewTextContent("Let me calculate."),
+		ToolCalls: []ToolCall{
+			{
+				Index: 0,
+				ID:    "call_1",
+				Type:  "function",
+				Function: FunctionCall{
+					Name:      "calculator",
+					Arguments: `{"expr":"2+2"}`,
+				},
+			},
+		},
+	}
+
+	am, err := toAnthropicMessage(msg)
+	if err != nil {
+		t.Fatalf("toAnthropicMessage: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(am.Content, &blocks); err != nil {
+		t.Fatalf("unmarshal blocks: %v", err)
+	}
+
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3", len(blocks))
+	}
+
+	if blocks[0].Type != "thinking" {
+		t.Errorf("block[0].type = %q, want thinking", blocks[0].Type)
+	}
+
+	if blocks[1].Type != "text" {
+		t.Errorf("block[1].type = %q, want text", blocks[1].Type)
+	}
+
+	if blocks[2].Type != "tool_use" {
+		t.Errorf("block[2].type = %q, want tool_use", blocks[2].Type)
+	}
+}
+
 func TestMapAnthropicStopReason(t *testing.T) {
 	tests := []struct {
 		reason string

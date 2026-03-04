@@ -385,6 +385,66 @@ func TestContentParts(t *testing.T) {
 	}
 }
 
+func TestMessageAppendDeltaThinking(t *testing.T) {
+	msg := &Message{Role: RoleAssistant}
+	msg.AppendDelta(&Message{Thinking: "Let me think"})
+	msg.AppendDelta(&Message{Thinking: " about this"})
+
+	if msg.Thinking != "Let me think about this" {
+		t.Errorf("thinking = %q, want %q", msg.Thinking, "Let me think about this")
+	}
+}
+
+func TestChatRequestReasoningEffort(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelOpenaiGPT4o,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+		ReasoningEffort: "high",
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+
+	val, ok := raw["reasoning_effort"]
+	if !ok {
+		t.Fatal("reasoning_effort not present in JSON")
+	}
+
+	if string(val) != `"high"` {
+		t.Errorf("reasoning_effort = %s, want %q", val, "high")
+	}
+}
+
+func TestOpenAIReasoningContentUnmarshal(t *testing.T) {
+	raw := `{
+		"role": "assistant",
+		"content": "The answer is 42.",
+		"reasoning_content": "I need to compute the answer to life."
+	}`
+
+	var msg Message
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if msg.Thinking != "I need to compute the answer to life." {
+		t.Errorf("thinking = %q", msg.Thinking)
+	}
+
+	if msg.Content.Text() != "The answer is 42." {
+		t.Errorf("content = %q", msg.Content.Text())
+	}
+}
+
 func floatPtr(f float64) *float64 {
 	return &f
 }

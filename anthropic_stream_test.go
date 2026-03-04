@@ -191,6 +191,72 @@ func TestAnthropicStreamClose(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamThinking(t *testing.T) {
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_t1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" think..."}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc123"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The answer is 42."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	var thinkingParts []string
+
+	var textParts []string
+
+	for {
+		chunk, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+			if delta.Thinking != "" {
+				thinkingParts = append(thinkingParts, delta.Thinking)
+			}
+
+			if text := delta.Content.Text(); text != "" {
+				textParts = append(textParts, text)
+			}
+		}
+	}
+
+	if len(thinkingParts) != 2 {
+		t.Fatalf("got %d thinking chunks, want 2: %v", len(thinkingParts), thinkingParts)
+	}
+
+	if thinkingParts[0] != "Let me" || thinkingParts[1] != " think..." {
+		t.Errorf("thinking parts = %v", thinkingParts)
+	}
+
+	if len(textParts) != 1 || textParts[0] != "The answer is 42." {
+		t.Errorf("text parts = %v", textParts)
+	}
+}
+
 func TestAnthropicStreamFinishReason(t *testing.T) {
 	body := "" +
 		"event: message_start\n" +

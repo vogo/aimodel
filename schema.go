@@ -43,6 +43,12 @@ const (
 	FinishReasonToolCalls FinishReason = "tool_calls"
 )
 
+// Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
+type Thinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
 // ChatRequest represents a request to the chat completions API.
 type ChatRequest struct {
 	Model            string    `json:"model"`
@@ -60,6 +66,8 @@ type ChatRequest struct {
 	Stream           bool      `json:"stream,omitempty"`
 	Tools            []Tool    `json:"tools,omitempty"`
 	ToolChoice       any       `json:"tool_choice,omitempty"`
+	Thinking         *Thinking `json:"thinking,omitempty"`
+	ReasoningEffort  string    `json:"reasoning_effort,omitempty"`
 }
 
 // ChatResponse represents a response from the chat completions API.
@@ -162,6 +170,7 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    Content    `json:"content"`
+	Thinking   string     `json:"reasoning_content,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
@@ -169,6 +178,7 @@ type Message struct {
 // AppendDelta merges a streaming delta message into this message.
 func (m *Message) AppendDelta(delta *Message) {
 	m.Content.text += delta.Content.text
+	m.Thinking += delta.Thinking
 
 	for _, dtc := range delta.ToolCalls {
 		idx := dtc.Index

@@ -42,6 +42,7 @@ type anthropicRequest struct {
 	Stream        bool                 `json:"stream,omitempty"`
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
+	Thinking      *Thinking            `json:"thinking,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -52,6 +53,7 @@ type anthropicMessage struct {
 type anthropicContentBlock struct {
 	Type      string                  `json:"type"`
 	Text      string                  `json:"text,omitempty"`
+	Thinking  string                  `json:"thinking,omitempty"`
 	ID        string                  `json:"id,omitempty"`
 	Name      string                  `json:"name,omitempty"`
 	Input     json.RawMessage         `json:"input,omitempty"`
@@ -132,6 +134,7 @@ type anthropicContentBlockDelta struct {
 type anthropicDelta struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 }
 
@@ -203,6 +206,9 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		ar.ToolChoice = convertToolChoice(req.ToolChoice)
 	}
 
+	// Pass through thinking configuration.
+	ar.Thinking = req.Thinking
+
 	return ar, nil
 }
 
@@ -231,9 +237,16 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 		return am, nil
 	}
 
-	// Assistant messages with tool calls.
-	if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+	// Assistant messages with thinking, tool calls, or both require content-block format.
+	if m.Role == RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
 		var blocks []anthropicContentBlock
+
+		if m.Thinking != "" {
+			blocks = append(blocks, anthropicContentBlock{
+				Type:     "thinking",
+				Thinking: m.Thinking,
+			})
+		}
 
 		text := m.Content.Text()
 		if text != "" {
@@ -254,7 +267,7 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 
 		data, err := json.Marshal(blocks)
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal tool use: %w", err)
+			return anthropicMessage{}, fmt.Errorf("aimodel: marshal assistant content: %w", err)
 		}
 
 		am.Content = data
@@ -348,8 +361,12 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 
 	var textParts []string
 
+	var thinkingParts []string
+
 	for _, block := range ar.Content {
 		switch block.Type {
+		case "thinking":
+			thinkingParts = append(thinkingParts, block.Thinking)
 		case "text":
 			textParts = append(textParts, block.Text)
 		case "tool_use":
@@ -363,6 +380,10 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 				},
 			})
 		}
+	}
+
+	if len(thinkingParts) > 0 {
+		msg.Thinking = strings.Join(thinkingParts, "\n")
 	}
 
 	if len(textParts) > 0 {
