@@ -330,6 +330,230 @@ func TestFromAnthropicResponseToolUse(t *testing.T) {
 	}
 }
 
+func TestToAnthropicRequestImageDataURI(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role: RoleUser,
+				Content: NewPartsContent(
+					ContentPart{Type: "image_url", ImageURL: &ImageURL{
+						URL: "data:image/jpeg;base64,/9j/4AAQ",
+					}},
+				),
+			},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1", len(blocks))
+	}
+	if blocks[0].Type != "image" {
+		t.Errorf("type = %q, want image", blocks[0].Type)
+	}
+	if blocks[0].Source == nil {
+		t.Fatal("source is nil")
+	}
+	if blocks[0].Source.Type != "base64" {
+		t.Errorf("source.type = %q, want base64", blocks[0].Source.Type)
+	}
+	if blocks[0].Source.MediaType != "image/jpeg" {
+		t.Errorf("source.media_type = %q, want image/jpeg", blocks[0].Source.MediaType)
+	}
+	if blocks[0].Source.Data != "/9j/4AAQ" {
+		t.Errorf("source.data = %q, want /9j/4AAQ", blocks[0].Source.Data)
+	}
+}
+
+func TestToAnthropicRequestImageURL(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role: RoleUser,
+				Content: NewPartsContent(
+					ContentPart{Type: "image_url", ImageURL: &ImageURL{
+						URL: "https://example.com/photo.png",
+					}},
+				),
+			},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1", len(blocks))
+	}
+	if blocks[0].Source == nil {
+		t.Fatal("source is nil")
+	}
+	if blocks[0].Source.Type != "url" {
+		t.Errorf("source.type = %q, want url", blocks[0].Source.Type)
+	}
+	if blocks[0].Source.URL != "https://example.com/photo.png" {
+		t.Errorf("source.url = %q", blocks[0].Source.URL)
+	}
+}
+
+func TestToAnthropicRequestMixedContent(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role: RoleUser,
+				Content: NewPartsContent(
+					ContentPart{Type: "text", Text: "What is in this image?"},
+					ContentPart{Type: "image_url", ImageURL: &ImageURL{
+						URL: "data:image/png;base64,iVBOR",
+					}},
+				),
+			},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+
+	if len(blocks) != 2 {
+		t.Fatalf("blocks len = %d, want 2", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "What is in this image?" {
+		t.Errorf("blocks[0] = %+v", blocks[0])
+	}
+	if blocks[1].Type != "image" {
+		t.Errorf("blocks[1].type = %q, want image", blocks[1].Type)
+	}
+	if blocks[1].Source.Type != "base64" {
+		t.Errorf("blocks[1].source.type = %q, want base64", blocks[1].Source.Type)
+	}
+	if blocks[1].Source.MediaType != "image/png" {
+		t.Errorf("blocks[1].source.media_type = %q", blocks[1].Source.MediaType)
+	}
+}
+
+func TestToAnthropicRequestImageNilURL(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role: RoleUser,
+				Content: NewPartsContent(
+					ContentPart{Type: "text", Text: "hello"},
+					ContentPart{Type: "image_url"}, // nil ImageURL, should be skipped
+				),
+			},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1 (nil image_url skipped)", len(blocks))
+	}
+	if blocks[0].Type != "text" {
+		t.Errorf("blocks[0].type = %q, want text", blocks[0].Type)
+	}
+}
+
+func TestParseDataURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		uri       string
+		wantMedia string
+		wantData  string
+		wantOK    bool
+	}{
+		{
+			name:      "jpeg",
+			uri:       "data:image/jpeg;base64,/9j/4AAQ",
+			wantMedia: "image/jpeg",
+			wantData:  "/9j/4AAQ",
+			wantOK:    true,
+		},
+		{
+			name:      "png",
+			uri:       "data:image/png;base64,iVBOR",
+			wantMedia: "image/png",
+			wantData:  "iVBOR",
+			wantOK:    true,
+		},
+		{
+			name:   "not data uri",
+			uri:    "https://example.com/img.png",
+			wantOK: false,
+		},
+		{
+			name:   "no semicolon",
+			uri:    "data:image/jpeg",
+			wantOK: false,
+		},
+		{
+			name:   "not base64",
+			uri:    "data:image/jpeg;charset=utf-8,hello",
+			wantOK: false,
+		},
+		{
+			name:      "webp",
+			uri:       "data:image/webp;base64,UklGR",
+			wantMedia: "image/webp",
+			wantData:  "UklGR",
+			wantOK:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			media, data, ok := parseDataURI(tt.uri)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if media != tt.wantMedia {
+				t.Errorf("mediaType = %q, want %q", media, tt.wantMedia)
+			}
+			if data != tt.wantData {
+				t.Errorf("data = %q, want %q", data, tt.wantData)
+			}
+		})
+	}
+}
+
 func TestMapAnthropicStopReason(t *testing.T) {
 	tests := []struct {
 		reason string

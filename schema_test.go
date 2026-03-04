@@ -360,6 +360,31 @@ func TestContentUnmarshalNull(t *testing.T) {
 	}
 }
 
+func TestContentParts(t *testing.T) {
+	parts := []ContentPart{
+		{Type: "text", Text: "describe this"},
+		{Type: "image_url", ImageURL: &ImageURL{URL: "https://example.com/img.png"}},
+	}
+	c := NewPartsContent(parts...)
+
+	got := c.Parts()
+	if len(got) != 2 {
+		t.Fatalf("Parts() len = %d, want 2", len(got))
+	}
+	if got[0].Type != "text" || got[0].Text != "describe this" {
+		t.Errorf("Parts()[0] = %+v", got[0])
+	}
+	if got[1].Type != "image_url" || got[1].ImageURL.URL != "https://example.com/img.png" {
+		t.Errorf("Parts()[1] = %+v", got[1])
+	}
+
+	// Plain text content should return nil parts.
+	tc := NewTextContent("hello")
+	if tc.Parts() != nil {
+		t.Errorf("text content Parts() = %v, want nil", tc.Parts())
+	}
+}
+
 func floatPtr(f float64) *float64 {
 	return &f
 }

@@ -27,19 +27,12 @@ import (
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+func testStream(client *aimodel.Client) {
+	fmt.Println("=== Anthropic Stream ===")
 
 	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
 		},
 	})
 	if err != nil {

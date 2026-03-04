@@ -15,40 +15,26 @@
  * limitations under the License.
  */
 
-package composehelper
+package main
 
 import (
+	"log"
+
 	"github.com/vogo/aimodel"
 )
 
-func BuildComposeClient() ([]*aimodel.Client, error) {
-	openaiClient, err := aimodel.NewClient(
+func main() {
+	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
 	)
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
 
-	anthropicClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	deepseekClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("DEEPSEEK_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("DEEPSEEK_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("DEEPSEEK_MODEL")),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return []*aimodel.Client{openaiClient, anthropicClient, deepseekClient}, nil
+	testCompletion(client)
+	testImageContent(client)
+	testStream(client)
+	testToolCall(client)
 }

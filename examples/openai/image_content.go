@@ -15,43 +15,37 @@
  * limitations under the License.
  */
 
-// compose_failover demonstrates using ComposeClient with failover strategy.
-// The primary model is tried first; if it fails, the secondary is used.
-//
-// Environment variables:
-//
-//	PRIMARY_API_KEY, PRIMARY_BASE_URL, PRIMARY_MODEL   - primary backend
-//	SECONDARY_API_KEY, SECONDARY_BASE_URL, SECONDARY_MODEL - fallback backend
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/composes"
-	"github.com/vogo/aimodel/examples/composehelper"
 )
 
-func main() {
-	clients, err := composehelper.BuildComposeClient()
-	if err != nil {
-		log.Fatal(err)
-	}
-	cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
-		{Client: clients[0]},
-		{Client: clients[1]},
-		{Client: clients[2]},
-	}, composes.WithRecoveryInterval(30*time.Second))
-	if err != nil {
-		log.Fatal(err)
-	}
+func testImageContent(client *aimodel.Client) {
+	fmt.Println("=== OpenAI Image Content ===")
 
-	resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+			{
+				Role: aimodel.RoleUser,
+				Content: aimodel.NewPartsContent(
+					aimodel.ContentPart{
+						Type: "text",
+						Text: "What is in this image?",
+					},
+					aimodel.ContentPart{
+						Type: "image_url",
+						ImageURL: &aimodel.ImageURL{
+							URL:    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg",
+							Detail: "low",
+						},
+					},
+				),
+			},
 		},
 	})
 	if err != nil {
@@ -62,5 +56,5 @@ func main() {
 		log.Fatal("no choices in response")
 	}
 
-	fmt.Printf("[%s] %s\n", resp.Model, resp.Choices[0].Message.Content.Text())
+	fmt.Println(resp.Choices[0].Message.Content.Text())
 }

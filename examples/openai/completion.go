@@ -25,16 +25,8 @@ import (
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+func testCompletion(client *aimodel.Client) {
+	fmt.Println("=== OpenAI Completion ===")
 
 	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{

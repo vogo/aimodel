@@ -50,14 +50,25 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Type      string                  `json:"type"`
+	Text      string                  `json:"text,omitempty"`
+	ID        string                  `json:"id,omitempty"`
+	Name      string                  `json:"name,omitempty"`
+	Input     json.RawMessage         `json:"input,omitempty"`
+	ToolUseID string                  `json:"tool_use_id,omitempty"`
+	Source    *anthropicContentSource `json:"source,omitempty"`
 	// ResultContent holds the content for tool_result blocks.
 	ResultContent string `json:"content,omitempty"`
+}
+
+// anthropicContentSource represents the source of an image or document in Anthropic's API format.
+// Supported source types: "base64", "url", "text", "content".
+type anthropicContentSource struct {
+	Type      string                  `json:"type"`
+	MediaType string                  `json:"media_type,omitempty"`
+	Data      string                  `json:"data,omitempty"`
+	URL       string                  `json:"url,omitempty"`
+	Content   []anthropicContentBlock `json:"content,omitempty"`
 }
 
 type anthropicTool struct {
@@ -251,6 +262,51 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 		return am, nil
 	}
 
+	// Multimodal content with parts.
+	if parts := m.Content.Parts(); len(parts) > 0 {
+		var blocks []anthropicContentBlock
+
+		for _, p := range parts {
+			switch p.Type {
+			case "text":
+				blocks = append(blocks, anthropicContentBlock{
+					Type: "text",
+					Text: p.Text,
+				})
+			case "image_url":
+				if p.ImageURL == nil {
+					continue
+				}
+
+				block := anthropicContentBlock{Type: "image"}
+
+				if mediaType, b64Data, ok := parseDataURI(p.ImageURL.URL); ok {
+					block.Source = &anthropicContentSource{
+						Type:      "base64",
+						MediaType: mediaType,
+						Data:      b64Data,
+					}
+				} else {
+					block.Source = &anthropicContentSource{
+						Type: "url",
+						URL:  p.ImageURL.URL,
+					}
+				}
+
+				blocks = append(blocks, block)
+			}
+		}
+
+		data, err := json.Marshal(blocks)
+		if err != nil {
+			return anthropicMessage{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
+		}
+
+		am.Content = data
+
+		return am, nil
+	}
+
 	// Plain text message.
 	data, err := json.Marshal(m.Content.Text())
 	if err != nil {
@@ -330,6 +386,35 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 			TotalTokens:      ar.Usage.InputTokens + ar.Usage.OutputTokens,
 		},
 	}
+}
+
+// parseDataURI parses a data URI (e.g. "data:image/jpeg;base64,/9j...")
+// and returns the media type and base64-encoded data.
+func parseDataURI(uri string) (mediaType, data string, ok bool) {
+	const prefix = "data:"
+
+	if !strings.HasPrefix(uri, prefix) {
+		return "", "", false
+	}
+
+	// Format: data:<mediaType>;base64,<data>
+	rest := uri[len(prefix):]
+
+	semicolon := strings.Index(rest, ";")
+	if semicolon < 0 {
+		return "", "", false
+	}
+
+	mediaType = rest[:semicolon]
+
+	rest = rest[semicolon+1:]
+	if !strings.HasPrefix(rest, "base64,") {
+		return "", "", false
+	}
+
+	data = rest[len("base64,"):]
+
+	return mediaType, data, true
 }
 
 func mapAnthropicStopReason(reason string) FinishReason {

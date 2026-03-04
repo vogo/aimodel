@@ -110,6 +110,9 @@ func NewPartsContent(parts ...ContentPart) Content {
 	return Content{parts: parts}
 }
 
+// Parts returns the content parts for multimodal content, or nil for plain text content.
+func (c Content) Parts() []ContentPart { return c.parts }
+
 // Text returns the text content. For multimodal content, it concatenates all text parts.
 func (c Content) Text() string {
 	if c.parts == nil {

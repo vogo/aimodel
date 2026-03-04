@@ -26,30 +26,8 @@ import (
 	"github.com/vogo/aimodel"
 )
 
-// getWeather simulates a weather API call.
-func getWeather(location string) string {
-	data := map[string]string{
-		"location":    location,
-		"temperature": "22",
-		"unit":        "celsius",
-		"condition":   "sunny",
-	}
-
-	b, _ := json.Marshal(data)
-
-	return string(b)
-}
-
-func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+func testToolCall(client *aimodel.Client) {
+	fmt.Println("=== Anthropic Tool Call ===")
 
 	tools := []aimodel.Tool{
 		{
@@ -136,4 +114,18 @@ func main() {
 	}
 
 	fmt.Println(resp.Choices[0].Message.Content.Text())
+}
+
+// getWeather simulates a weather API call.
+func getWeather(location string) string {
+	data := map[string]string{
+		"location":    location,
+		"temperature": "22",
+		"unit":        "celsius",
+		"condition":   "sunny",
+	}
+
+	b, _ := json.Marshal(data)
+
+	return string(b)
 }

@@ -27,20 +27,12 @@ import (
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
+func testStream(client *aimodel.Client) {
+	fmt.Println("=== OpenAI Stream ===")
 
 	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI!")},
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
 		},
 	})
 	if err != nil {

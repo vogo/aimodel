@@ -15,16 +15,6 @@
  * limitations under the License.
  */
 
-// compose_weighted demonstrates using ComposeClient with weighted strategy.
-// Requests are distributed across models proportional to their weights.
-// If a model fails, it is excluded and recovers automatically after the interval.
-//
-// This example uses two OpenAI-compatible backends with a 3:1 traffic split.
-//
-// Environment variables:
-//
-//	PRIMARY_API_KEY, PRIMARY_BASE_URL, PRIMARY_MODEL   - high-weight backend
-//	SECONDARY_API_KEY, SECONDARY_BASE_URL, SECONDARY_MODEL - low-weight backend
 package main
 
 import (
@@ -34,25 +24,21 @@ import (
 
 	"github.com/vogo/aimodel"
 	"github.com/vogo/aimodel/composes"
-	"github.com/vogo/aimodel/examples/composehelper"
 )
 
-func main() {
-	clients, err := composehelper.BuildComposeClient()
-	if err != nil {
-		log.Fatal(err)
-	}
+func testRandom(clients []*aimodel.Client) {
+	fmt.Println("=== Compose Random ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyWeight, []composes.ModelEntry{
-		{Client: clients[0], Weight: 3},
-		{Client: clients[1], Weight: 1},
-		{Client: clients[2], Weight: 1},
+	cc, err := composes.NewComposeClient(composes.StrategyRandom, []composes.ModelEntry{
+		{Client: clients[0]},
+		{Client: clients[1]},
+		{Client: clients[2]},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Send 5 requests to show the traffic distribution.
+	// Send 5 requests to show the random distribution.
 	for i := range 5 {
 		resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 			Messages: []aimodel.Message{
