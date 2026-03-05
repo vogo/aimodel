@@ -5,3 +5,4 @@ coverage:
         target: 80%
 ignore:
   - "examples/**"
+  - "integrations/**"
