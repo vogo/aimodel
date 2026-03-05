@@ -15,46 +15,44 @@
  * limitations under the License.
  */
 
-package main
+package openai_tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 
 	"github.com/vogo/aimodel"
 )
 
-func testImageContent(client *aimodel.Client) {
-	fmt.Println("=== Anthropic Image Content ===")
+func testStream(client *aimodel.Client) {
+	fmt.Println("=== OpenAI Stream ===")
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{
-				Role: aimodel.RoleUser,
-				Content: aimodel.NewPartsContent(
-					aimodel.ContentPart{
-						Type: "text",
-						Text: "What is in this image?",
-					},
-					aimodel.ContentPart{
-						Type: "image_url",
-						ImageURL: &aimodel.ImageURL{
-							URL:    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg",
-							Detail: "low",
-						},
-					},
-				),
-			},
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
 		},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer func() { _ = stream.Close() }()
 
-	if len(resp.Choices) == 0 {
-		log.Fatal("no choices in response")
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if len(chunk.Choices) > 0 {
+			fmt.Print(chunk.Choices[0].Delta.Content.Text())
+		}
 	}
 
-	fmt.Println(resp.Choices[0].Message.Content.Text())
+	fmt.Println()
 }

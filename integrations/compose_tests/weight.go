@@ -15,44 +15,46 @@
  * limitations under the License.
  */
 
-package main
+package compose_tests
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/composes"
 )
 
-func testStream(client *aimodel.Client) {
-	fmt.Println("=== OpenAI Stream ===")
+func testWeight(clients []*aimodel.Client) {
+	fmt.Println("=== Compose Weight ===")
 
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
-		},
+	cc, err := composes.NewComposeClient(composes.StrategyWeight, []composes.ModelEntry{
+		{Client: clients[0], Weight: 3},
+		{Client: clients[1], Weight: 1},
+		{Client: clients[2], Weight: 1},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = stream.Close() }()
 
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
+	// Send 5 requests to show the traffic distribution.
+	for i := range 5 {
+		resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+			Messages: []aimodel.Message{
+				{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+			},
+		})
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("request %d: %v", i+1, err)
+			continue
 		}
 
-		if len(chunk.Choices) > 0 {
-			fmt.Print(chunk.Choices[0].Delta.Content.Text())
+		if len(resp.Choices) == 0 {
+			log.Printf("request %d: no choices", i+1)
+			continue
 		}
+
+		fmt.Printf("request %d [%s]: %s\n", i+1, resp.Model, resp.Choices[0].Message.Content.Text())
 	}
-
-	fmt.Println()
 }

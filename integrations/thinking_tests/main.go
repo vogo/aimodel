@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package main
+package thinking_tests
 
 import (
 	"context"
@@ -23,11 +23,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"testing"
 
 	"github.com/vogo/aimodel"
 )
 
-func main() {
+func TestThinkingClient(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
@@ -35,7 +36,8 @@ func main() {
 		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
-		log.Fatal(err)
+		t.Logf("init client error: %v", err)
+		return
 	}
 
 	testThinkingCompletion(client)

@@ -15,46 +15,42 @@
  * limitations under the License.
  */
 
-package main
+package compose_tests
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vogo/aimodel"
 	"github.com/vogo/aimodel/composes"
 )
 
-func testRandom(clients []*aimodel.Client) {
-	fmt.Println("=== Compose Random ===")
+func testFailover(clients []*aimodel.Client) {
+	fmt.Println("=== Compose Failover ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyRandom, []composes.ModelEntry{
+	cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
 		{Client: clients[0]},
 		{Client: clients[1]},
 		{Client: clients[2]},
+	}, composes.WithRecoveryInterval(30*time.Second))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+		Messages: []aimodel.Message{
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+		},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Send 5 requests to show the random distribution.
-	for i := range 5 {
-		resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-			Messages: []aimodel.Message{
-				{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
-			},
-		})
-		if err != nil {
-			log.Printf("request %d: %v", i+1, err)
-			continue
-		}
-
-		if len(resp.Choices) == 0 {
-			log.Printf("request %d: no choices", i+1)
-			continue
-		}
-
-		fmt.Printf("request %d [%s]: %s\n", i+1, resp.Model, resp.Choices[0].Message.Content.Text())
+	if len(resp.Choices) == 0 {
+		log.Fatal("no choices in response")
 	}
+
+	fmt.Printf("[%s] %s\n", resp.Model, resp.Choices[0].Message.Content.Text())
 }

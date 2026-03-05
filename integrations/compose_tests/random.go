@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package main
+package compose_tests
 
 import (
 	"context"
@@ -23,23 +23,38 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/composes"
 )
 
-func testCompletion(client *aimodel.Client) {
-	fmt.Println("=== Anthropic Completion ===")
+func testRandom(clients []*aimodel.Client) {
+	fmt.Println("=== Compose Random ===")
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
-		},
+	cc, err := composes.NewComposeClient(composes.StrategyRandom, []composes.ModelEntry{
+		{Client: clients[0]},
+		{Client: clients[1]},
+		{Client: clients[2]},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if len(resp.Choices) == 0 {
-		log.Fatal("no choices in response")
-	}
+	// Send 5 requests to show the random distribution.
+	for i := range 5 {
+		resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+			Messages: []aimodel.Message{
+				{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+			},
+		})
+		if err != nil {
+			log.Printf("request %d: %v", i+1, err)
+			continue
+		}
 
-	fmt.Println(resp.Choices[0].Message.Content.Text())
+		if len(resp.Choices) == 0 {
+			log.Printf("request %d: no choices", i+1)
+			continue
+		}
+
+		fmt.Printf("request %d [%s]: %s\n", i+1, resp.Model, resp.Choices[0].Message.Content.Text())
+	}
 }

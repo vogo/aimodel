@@ -15,42 +15,44 @@
  * limitations under the License.
  */
 
-package main
+package anthropropic_tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
-	"time"
 
 	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/composes"
 )
 
-func testFailover(clients []*aimodel.Client) {
-	fmt.Println("=== Compose Failover ===")
+func testStream(client *aimodel.Client) {
+	fmt.Println("=== Anthropic Stream ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
-		{Client: clients[0]},
-		{Client: clients[1]},
-		{Client: clients[2]},
-	}, composes.WithRecoveryInterval(30*time.Second))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
 		},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer func() { _ = stream.Close() }()
 
-	if len(resp.Choices) == 0 {
-		log.Fatal("no choices in response")
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if len(chunk.Choices) > 0 {
+			fmt.Print(chunk.Choices[0].Delta.Content.Text())
+		}
 	}
 
-	fmt.Printf("[%s] %s\n", resp.Model, resp.Choices[0].Message.Content.Text())
+	fmt.Println()
 }

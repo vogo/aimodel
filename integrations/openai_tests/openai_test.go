@@ -15,23 +15,23 @@
  * limitations under the License.
  */
 
-package main
+package openai_tests
 
 import (
-	"log"
+	"testing"
 
 	"github.com/vogo/aimodel"
 )
 
-func main() {
+func TestOpenAIClient(t *testing.T) {
 	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
+		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
+		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
 	)
 	if err != nil {
-		log.Fatal(err)
+		t.Logf("init client error: %v", err)
+		return
 	}
 
 	testCompletion(client)

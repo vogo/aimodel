@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package main
+package openai_tests
 
 import (
 	"context"
@@ -27,7 +27,7 @@ import (
 )
 
 func testToolCall(client *aimodel.Client) {
-	fmt.Println("=== Anthropic Tool Call ===")
+	fmt.Println("=== OpenAI Tool Call ===")
 
 	tools := []aimodel.Tool{
 		{

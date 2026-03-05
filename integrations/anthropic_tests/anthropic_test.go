@@ -15,53 +15,28 @@
  * limitations under the License.
  */
 
-package main
+package anthropropic_tests
 
 import (
-	"log"
+	"testing"
 
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	clients, err := buildComposeClients()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	testFailover(clients)
-	testWeight(clients)
-	testRandom(clients)
-}
-
-func buildComposeClients() ([]*aimodel.Client, error) {
-	openaiClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	anthropicClient, err := aimodel.NewClient(
+func TestAnthropicClient(t *testing.T) {
+	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
 		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
 	)
 	if err != nil {
-		return nil, err
+		t.Logf("init client error: %v", err)
+		return
 	}
 
-	deepseekClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("DEEPSEEK_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("DEEPSEEK_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("DEEPSEEK_MODEL")),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return []*aimodel.Client{openaiClient, anthropicClient, deepseekClient}, nil
+	testCompletion(client)
+	testImageContent(client)
+	testStream(client)
+	testToolCall(client)
 }

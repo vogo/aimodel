@@ -15,26 +15,31 @@
  * limitations under the License.
  */
 
-package main
+package anthropropic_tests
 
 import (
+	"context"
+	"fmt"
 	"log"
 
 	"github.com/vogo/aimodel"
 )
 
-func main() {
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
-	)
+func testCompletion(client *aimodel.Client) {
+	fmt.Println("=== Anthropic Completion ===")
+
+	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+		Messages: []aimodel.Message{
+			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+		},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	testCompletion(client)
-	testImageContent(client)
-	testStream(client)
-	testToolCall(client)
+	if len(resp.Choices) == 0 {
+		log.Fatal("no choices in response")
+	}
+
+	fmt.Println(resp.Choices[0].Message.Content.Text())
 }

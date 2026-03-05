@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package main
+package anthropropic_tests
 
 import (
 	"context"
@@ -25,12 +25,27 @@ import (
 	"github.com/vogo/aimodel"
 )
 
-func testCompletion(client *aimodel.Client) {
-	fmt.Println("=== OpenAI Completion ===")
+func testImageContent(client *aimodel.Client) {
+	fmt.Println("=== Anthropic Image Content ===")
 
 	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+			{
+				Role: aimodel.RoleUser,
+				Content: aimodel.NewPartsContent(
+					aimodel.ContentPart{
+						Type: "text",
+						Text: "What is in this image?",
+					},
+					aimodel.ContentPart{
+						Type: "image_url",
+						ImageURL: &aimodel.ImageURL{
+							URL:    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg",
+							Detail: "low",
+						},
+					},
+				),
+			},
 		},
 	})
 	if err != nil {
