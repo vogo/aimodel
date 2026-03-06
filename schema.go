@@ -259,6 +259,13 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// Add accumulates token counts from another Usage into this one.
+func (u *Usage) Add(other *Usage) {
+	u.PromptTokens += other.PromptTokens
+	u.CompletionTokens += other.CompletionTokens
+	u.TotalTokens += other.TotalTokens
+}
+
 // Error represents an error in the API response body.
 type Error struct {
 	Code    string `json:"code"`
