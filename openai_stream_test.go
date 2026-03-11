@@ -134,6 +134,28 @@ func TestStreamInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestStreamCloseIdempotent(t *testing.T) {
+	body := "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+
+	// First close should succeed.
+	if err := s.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	// Second close should be a no-op (return nil).
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close: %v, want nil", err)
+	}
+
+	// Recv after close should return ErrStreamClosed.
+	_, err := s.Recv()
+	if !errors.Is(err, ErrStreamClosed) {
+		t.Errorf("got %v, want ErrStreamClosed", err)
+	}
+}
+
 func TestStreamAPIError(t *testing.T) {
 	body := `data: {"error":{"message":"Rate limit exceeded","type":"tokens","code":"rate_limit_exceeded"}}` + "\n\n"
 

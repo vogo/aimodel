@@ -618,16 +618,12 @@ func TestConcurrentRequests(t *testing.T) {
 	errCh := make(chan error, 50)
 
 	for range 50 {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			_, err := cc.ChatCompletion(context.Background(), testRequest())
 			if err != nil {
 				errCh <- err
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

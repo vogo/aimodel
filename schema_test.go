@@ -28,7 +28,7 @@ func TestChatRequestJSON(t *testing.T) {
 		Messages: []Message{
 			{Role: RoleUser, Content: NewTextContent("Hello")},
 		},
-		Temperature: floatPtr(0.7),
+		Temperature: new(0.7),
 		Stream:      true,
 	}
 
@@ -482,6 +482,80 @@ func TestOpenAIReasoningContentUnmarshal(t *testing.T) {
 	}
 }
 
-func floatPtr(f float64) *float64 {
-	return &f
+func TestStreamChunkUsageJSON(t *testing.T) {
+	raw := `{
+		"id": "chatcmpl-789",
+		"object": "chat.completion.chunk",
+		"created": 1700000002,
+		"model": "gpt-4o",
+		"choices": [],
+		"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+	}`
+
+	var chunk StreamChunk
+	if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if chunk.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if chunk.Usage.PromptTokens != 10 {
+		t.Errorf("prompt_tokens = %d", chunk.Usage.PromptTokens)
+	}
+	if chunk.Usage.CompletionTokens != 20 {
+		t.Errorf("completion_tokens = %d", chunk.Usage.CompletionTokens)
+	}
+	if chunk.Usage.TotalTokens != 30 {
+		t.Errorf("total_tokens = %d", chunk.Usage.TotalTokens)
+	}
+}
+
+func TestStreamChunkUsageOmittedWhenNil(t *testing.T) {
+	chunk := StreamChunk{ID: "test", Choices: []StreamChunkChoice{}}
+	data, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if _, ok := raw["usage"]; ok {
+		t.Error("usage should be omitted when nil")
+	}
+}
+
+func TestChatRequestClone(t *testing.T) {
+	orig := &ChatRequest{
+		Model: "gpt-4o",
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+		Stop:  []string{"END"},
+		Tools: []Tool{{Type: "function", Function: FunctionDefinition{Name: "test"}}},
+	}
+
+	cloned := orig.clone()
+
+	// Modify the clone's slices.
+	cloned.Messages = append(cloned.Messages, Message{Role: RoleAssistant, Content: NewTextContent("Hello")})
+	cloned.Stop = append(cloned.Stop, "STOP")
+	cloned.Tools = append(cloned.Tools, Tool{Type: "function", Function: FunctionDefinition{Name: "test2"}})
+	cloned.Model = "gpt-3.5"
+
+	// Original should be unchanged.
+	if len(orig.Messages) != 1 {
+		t.Errorf("original messages len = %d, want 1", len(orig.Messages))
+	}
+	if len(orig.Stop) != 1 {
+		t.Errorf("original stop len = %d, want 1", len(orig.Stop))
+	}
+	if len(orig.Tools) != 1 {
+		t.Errorf("original tools len = %d, want 1", len(orig.Tools))
+	}
+	if orig.Model != "gpt-4o" {
+		t.Errorf("original model = %q", orig.Model)
+	}
 }

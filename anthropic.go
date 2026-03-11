@@ -34,7 +34,7 @@ const (
 type anthropicRequest struct {
 	Model         string               `json:"model"`
 	Messages      []anthropicMessage   `json:"messages"`
-	System        string               `json:"system,omitempty"`
+	System        json.RawMessage      `json:"system,omitempty"`
 	MaxTokens     int                  `json:"max_tokens"`
 	Temperature   *float64             `json:"temperature,omitempty"`
 	TopP          *float64             `json:"top_p,omitempty"`
@@ -173,13 +173,33 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	}
 
 	// Extract system messages and convert the rest.
+	var systemTexts []string
+
+	var systemBlocks []anthropicContentBlock
+
+	useBlocks := false
+
 	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
-			if ar.System != "" {
-				ar.System += "\n"
-			}
+			if parts := m.Content.Parts(); len(parts) > 0 {
+				useBlocks = true
 
-			ar.System += m.Content.Text()
+				for _, p := range parts {
+					if p.Type == "text" {
+						systemBlocks = append(systemBlocks, anthropicContentBlock{
+							Type: "text",
+							Text: p.Text,
+						})
+					}
+				}
+			} else {
+				text := m.Content.Text()
+				systemTexts = append(systemTexts, text)
+				systemBlocks = append(systemBlocks, anthropicContentBlock{
+					Type: "text",
+					Text: text,
+				})
+			}
 
 			continue
 		}
@@ -190,6 +210,22 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		}
 
 		ar.Messages = append(ar.Messages, am)
+	}
+
+	if useBlocks && len(systemBlocks) > 0 {
+		data, err := json.Marshal(systemBlocks)
+		if err != nil {
+			return nil, fmt.Errorf("aimodel: marshal system content: %w", err)
+		}
+
+		ar.System = data
+	} else if len(systemTexts) > 0 {
+		data, err := json.Marshal(strings.Join(systemTexts, "\n"))
+		if err != nil {
+			return nil, fmt.Errorf("aimodel: marshal system text: %w", err)
+		}
+
+		ar.System = data
 	}
 
 	// Convert tools.

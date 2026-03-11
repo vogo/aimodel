@@ -57,8 +57,12 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		if ar.Model != ModelAnthropicClaude4Sonnet {
 			t.Errorf("model = %q", ar.Model)
 		}
-		if ar.System != "You are helpful." {
-			t.Errorf("system = %q", ar.System)
+		var system string
+		if err := json.Unmarshal(ar.System, &system); err != nil {
+			t.Errorf("unmarshal system: %v", err)
+		}
+		if system != "You are helpful." {
+			t.Errorf("system = %q", system)
 		}
 		if len(ar.Messages) != 1 {
 			t.Errorf("messages len = %d", len(ar.Messages))

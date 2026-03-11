@@ -18,7 +18,6 @@
 package aimodel
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -200,13 +199,13 @@ func TestNewClientNoAPIKeyError(t *testing.T) {
 	}
 }
 
-func TestNewClientNoBaseURLAllowed(t *testing.T) {
+func TestNewClientNoBaseURLAllowedForAnthropic(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "")
 	t.Setenv("OPENAI_BASE_URL", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 
-	// NewClient no longer requires baseURL (Anthropic models use a default).
-	c, err := NewClient(WithAPIKey("sk-test"))
+	// Anthropic protocol does not require baseURL (has a default).
+	c, err := NewClient(WithAPIKey("sk-test"), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -215,22 +214,30 @@ func TestNewClientNoBaseURLAllowed(t *testing.T) {
 	}
 }
 
-func TestNoBaseURLErrorAtRequestTime(t *testing.T) {
+func TestNewClientNoBaseURLErrorForOpenAI(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "")
 	t.Setenv("OPENAI_BASE_URL", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 
-	c, err := NewClient(WithAPIKey("sk-test"))
+	// OpenAI protocol requires baseURL at creation time.
+	_, err := NewClient(WithAPIKey("sk-test"))
+	if !errors.Is(err, ErrNoBaseURL) {
+		t.Errorf("err = %v, want ErrNoBaseURL", err)
+	}
+}
+
+func TestAnthropicNoBaseURLUsesDefault(t *testing.T) {
+	t.Setenv("AI_BASE_URL", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithProtocol(ProtocolAnthropic))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	// OpenAI model without baseURL should fail at request time.
-	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
-	})
-	if !errors.Is(err, ErrNoBaseURL) {
-		t.Errorf("err = %v, want ErrNoBaseURL", err)
+	// Anthropic client without explicit baseURL should use the default.
+	if got := c.anthropicBaseURL(); got != anthropicDefaultBaseURL {
+		t.Errorf("anthropicBaseURL() = %q, want %q", got, anthropicDefaultBaseURL)
 	}
 }

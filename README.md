@@ -3,7 +3,35 @@
 [![Build](https://github.com/vogo/aimodel/actions/workflows/build.yml/badge.svg)](https://github.com/vogo/aimodel/actions/workflows/build.yml)
 [![codecov](https://codecov.io/gh/vogo/aimodel/branch/main/graph/badge.svg)](https://codecov.io/gh/vogo/aimodel)
 
-A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic).
+A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero external dependencies.
+
+## Design Scope
+
+This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include:
+
+- **Retry / backoff** — Use middleware or wrap calls externally (e.g., custom `http.RoundTripper` or a retry loop).
+- **Rate limiting** — Enforce limits in your application layer or via a token-bucket `http.RoundTripper`.
+- **Request validation** — The API server validates requests; the SDK passes them through.
+- **Caching / persistence** — Handle at the application level.
+- **Logging / metrics** — Inject via `WithHTTPClient` with a custom `http.RoundTripper`.
+
+This keeps the SDK minimal and composable. Control mechanisms belong in the layer above, where you have full context over your application's requirements. For example:
+
+```go
+// External retry with exponential backoff
+for attempt := 0; attempt < maxRetries; attempt++ {
+    resp, err := client.ChatCompletion(ctx, req)
+    if err == nil {
+        return resp, nil
+    }
+    var apiErr *aimodel.APIError
+    if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
+        time.Sleep(backoff(attempt))
+        continue
+    }
+    return nil, err
+}
+```
 
 ## Usage
 
@@ -86,7 +114,7 @@ The `composes` package dispatches requests across multiple backends with failove
 ```go
 import "github.com/vogo/aimodel/composes"
 
-openai, _ := aimodel.NewClient(aimodel.WithAPIKey("sk-openai"))
+openai, _ := aimodel.NewClient(aimodel.WithAPIKey("sk-openai"), aimodel.WithBaseURL("https://api.openai.com/v1"))
 anthropic, _ := aimodel.NewClient(
     aimodel.WithAPIKey("sk-ant"),
     aimodel.WithProtocol(aimodel.ProtocolAnthropic),

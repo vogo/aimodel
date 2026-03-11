@@ -123,8 +123,12 @@ func NewClient(opts ...Option) (*Client, error) {
 	switch c.protocol {
 	case "", ProtocolOpenAI:
 		c.protocol = ProtocolOpenAI
+
+		if c.baseURL == "" {
+			return nil, ErrNoBaseURL
+		}
 	case ProtocolAnthropic:
-		// valid
+		// Anthropic has a default base URL; explicit value is optional.
 	default:
 		return nil, fmt.Errorf("aimodel: unsupported protocol %q", c.protocol)
 	}

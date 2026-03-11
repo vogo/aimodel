@@ -53,11 +53,13 @@ func (s *Stream) Recv() (*StreamChunk, error) {
 }
 
 // Close closes the stream and releases resources.
+// Close is safe to call concurrently with Recv and is idempotent.
 func (s *Stream) Close() error {
-	s.closed.Store(true)
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// Close the reader directly to unblock any in-progress Recv.
+	// http.Response.Body.Close is safe to call concurrently.
 	return s.reader.Close()
 }

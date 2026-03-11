@@ -236,6 +236,29 @@ type FunctionDefinition struct {
 	Parameters  any    `json:"parameters,omitempty"`
 }
 
+// clone returns a deep copy of the ChatRequest, duplicating slice fields
+// so that mutations to the copy do not affect the original.
+func (r *ChatRequest) clone() ChatRequest {
+	c := *r
+
+	if len(r.Messages) > 0 {
+		c.Messages = make([]Message, len(r.Messages))
+		copy(c.Messages, r.Messages)
+	}
+
+	if len(r.Stop) > 0 {
+		c.Stop = make([]string, len(r.Stop))
+		copy(c.Stop, r.Stop)
+	}
+
+	if len(r.Tools) > 0 {
+		c.Tools = make([]Tool, len(r.Tools))
+		copy(c.Tools, r.Tools)
+	}
+
+	return c
+}
+
 // StreamChunk represents a single chunk in a streaming response.
 type StreamChunk struct {
 	ID      string              `json:"id"`
@@ -243,6 +266,7 @@ type StreamChunk struct {
 	Created int64               `json:"created"`
 	Model   string              `json:"model"`
 	Choices []StreamChunkChoice `json:"choices"`
+	Usage   *Usage              `json:"usage,omitempty"`
 }
 
 // StreamChunkChoice represents a choice within a stream chunk.

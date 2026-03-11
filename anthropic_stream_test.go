@@ -291,4 +291,18 @@ func TestAnthropicStreamFinishReason(t *testing.T) {
 	if *chunk.Choices[0].FinishReason != string(FinishReasonLength) {
 		t.Errorf("finish_reason = %q, want %q", *chunk.Choices[0].FinishReason, FinishReasonLength)
 	}
+
+	// Verify usage is included in the message_delta chunk.
+	if chunk.Usage == nil {
+		t.Fatal("expected usage in message_delta chunk")
+	}
+	if chunk.Usage.PromptTokens != 5 {
+		t.Errorf("prompt_tokens = %d, want 5", chunk.Usage.PromptTokens)
+	}
+	if chunk.Usage.CompletionTokens != 100 {
+		t.Errorf("completion_tokens = %d, want 100", chunk.Usage.CompletionTokens)
+	}
+	if chunk.Usage.TotalTokens != 105 {
+		t.Errorf("total_tokens = %d, want 105", chunk.Usage.TotalTokens)
+	}
 }

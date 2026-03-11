@@ -41,8 +41,8 @@ func TestToAnthropicRequestBasic(t *testing.T) {
 	if ar.MaxTokens != anthropicDefaultMaxTokens {
 		t.Errorf("max_tokens = %d, want %d", ar.MaxTokens, anthropicDefaultMaxTokens)
 	}
-	if ar.System != "" {
-		t.Errorf("system = %q, want empty", ar.System)
+	if ar.System != nil {
+		t.Errorf("system = %s, want nil", ar.System)
 	}
 	if len(ar.Messages) != 1 {
 		t.Fatalf("messages len = %d", len(ar.Messages))
@@ -67,8 +67,12 @@ func TestToAnthropicRequestSystemExtraction(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	if ar.System != "You are helpful.\nBe concise." {
-		t.Errorf("system = %q", ar.System)
+	var system string
+	if err := json.Unmarshal(ar.System, &system); err != nil {
+		t.Fatalf("unmarshal system: %v", err)
+	}
+	if system != "You are helpful.\nBe concise." {
+		t.Errorf("system = %q", system)
 	}
 	if len(ar.Messages) != 1 {
 		t.Errorf("messages len = %d, want 1 (system excluded)", len(ar.Messages))
@@ -710,5 +714,73 @@ func TestMapAnthropicStopReason(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestToAnthropicRequestSystemMultimodal(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role: RoleSystem,
+				Content: NewPartsContent(
+					ContentPart{Type: "text", Text: "You are helpful."},
+				),
+			},
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// Multimodal system messages should produce a content block array.
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.System, &blocks); err != nil {
+		t.Fatalf("unmarshal system blocks: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "You are helpful." {
+		t.Errorf("block = %+v", blocks[0])
+	}
+}
+
+func TestToAnthropicRequestSystemMixed(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleSystem, Content: NewTextContent("Be helpful.")},
+			{
+				Role: RoleSystem,
+				Content: NewPartsContent(
+					ContentPart{Type: "text", Text: "Be concise."},
+				),
+			},
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// When any system message has parts, all should be content blocks.
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.System, &blocks); err != nil {
+		t.Fatalf("unmarshal system blocks: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks len = %d, want 2", len(blocks))
+	}
+	if blocks[0].Text != "Be helpful." {
+		t.Errorf("blocks[0].text = %q", blocks[0].Text)
+	}
+	if blocks[1].Text != "Be concise." {
+		t.Errorf("blocks[1].text = %q", blocks[1].Text)
 	}
 }

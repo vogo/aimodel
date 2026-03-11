@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.2.0). Leave empty to auto-bump patch."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install tools
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install mvdan.cc/gofumpt@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          go install github.com/vogo/license-header-checker/cmd/license-header-checker@latest
+
+      - name: Build and test
+        run: make build
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.' | head -1)
+            if [ -z "$LATEST" ]; then
+              VERSION="v0.1.0"
+            else
+              # Auto-bump patch version
+              MAJOR=$(echo "$LATEST" | cut -d. -f1)
+              MINOR=$(echo "$LATEST" | cut -d. -f2)
+              PATCH=$(echo "$LATEST" | cut -d. -f3)
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.' | head -1)
+          if [ -z "$LATEST" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LATEST}..HEAD"
+          fi
+
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "## What's Changed"
+            echo ""
+            # Group commits by type
+            for TYPE_LABEL in "feat:Features" "fix:Bug Fixes" "refactor:Refactoring" "perf:Performance" "test:Tests" "docs:Documentation" "chore:Chores" "ci:CI"; do
+              TYPE="${TYPE_LABEL%%:*}"
+              LABEL="${TYPE_LABEL##*:}"
+              COMMITS=$(git log "$RANGE" --pretty=format:"- %s (%h)" --grep="^${TYPE}:" 2>/dev/null || true)
+              if [ -n "$COMMITS" ]; then
+                echo "### $LABEL"
+                echo "$COMMITS"
+                echo ""
+              fi
+            done
+            # Uncategorized commits
+            UNCATEGORIZED=$(git log "$RANGE" --pretty=format:"%s|%h" 2>/dev/null | grep -vE "^(feat|fix|refactor|perf|test|docs|chore|ci):" || true)
+            if [ -n "$UNCATEGORIZED" ]; then
+              echo "### Other Changes"
+              echo "$UNCATEGORIZED" | while IFS='|' read -r MSG HASH; do
+                echo "- $MSG ($HASH)"
+              done
+              echo ""
+            fi
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LATEST:-$(git rev-list --max-parents=0 HEAD | head -1)}...${{ steps.version.outputs.version }}"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes "${{ steps.changelog.outputs.changelog }}"

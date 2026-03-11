@@ -37,8 +37,9 @@ func newAnthropicStream(body io.ReadCloser) *Stream {
 
 func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 	var (
-		msgID string
-		model string
+		msgID       string
+		model       string
+		inputTokens int
 	)
 
 	return func() (*StreamChunk, error) {
@@ -88,6 +89,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 
 				msgID = ms.Message.ID
 				model = ms.Message.Model
+				inputTokens = ms.Message.Usage.InputTokens
 
 				continue
 
@@ -189,7 +191,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 
 				reason := string(mapAnthropicStopReason(md.Delta.StopReason))
 
-				return &StreamChunk{
+				chunk := &StreamChunk{
 					ID:    msgID,
 					Model: model,
 					Choices: []StreamChunkChoice{
@@ -198,7 +200,18 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 							FinishReason: &reason,
 						},
 					},
-				}, nil
+				}
+
+				if md.Usage != nil {
+					outputTokens := md.Usage.OutputTokens
+					chunk.Usage = &Usage{
+						PromptTokens:     inputTokens,
+						CompletionTokens: outputTokens,
+						TotalTokens:      inputTokens + outputTokens,
+					}
+				}
+
+				return chunk, nil
 
 			case "message_stop":
 				return nil, io.EOF
