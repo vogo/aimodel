@@ -4,7 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`github.com/vogo/aimodel` — A unified Go SDK for AI model APIs with multi-protocol support (OpenAI-compatible, Anthropic) and composable multi-model dispatching. Zero external dependencies; Go 1.24+.
+`github.com/vogo/aimodel` — A unified Go SDK for AI model APIs with multi-protocol support (OpenAI-compatible, Anthropic) and composable multi-model dispatching. Zero external dependencies.
+
+This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. 
+It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
 
 ## Rules
 

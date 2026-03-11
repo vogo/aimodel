@@ -7,31 +7,10 @@ A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero
 
 ## Design Scope
 
-This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include:
+This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. 
+It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
+This keeps the SDK minimal and composable. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
-- **Retry / backoff** — Use middleware or wrap calls externally (e.g., custom `http.RoundTripper` or a retry loop).
-- **Rate limiting** — Enforce limits in your application layer or via a token-bucket `http.RoundTripper`.
-- **Request validation** — The API server validates requests; the SDK passes them through.
-- **Caching / persistence** — Handle at the application level.
-- **Logging / metrics** — Inject via `WithHTTPClient` with a custom `http.RoundTripper`.
-
-This keeps the SDK minimal and composable. Control mechanisms belong in the layer above, where you have full context over your application's requirements. For example:
-
-```go
-// External retry with exponential backoff
-for attempt := 0; attempt < maxRetries; attempt++ {
-    resp, err := client.ChatCompletion(ctx, req)
-    if err == nil {
-        return resp, nil
-    }
-    var apiErr *aimodel.APIError
-    if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
-        time.Sleep(backoff(attempt))
-        continue
-    }
-    return nil, err
-}
-```
 
 ## Usage
 
