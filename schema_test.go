@@ -296,6 +296,43 @@ func TestUsageJSON(t *testing.T) {
 	}
 }
 
+func TestUsageAdd(t *testing.T) {
+	tests := []struct {
+		name   string
+		base   Usage
+		other  Usage
+		expect Usage
+	}{
+		{
+			name:   "add non-zero to zero",
+			base:   Usage{},
+			other:  Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+			expect: Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+		},
+		{
+			name:   "add non-zero to non-zero",
+			base:   Usage{PromptTokens: 5, CompletionTokens: 10, TotalTokens: 15},
+			other:  Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+			expect: Usage{PromptTokens: 15, CompletionTokens: 30, TotalTokens: 45},
+		},
+		{
+			name:   "add zero to non-zero",
+			base:   Usage{PromptTokens: 5, CompletionTokens: 10, TotalTokens: 15},
+			other:  Usage{},
+			expect: Usage{PromptTokens: 5, CompletionTokens: 10, TotalTokens: 15},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.base.Add(&tt.other)
+			if tt.base != tt.expect {
+				t.Errorf("got %+v, want %+v", tt.base, tt.expect)
+			}
+		})
+	}
+}
+
 func TestContentMarshalString(t *testing.T) {
 	c := NewTextContent("hello")
 	data, err := json.Marshal(c)
