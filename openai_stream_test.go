@@ -174,3 +174,169 @@ func TestStreamAPIError(t *testing.T) {
 		t.Errorf("code = %q", apiErr.Code)
 	}
 }
+
+func TestStreamUsageFromFinalChunk(t *testing.T) {
+	body := ""
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}` + "\n\n"
+	body += "data: [DONE]\n\n"
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+
+	for {
+		_, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	usage := s.Usage()
+	if usage == nil {
+		t.Fatal("Usage() = nil, want non-nil")
+	}
+	if usage.PromptTokens != 10 {
+		t.Errorf("prompt_tokens = %d, want 10", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 20 {
+		t.Errorf("completion_tokens = %d, want 20", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 30 {
+		t.Errorf("total_tokens = %d, want 30", usage.TotalTokens)
+	}
+}
+
+func TestStreamUsageNilWhenNoUsageChunk(t *testing.T) {
+	body := ""
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}` + "\n\n"
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+	body += "data: [DONE]\n\n"
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+
+	for {
+		_, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	if usage := s.Usage(); usage != nil {
+		t.Errorf("Usage() = %+v, want nil", usage)
+	}
+}
+
+func TestStreamCloseOnCloseCallback(t *testing.T) {
+	body := ""
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}` + "\n\n"
+	body += "data: [DONE]\n\n"
+
+	var callbackUsage *Usage
+	var callbackCalled bool
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s = WrapStream(s, func(u *Usage) {
+		callbackCalled = true
+		callbackUsage = u
+	})
+
+	for {
+		_, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if !callbackCalled {
+		t.Fatal("onClose callback was not called")
+	}
+	if callbackUsage == nil {
+		t.Fatal("callback received nil usage, want non-nil")
+	}
+	if callbackUsage.PromptTokens != 5 {
+		t.Errorf("prompt_tokens = %d, want 5", callbackUsage.PromptTokens)
+	}
+	if callbackUsage.CompletionTokens != 10 {
+		t.Errorf("completion_tokens = %d, want 10", callbackUsage.CompletionTokens)
+	}
+	if callbackUsage.TotalTokens != 15 {
+		t.Errorf("total_tokens = %d, want 15", callbackUsage.TotalTokens)
+	}
+}
+
+func TestStreamCloseOnCloseCallbackWithoutUsage(t *testing.T) {
+	body := ""
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
+	body += "data: [DONE]\n\n"
+
+	var callbackCalled bool
+	var callbackUsage *Usage
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s = WrapStream(s, func(u *Usage) {
+		callbackCalled = true
+		callbackUsage = u
+	})
+
+	for {
+		_, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if !callbackCalled {
+		t.Fatal("onClose callback was not called")
+	}
+	if callbackUsage != nil {
+		t.Errorf("callback usage = %+v, want nil", callbackUsage)
+	}
+}
+
+func TestWrapStreamNil(t *testing.T) {
+	var callbackCalled bool
+	var callbackUsage *Usage
+
+	result := WrapStream(nil, func(u *Usage) {
+		callbackCalled = true
+		callbackUsage = u
+	})
+
+	if result != nil {
+		t.Errorf("WrapStream(nil, cb) = %v, want nil", result)
+	}
+	if !callbackCalled {
+		t.Fatal("onClose callback was not called immediately for nil stream")
+	}
+	if callbackUsage != nil {
+		t.Errorf("callback usage = %+v, want nil", callbackUsage)
+	}
+}
+
+func TestWrapStreamNilCallbackNil(t *testing.T) {
+	// Should not panic and should return nil.
+	result := WrapStream(nil, nil)
+	if result != nil {
+		t.Errorf("WrapStream(nil, nil) = %v, want nil", result)
+	}
+}

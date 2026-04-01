@@ -291,6 +291,159 @@ func TestChatCompletionStreamAPIError(t *testing.T) {
 	}
 }
 
+func TestChatCompletionStreamAutoInjectsStreamOptions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+
+		if req.StreamOptions == nil {
+			t.Error("StreamOptions = nil, want non-nil")
+		} else if !req.StreamOptions.IncludeUsage {
+			t.Error("StreamOptions.IncludeUsage = false, want true")
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// Caller does NOT set StreamOptions.
+	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	// Drain the stream.
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+}
+
+func TestChatCompletionStreamPreservesExplicitStreamOptions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+
+		if req.StreamOptions == nil {
+			t.Error("StreamOptions = nil, want non-nil")
+		} else if req.StreamOptions.IncludeUsage {
+			t.Error("StreamOptions.IncludeUsage = true, want false (caller explicitly set false)")
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// Caller explicitly sets IncludeUsage: false.
+	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
+		Model:         ModelOpenaiGPT4o,
+		Messages:      []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		StreamOptions: &StreamOptions{IncludeUsage: false},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+}
+
+func TestChatCompletionStreamUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		chunks := []string{
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":16,"total_tokens":24}}`,
+		}
+
+		for _, chunk := range chunks {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	usage := stream.Usage()
+	if usage == nil {
+		t.Fatal("Usage() = nil, want non-nil")
+	}
+	if usage.PromptTokens != 8 {
+		t.Errorf("prompt_tokens = %d, want 8", usage.PromptTokens)
+	}
+	if usage.CompletionTokens != 16 {
+		t.Errorf("completion_tokens = %d, want 16", usage.CompletionTokens)
+	}
+	if usage.TotalTokens != 24 {
+		t.Errorf("total_tokens = %d, want 24", usage.TotalTokens)
+	}
+}
+
 func TestChatCompletionWithTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ChatRequest

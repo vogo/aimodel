@@ -29,10 +29,12 @@ const maxStreamLineSize = 1 << 20
 // Stream reads streaming chat completion responses using SSE.
 // Stream is safe for concurrent use between a single Recv caller and Close.
 type Stream struct {
-	mu     sync.Mutex
-	reader io.ReadCloser
-	recv   func() (*StreamChunk, error)
-	closed atomic.Bool
+	mu      sync.Mutex
+	reader  io.ReadCloser
+	recv    func() (*StreamChunk, error)
+	closed  atomic.Bool
+	usage   *Usage // captured from the final chunk that includes usage data
+	onClose func(*Usage)
 }
 
 // Recv reads the next chunk from the stream.
@@ -49,7 +51,22 @@ func (s *Stream) Recv() (*StreamChunk, error) {
 		return nil, ErrStreamClosed
 	}
 
-	return s.recv()
+	chunk, err := s.recv()
+	if chunk != nil && chunk.Usage != nil {
+		s.usage = chunk.Usage
+	}
+
+	return chunk, err
+}
+
+// Usage returns the accumulated usage from the stream, if available.
+// This is typically populated from the final chunk when stream_options.include_usage is set,
+// or from Anthropic's message_delta event.
+func (s *Stream) Usage() *Usage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.usage
 }
 
 // Close closes the stream and releases resources.
@@ -59,7 +76,27 @@ func (s *Stream) Close() error {
 		return nil
 	}
 
+	if s.onClose != nil {
+		s.onClose(s.usage)
+	}
+
 	// Close the reader directly to unblock any in-progress Recv.
 	// http.Response.Body.Close is safe to call concurrently.
 	return s.reader.Close()
+}
+
+// WrapStream wraps an existing stream with a callback that fires on close with usage data.
+// If s is nil, onClose is called immediately with nil usage and nil is returned.
+func WrapStream(s *Stream, onClose func(*Usage)) *Stream {
+	if s == nil {
+		if onClose != nil {
+			onClose(nil)
+		}
+
+		return nil
+	}
+
+	s.onClose = onClose
+
+	return s
 }

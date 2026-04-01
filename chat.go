@@ -100,6 +100,11 @@ func (c *Client) openaiChatCompletionStream(ctx context.Context, req *ChatReques
 	r := req.clone()
 	r.Stream = true
 
+	// Request usage data in the final stream chunk if not already set.
+	if r.StreamOptions == nil {
+		r.StreamOptions = &StreamOptions{IncludeUsage: true}
+	}
+
 	c.applyDefaultModel(&r)
 
 	resp, err := c.doRequest(ctx, &r)

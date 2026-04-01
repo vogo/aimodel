@@ -49,25 +49,31 @@ type Thinking struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+// StreamOptions configures streaming behavior.
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 // ChatRequest represents a request to the chat completions API.
 type ChatRequest struct {
-	Model            string    `json:"model"`
-	Messages         []Message `json:"messages"`
-	Temperature      *float64  `json:"temperature,omitempty"`
-	MaxTokens        *int      `json:"max_tokens,omitempty"`
-	TopP             *float64  `json:"top_p,omitempty"`
-	N                *int      `json:"n,omitempty"`
-	Stop             []string  `json:"stop,omitempty"`
-	FrequencyPenalty *float64  `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64  `json:"presence_penalty,omitempty"`
-	Seed             *int      `json:"seed,omitempty"`
-	User             string    `json:"user,omitempty"`
-	ResponseFormat   any       `json:"response_format,omitempty"`
-	Stream           bool      `json:"stream,omitempty"`
-	Tools            []Tool    `json:"tools,omitempty"`
-	ToolChoice       any       `json:"tool_choice,omitempty"`
-	Thinking         *Thinking `json:"thinking,omitempty"`
-	ReasoningEffort  string    `json:"reasoning_effort,omitempty"`
+	Model            string         `json:"model"`
+	Messages         []Message      `json:"messages"`
+	Temperature      *float64       `json:"temperature,omitempty"`
+	MaxTokens        *int           `json:"max_tokens,omitempty"`
+	TopP             *float64       `json:"top_p,omitempty"`
+	N                *int           `json:"n,omitempty"`
+	Stop             []string       `json:"stop,omitempty"`
+	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
+	Seed             *int           `json:"seed,omitempty"`
+	User             string         `json:"user,omitempty"`
+	ResponseFormat   any            `json:"response_format,omitempty"`
+	Stream           bool           `json:"stream,omitempty"`
+	StreamOptions    *StreamOptions `json:"stream_options,omitempty"`
+	Tools            []Tool         `json:"tools,omitempty"`
+	ToolChoice       any            `json:"tool_choice,omitempty"`
+	Thinking         *Thinking      `json:"thinking,omitempty"`
+	ReasoningEffort  string         `json:"reasoning_effort,omitempty"`
 }
 
 // ChatResponse represents a response from the chat completions API.
