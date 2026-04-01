@@ -65,6 +65,8 @@ Environment variable fallback order:
 
 ### Anthropic Translation
 
+API reference: https://platform.claude.com/docs/en/api/messages
+
 Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. System messages are extracted into the separate `system` field. Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
 
 ## Packages

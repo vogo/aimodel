@@ -23,6 +23,7 @@ import (
 	"strings"
 )
 
+// Anthropic Messages API reference: https://platform.claude.com/docs/en/api/messages
 const (
 	anthropicDefaultBaseURL   = "https://api.anthropic.com"
 	anthropicAPIVersion       = "2023-06-01"
@@ -255,6 +256,10 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 
 	// Tool result messages become user messages with tool_result content blocks.
 	if m.Role == RoleTool {
+		if m.ToolCallID == "" {
+			return anthropicMessage{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
+		}
+
 		am.Role = "user"
 
 		block := anthropicContentBlock{

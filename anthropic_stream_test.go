@@ -257,6 +257,173 @@ func TestAnthropicStreamThinking(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamToolUseIndexMapping(t *testing.T) {
+	// Anthropic uses global content block indices (text=0, tool_use=1, tool_use=2).
+	// The stream must remap these to tool-call-scoped indices (0, 1).
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_idx","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}` + "\n\n" +
+		// Block 0: text
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll call two tools."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		// Block 1: first tool_use (tool index 0)
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_a","name":"get_weather"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"NYC\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		// Block 2: second tool_use (tool index 1)
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_b","name":"get_time"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"tz\":"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"UTC\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":2}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":30}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	var msg Message
+
+	for {
+		chunk, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		if len(chunk.Choices) > 0 {
+			msg.AppendDelta(&chunk.Choices[0].Delta)
+		}
+	}
+
+	// Verify text content.
+	if msg.Content.Text() != "I'll call two tools." {
+		t.Errorf("content = %q", msg.Content.Text())
+	}
+
+	// Verify two tool calls with correct indices.
+	if len(msg.ToolCalls) != 2 {
+		t.Fatalf("tool_calls len = %d, want 2", len(msg.ToolCalls))
+	}
+
+	tc0 := msg.ToolCalls[0]
+	if tc0.Index != 0 {
+		t.Errorf("tool_calls[0].index = %d, want 0", tc0.Index)
+	}
+	if tc0.ID != "toolu_a" {
+		t.Errorf("tool_calls[0].id = %q, want toolu_a", tc0.ID)
+	}
+	if tc0.Function.Name != "get_weather" {
+		t.Errorf("tool_calls[0].name = %q", tc0.Function.Name)
+	}
+	if tc0.Function.Arguments != `{"city":"NYC"}` {
+		t.Errorf("tool_calls[0].arguments = %q", tc0.Function.Arguments)
+	}
+
+	tc1 := msg.ToolCalls[1]
+	if tc1.Index != 1 {
+		t.Errorf("tool_calls[1].index = %d, want 1", tc1.Index)
+	}
+	if tc1.ID != "toolu_b" {
+		t.Errorf("tool_calls[1].id = %q, want toolu_b", tc1.ID)
+	}
+	if tc1.Function.Name != "get_time" {
+		t.Errorf("tool_calls[1].name = %q", tc1.Function.Name)
+	}
+	if tc1.Function.Arguments != `{"tz":"UTC"}` {
+		t.Errorf("tool_calls[1].arguments = %q", tc1.Function.Arguments)
+	}
+}
+
+func TestAnthropicStreamThinkingWithToolUse(t *testing.T) {
+	// Thinking(0) + text(1) + tool_use(2): tool index should be 0, not 2.
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_tt","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}` + "\n\n" +
+		// Block 0: thinking
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I need to call a tool."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		// Block 1: text
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Calling tool."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":1}` + "\n\n" +
+		// Block 2: tool_use (should become tool index 0)
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_c","name":"calculator"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"expr\":\"2+2\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":2}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":15}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	var msg Message
+
+	for {
+		chunk, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		if len(chunk.Choices) > 0 {
+			msg.AppendDelta(&chunk.Choices[0].Delta)
+		}
+	}
+
+	if msg.Thinking != "I need to call a tool." {
+		t.Errorf("thinking = %q", msg.Thinking)
+	}
+
+	if msg.Content.Text() != "Calling tool." {
+		t.Errorf("content = %q", msg.Content.Text())
+	}
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool_calls len = %d, want 1", len(msg.ToolCalls))
+	}
+
+	tc := msg.ToolCalls[0]
+	if tc.Index != 0 {
+		t.Errorf("tool_calls[0].index = %d, want 0 (not the Anthropic block index 2)", tc.Index)
+	}
+	if tc.ID != "toolu_c" {
+		t.Errorf("tool_calls[0].id = %q", tc.ID)
+	}
+	if tc.Function.Name != "calculator" {
+		t.Errorf("tool_calls[0].name = %q", tc.Function.Name)
+	}
+	if tc.Function.Arguments != `{"expr":"2+2"}` {
+		t.Errorf("tool_calls[0].arguments = %q", tc.Function.Arguments)
+	}
+}
+
 func TestAnthropicStreamFinishReason(t *testing.T) {
 	body := "" +
 		"event: message_start\n" +

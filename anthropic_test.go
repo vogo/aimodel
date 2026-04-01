@@ -19,6 +19,7 @@ package aimodel
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -693,6 +694,29 @@ func TestToAnthropicMessageThinkingWithToolCalls(t *testing.T) {
 
 	if blocks[2].Type != "tool_use" {
 		t.Errorf("block[2].type = %q, want tool_use", blocks[2].Type)
+	}
+}
+
+func TestToAnthropicRequestToolResultMissingID(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("weather?")},
+			{
+				Role:    RoleTool,
+				Content: NewTextContent(`{"temp": 72}`),
+				// ToolCallID intentionally omitted.
+			},
+		},
+	}
+
+	_, err := toAnthropicRequest(req)
+	if err == nil {
+		t.Fatal("expected error for missing tool_call_id")
+	}
+
+	if !strings.Contains(err.Error(), "tool_call_id") {
+		t.Errorf("error = %q, want mention of tool_call_id", err.Error())
 	}
 }
 

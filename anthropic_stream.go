@@ -25,6 +25,8 @@ import (
 	"strings"
 )
 
+// newAnthropicStream creates a Stream that parses Anthropic SSE events.
+// Streaming reference: https://platform.claude.com/docs/en/api/messages
 func newAnthropicStream(body io.ReadCloser) *Stream {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineSize)
@@ -40,6 +42,12 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 		msgID       string
 		model       string
 		inputTokens int
+
+		// blockToTool maps Anthropic content block index to tool call index.
+		// Anthropic uses sequential indices for all content blocks (text, thinking, tool_use),
+		// but AppendDelta expects indices scoped to tool calls only.
+		blockToTool = make(map[int]int)
+		nextToolIdx int
 	)
 
 	return func() (*StreamChunk, error) {
@@ -101,6 +109,10 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 
 				switch cbs.ContentBlock.Type {
 				case "tool_use":
+					toolIdx := nextToolIdx
+					blockToTool[cbs.Index] = toolIdx
+					nextToolIdx++
+
 					return &StreamChunk{
 						ID:    msgID,
 						Model: model,
@@ -111,7 +123,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 									Role: RoleAssistant,
 									ToolCalls: []ToolCall{
 										{
-											Index: cbs.Index,
+											Index: toolIdx,
 											ID:    cbs.ContentBlock.ID,
 											Type:  "function",
 											Function: FunctionCall{
@@ -162,13 +174,18 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 				case "signature_delta":
 					continue
 				case "input_json_delta":
+					toolIdx, ok := blockToTool[cbd.Index]
+					if !ok {
+						continue
+					}
+
 					chunk.Choices = []StreamChunkChoice{
 						{
 							Index: 0,
 							Delta: Message{
 								ToolCalls: []ToolCall{
 									{
-										Index: cbd.Index,
+										Index: toolIdx,
 										Function: FunctionCall{
 											Arguments: cbd.Delta.PartialJSON,
 										},
