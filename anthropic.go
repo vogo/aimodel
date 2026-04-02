@@ -99,8 +99,15 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// totalInputTokens returns the total input tokens including cached tokens.
+func (u anthropicUsage) totalInputTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 type anthropicErrorResponse struct {
@@ -443,9 +450,9 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 			},
 		},
 		Usage: Usage{
-			PromptTokens:     ar.Usage.InputTokens,
+			PromptTokens:     ar.Usage.totalInputTokens(),
 			CompletionTokens: ar.Usage.OutputTokens,
-			TotalTokens:      ar.Usage.InputTokens + ar.Usage.OutputTokens,
+			TotalTokens:      ar.Usage.totalInputTokens() + ar.Usage.OutputTokens,
 		},
 	}
 }

@@ -773,6 +773,79 @@ func TestToAnthropicRequestSystemMultimodal(t *testing.T) {
 	}
 }
 
+func TestAnthropicUsageTotalInputTokens(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage anthropicUsage
+		want  int
+	}{
+		{
+			name:  "all zeros",
+			usage: anthropicUsage{},
+			want:  0,
+		},
+		{
+			name:  "only InputTokens",
+			usage: anthropicUsage{InputTokens: 15},
+			want:  15,
+		},
+		{
+			name: "all three fields set",
+			usage: anthropicUsage{
+				InputTokens:              10,
+				CacheCreationInputTokens: 5,
+				CacheReadInputTokens:     3,
+			},
+			want: 18,
+		},
+		{
+			name: "only cache fields set",
+			usage: anthropicUsage{
+				CacheCreationInputTokens: 7,
+				CacheReadInputTokens:     4,
+			},
+			want: 11,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.usage.totalInputTokens(); got != tt.want {
+				t.Errorf("totalInputTokens() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromAnthropicResponseCacheTokens(t *testing.T) {
+	ar := &anthropicResponse{
+		ID:    "msg_cache",
+		Model: ModelAnthropicClaude4Sonnet,
+		Content: []anthropicContentBlock{
+			{Type: "text", Text: "Cached response."},
+		},
+		StopReason: "end_turn",
+		Usage: anthropicUsage{
+			InputTokens:              10,
+			CacheCreationInputTokens: 5,
+			CacheReadInputTokens:     3,
+			OutputTokens:             20,
+		},
+	}
+
+	cr := fromAnthropicResponse(ar)
+
+	if cr.Usage.PromptTokens != 18 {
+		t.Errorf("prompt_tokens = %d, want 18 (10+5+3)", cr.Usage.PromptTokens)
+	}
+	if cr.Usage.CompletionTokens != 20 {
+		t.Errorf("completion_tokens = %d, want 20", cr.Usage.CompletionTokens)
+	}
+	if cr.Usage.TotalTokens != 38 {
+		t.Errorf("total_tokens = %d, want 38 (18+20)", cr.Usage.TotalTokens)
+	}
+}
+
 func TestToAnthropicRequestSystemMixed(t *testing.T) {
 	req := &ChatRequest{
 		Model: ModelAnthropicClaude4Sonnet,

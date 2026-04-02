@@ -424,6 +424,52 @@ func TestAnthropicStreamThinkingWithToolUse(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamCacheTokensUsage(t *testing.T) {
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_cache","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":10,"cache_creation_input_tokens":5,"cache_read_input_tokens":3,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	var usageChunk *StreamChunk
+
+	for {
+		chunk, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		if chunk.Usage != nil {
+			usageChunk = chunk
+		}
+	}
+
+	if usageChunk == nil {
+		t.Fatal("expected a chunk with usage")
+	}
+	if usageChunk.Usage.PromptTokens != 18 {
+		t.Errorf("prompt_tokens = %d, want 18 (10+5+3)", usageChunk.Usage.PromptTokens)
+	}
+	if usageChunk.Usage.CompletionTokens != 2 {
+		t.Errorf("completion_tokens = %d, want 2", usageChunk.Usage.CompletionTokens)
+	}
+	if usageChunk.Usage.TotalTokens != 20 {
+		t.Errorf("total_tokens = %d, want 20 (18+2)", usageChunk.Usage.TotalTokens)
+	}
+}
+
 func TestAnthropicStreamFinishReason(t *testing.T) {
 	body := "" +
 		"event: message_start\n" +

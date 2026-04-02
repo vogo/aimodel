@@ -97,7 +97,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 
 				msgID = ms.Message.ID
 				model = ms.Message.Model
-				inputTokens = ms.Message.Usage.InputTokens
+				inputTokens = ms.Message.Usage.totalInputTokens()
 
 				continue
 
