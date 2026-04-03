@@ -287,6 +287,44 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+}
+
+// usageJSON is the JSON representation used for unmarshaling Usage,
+// including nested OpenAI prompt_tokens_details.
+type usageJSON struct {
+	PromptTokens        int                  `json:"prompt_tokens"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalTokens         int                  `json:"total_tokens"`
+	CacheReadTokens     int                  `json:"cache_read_tokens,omitempty"`
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// promptTokensDetails captures OpenAI's nested token details.
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for Usage.
+// It extracts OpenAI's nested prompt_tokens_details.cached_tokens
+// into CacheReadTokens when present.
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	var raw usageJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	u.PromptTokens = raw.PromptTokens
+	u.CompletionTokens = raw.CompletionTokens
+	u.TotalTokens = raw.TotalTokens
+	u.CacheReadTokens = raw.CacheReadTokens
+
+	// Extract OpenAI's cached_tokens from nested prompt_tokens_details.
+	if u.CacheReadTokens == 0 && raw.PromptTokensDetails != nil {
+		u.CacheReadTokens = raw.PromptTokensDetails.CachedTokens
+	}
+
+	return nil
 }
 
 // Add accumulates token counts from another Usage into this one.
@@ -294,6 +332,7 @@ func (u *Usage) Add(other *Usage) {
 	u.PromptTokens += other.PromptTokens
 	u.CompletionTokens += other.CompletionTokens
 	u.TotalTokens += other.TotalTokens
+	u.CacheReadTokens += other.CacheReadTokens
 }
 
 // Error represents an error in the API response body.

@@ -444,6 +444,105 @@ func TestChatCompletionStreamUsage(t *testing.T) {
 	}
 }
 
+func TestChatCompletionStreamUsageCacheReadTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		chunks := []string{
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60,"prompt_tokens_details":{"cached_tokens":15}}}`,
+		}
+
+		for _, chunk := range chunks {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+			flusher.Flush()
+		}
+
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	usage := stream.Usage()
+	if usage == nil {
+		t.Fatal("Usage() = nil, want non-nil")
+	}
+	if usage.CacheReadTokens != 15 {
+		t.Errorf("CacheReadTokens = %d, want 15", usage.CacheReadTokens)
+	}
+}
+
+func TestChatCompletionWithCacheReadTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-cache",
+			"object": "chat.completion",
+			"created": 1700000000,
+			"model": "gpt-4o",
+			"choices": [{
+				"index": 0,
+				"message": {"role": "assistant", "content": "Hello!"},
+				"finish_reason": "stop"
+			}],
+			"usage": {
+				"prompt_tokens": 100,
+				"completion_tokens": 20,
+				"total_tokens": 120,
+				"prompt_tokens_details": {
+					"cached_tokens": 30
+				}
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	result, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	if result.Usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", result.Usage.CacheReadTokens)
+	}
+	if result.Usage.PromptTokens != 100 {
+		t.Errorf("PromptTokens = %d, want 100", result.Usage.PromptTokens)
+	}
+}
+
 func TestChatCompletionWithTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ChatRequest

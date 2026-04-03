@@ -39,9 +39,10 @@ func newAnthropicStream(body io.ReadCloser) *Stream {
 
 func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 	var (
-		msgID       string
-		model       string
-		inputTokens int
+		msgID           string
+		model           string
+		inputTokens     int
+		cacheReadTokens int
 
 		// blockToTool maps Anthropic content block index to tool call index.
 		// Anthropic uses sequential indices for all content blocks (text, thinking, tool_use),
@@ -98,6 +99,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 				msgID = ms.Message.ID
 				model = ms.Message.Model
 				inputTokens = ms.Message.Usage.totalInputTokens()
+				cacheReadTokens = ms.Message.Usage.CacheReadInputTokens
 
 				continue
 
@@ -225,6 +227,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 						PromptTokens:     inputTokens,
 						CompletionTokens: outputTokens,
 						TotalTokens:      inputTokens + outputTokens,
+						CacheReadTokens:  cacheReadTokens,
 					}
 				}
 

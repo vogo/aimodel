@@ -277,6 +277,36 @@ func TestStreamCloseOnCloseCallback(t *testing.T) {
 	}
 }
 
+func TestStreamUsageCacheReadTokens(t *testing.T) {
+	body := ""
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
+	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}` + "\n\n"
+	body += "data: [DONE]\n\n"
+
+	s := newStream(io.NopCloser(strings.NewReader(body)))
+
+	for {
+		_, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	usage := s.Usage()
+	if usage == nil {
+		t.Fatal("Usage() = nil, want non-nil")
+	}
+	if usage.CacheReadTokens != 40 {
+		t.Errorf("CacheReadTokens = %d, want 40", usage.CacheReadTokens)
+	}
+	if usage.PromptTokens != 100 {
+		t.Errorf("PromptTokens = %d, want 100", usage.PromptTokens)
+	}
+}
+
 func TestStreamCloseOnCloseCallbackWithoutUsage(t *testing.T) {
 	body := ""
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"

@@ -453,6 +453,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 			PromptTokens:     ar.Usage.totalInputTokens(),
 			CompletionTokens: ar.Usage.OutputTokens,
 			TotalTokens:      ar.Usage.totalInputTokens() + ar.Usage.OutputTokens,
+			CacheReadTokens:  ar.Usage.CacheReadInputTokens,
 		},
 	}
 }

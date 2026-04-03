@@ -468,6 +468,9 @@ func TestAnthropicStreamCacheTokensUsage(t *testing.T) {
 	if usageChunk.Usage.TotalTokens != 20 {
 		t.Errorf("total_tokens = %d, want 20 (18+2)", usageChunk.Usage.TotalTokens)
 	}
+	if usageChunk.Usage.CacheReadTokens != 3 {
+		t.Errorf("cache_read_tokens = %d, want 3", usageChunk.Usage.CacheReadTokens)
+	}
 }
 
 func TestAnthropicStreamFinishReason(t *testing.T) {

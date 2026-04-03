@@ -527,6 +527,84 @@ func TestStreamChunkUsageOmittedWhenNil(t *testing.T) {
 	}
 }
 
+func TestUsageAddWithCacheReadTokens(t *testing.T) {
+	base := Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150, CacheReadTokens: 20}
+	other := Usage{PromptTokens: 200, CompletionTokens: 100, TotalTokens: 300, CacheReadTokens: 30}
+	base.Add(&other)
+
+	if base.CacheReadTokens != 50 {
+		t.Errorf("CacheReadTokens = %d, want 50", base.CacheReadTokens)
+	}
+	if base.PromptTokens != 300 {
+		t.Errorf("PromptTokens = %d, want 300", base.PromptTokens)
+	}
+}
+
+func TestUsageCacheReadTokensJSON(t *testing.T) {
+	raw := `{"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150, "cache_read_tokens": 20}`
+	var u Usage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.CacheReadTokens != 20 {
+		t.Errorf("CacheReadTokens = %d, want 20", u.CacheReadTokens)
+	}
+}
+
+func TestUsageCacheReadTokensOmittedWhenZero(t *testing.T) {
+	u := Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	data, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := raw["cache_read_tokens"]; ok {
+		t.Error("cache_read_tokens should be omitted when zero")
+	}
+}
+
+func TestUsageOpenAIPromptTokensDetails(t *testing.T) {
+	// OpenAI includes cached tokens in a nested prompt_tokens_details field.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"total_tokens": 150,
+		"prompt_tokens_details": {
+			"cached_tokens": 30
+		}
+	}`
+	var u Usage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30 (from prompt_tokens_details.cached_tokens)", u.CacheReadTokens)
+	}
+}
+
+func TestUsageExplicitCacheReadTokensTakesPrecedence(t *testing.T) {
+	// When cache_read_tokens is explicitly set, prompt_tokens_details should not override it.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"total_tokens": 150,
+		"cache_read_tokens": 25,
+		"prompt_tokens_details": {
+			"cached_tokens": 30
+		}
+	}`
+	var u Usage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.CacheReadTokens != 25 {
+		t.Errorf("CacheReadTokens = %d, want 25 (explicit cache_read_tokens)", u.CacheReadTokens)
+	}
+}
+
 func TestChatRequestClone(t *testing.T) {
 	orig := &ChatRequest{
 		Model: "gpt-4o",

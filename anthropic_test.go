@@ -844,6 +844,9 @@ func TestFromAnthropicResponseCacheTokens(t *testing.T) {
 	if cr.Usage.TotalTokens != 38 {
 		t.Errorf("total_tokens = %d, want 38 (18+20)", cr.Usage.TotalTokens)
 	}
+	if cr.Usage.CacheReadTokens != 3 {
+		t.Errorf("cache_read_tokens = %d, want 3", cr.Usage.CacheReadTokens)
+	}
 }
 
 func TestToAnthropicRequestSystemMixed(t *testing.T) {
