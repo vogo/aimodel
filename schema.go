@@ -179,6 +179,17 @@ type Message struct {
 	Thinking   string     `json:"reasoning_content,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+
+	// CacheBreakpoint tells protocol backends that support explicit prompt
+	// caching (Anthropic) to emit a cache boundary at the end of this
+	// message's content blocks. OpenAI-compatible backends silently ignore
+	// the field — OpenAI caches 1024-token+ prefixes automatically with no
+	// request-side marker.
+	//
+	// Struct-local: marked `json:"-"` so the canonical (OpenAI-shape)
+	// request body never carries the field. Only the Anthropic translator
+	// reads it.
+	CacheBreakpoint bool `json:"-"`
 }
 
 // AppendDelta merges a streaming delta message into this message.
@@ -233,6 +244,12 @@ type FunctionCall struct {
 type Tool struct {
 	Type     string             `json:"type"`
 	Function FunctionDefinition `json:"function"`
+
+	// CacheBreakpoint marks this tool as the end of a cacheable prefix for
+	// Anthropic requests. Anthropic caches every tool up to and including
+	// the one flagged. OpenAI-compatible backends ignore the field.
+	// Struct-local: never serialised on the canonical request body.
+	CacheBreakpoint bool `json:"-"`
 }
 
 // FunctionDefinition describes a function available to the model.

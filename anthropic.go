@@ -62,6 +62,21 @@ type anthropicContentBlock struct {
 	Source    *anthropicContentSource `json:"source,omitempty"`
 	// ResultContent holds the content for tool_result blocks.
 	ResultContent string `json:"content,omitempty"`
+	// CacheControl, when set, marks this block as a prompt-cache
+	// boundary. Anthropic caches everything up to and including this
+	// block for the ephemeral TTL (default 5 minutes).
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+// anthropicCacheControl is the request-side prompt-cache hint.
+type anthropicCacheControl struct {
+	Type string `json:"type"` // always "ephemeral" today
+}
+
+// ephemeralCache returns the canonical 5-minute ephemeral marker used on
+// both message content blocks and tool definitions.
+func ephemeralCache() *anthropicCacheControl {
+	return &anthropicCacheControl{Type: "ephemeral"}
 }
 
 // anthropicContentSource represents the source of an image or document in Anthropic's API format.
@@ -75,9 +90,10 @@ type anthropicContentSource struct {
 }
 
 type anthropicTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	InputSchema any    `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  any                    `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicToolChoice struct {
@@ -187,8 +203,17 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 
 	useBlocks := false
 
+	// anyCacheableSystem tracks whether any system message asked for a
+	// cache breakpoint; when true we force the block-array form on the
+	// system field so we can attach cache_control to the last block.
+	var anyCacheableSystem bool
+
 	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
+			if m.CacheBreakpoint {
+				anyCacheableSystem = true
+				useBlocks = true
+			}
 			if parts := m.Content.Parts(); len(parts) > 0 {
 				useBlocks = true
 
@@ -220,7 +245,13 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		ar.Messages = append(ar.Messages, am)
 	}
 
-	if useBlocks && len(systemBlocks) > 0 {
+	if (useBlocks || anyCacheableSystem) && len(systemBlocks) > 0 {
+		if anyCacheableSystem {
+			// Attach cache_control to the last block — Anthropic caches
+			// every block up to and including it.
+			systemBlocks[len(systemBlocks)-1].CacheControl = ephemeralCache()
+		}
+
 		data, err := json.Marshal(systemBlocks)
 		if err != nil {
 			return nil, fmt.Errorf("aimodel: marshal system content: %w", err)
@@ -236,13 +267,19 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		ar.System = data
 	}
 
-	// Convert tools.
+	// Convert tools. Tools flagged with CacheBreakpoint carry a
+	// cache_control marker; Anthropic caches every tool up to and
+	// including the flagged one.
 	for _, t := range req.Tools {
-		ar.Tools = append(ar.Tools, anthropicTool{
+		at := anthropicTool{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
 			InputSchema: t.Function.Parameters,
-		})
+		}
+		if t.CacheBreakpoint {
+			at.CacheControl = ephemeralCache()
+		}
+		ar.Tools = append(ar.Tools, at)
 	}
 
 	// Convert tool choice.
@@ -273,6 +310,9 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 			Type:          "tool_result",
 			ToolUseID:     m.ToolCallID,
 			ResultContent: m.Content.Text(),
+		}
+		if m.CacheBreakpoint {
+			block.CacheControl = ephemeralCache()
 		}
 
 		data, err := json.Marshal([]anthropicContentBlock{block})
@@ -311,6 +351,10 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 				Name:  tc.Function.Name,
 				Input: json.RawMessage(tc.Function.Arguments),
 			})
+		}
+
+		if m.CacheBreakpoint && len(blocks) > 0 {
+			blocks[len(blocks)-1].CacheControl = ephemeralCache()
 		}
 
 		data, err := json.Marshal(blocks)
@@ -358,6 +402,10 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 			}
 		}
 
+		if m.CacheBreakpoint && len(blocks) > 0 {
+			blocks[len(blocks)-1].CacheControl = ephemeralCache()
+		}
+
 		data, err := json.Marshal(blocks)
 		if err != nil {
 			return anthropicMessage{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
@@ -368,7 +416,22 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 		return am, nil
 	}
 
-	// Plain text message.
+	// Plain text message. Promote to block-array form when the caller
+	// flagged CacheBreakpoint so we can attach cache_control.
+	if m.CacheBreakpoint {
+		block := anthropicContentBlock{
+			Type:         "text",
+			Text:         m.Content.Text(),
+			CacheControl: ephemeralCache(),
+		}
+		data, err := json.Marshal([]anthropicContentBlock{block})
+		if err != nil {
+			return anthropicMessage{}, fmt.Errorf("aimodel: marshal cached message content: %w", err)
+		}
+		am.Content = data
+		return am, nil
+	}
+
 	data, err := json.Marshal(m.Content.Text())
 	if err != nil {
 		return anthropicMessage{}, fmt.Errorf("aimodel: marshal message content: %w", err)
