@@ -796,3 +796,82 @@ func TestOpenAIChatRequestReasoningEffortValues(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAIChatRequestCommonFields(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	logprobs := true
+	topLogprobs := 5
+	parallel := false
+	store := true
+
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:             ModelOpenaiGPT4o,
+		Messages:          []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		Logprobs:          &logprobs,
+		TopLogprobs:       &topLogprobs,
+		LogitBias:         map[string]int{"50256": -100},
+		ParallelToolCalls: &parallel,
+		ServiceTier:       "priority",
+		Store:             &store,
+		Metadata:          map[string]string{"env": "prod"},
+		PromptCacheKey:    "tenant-42",
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	wantKeys := map[string]string{
+		"logprobs":            `true`,
+		"top_logprobs":        `5`,
+		"logit_bias":          `{"50256":-100}`,
+		"parallel_tool_calls": `false`,
+		"service_tier":        `"priority"`,
+		"store":               `true`,
+		"metadata":            `{"env":"prod"}`,
+		"prompt_cache_key":    `"tenant-42"`,
+	}
+
+	for key, want := range wantKeys {
+		val, ok := (*captured)[key]
+		if !ok {
+			t.Errorf("%s not present in request body", key)
+			continue
+		}
+		if string(val) != want {
+			t.Errorf("%s = %s, want %s", key, val, want)
+		}
+	}
+}
+
+func TestOpenAIChatRequestCommonFieldsOmitEmpty(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// No optional fields set: all of them must be omitted.
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	for _, key := range []string{
+		"logprobs", "top_logprobs", "logit_bias", "parallel_tool_calls",
+		"service_tier", "store", "metadata", "prompt_cache_key",
+	} {
+		if _, ok := (*captured)[key]; ok {
+			t.Errorf("%s should be omitted when empty", key)
+		}
+	}
+}

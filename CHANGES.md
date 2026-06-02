@@ -8,6 +8,16 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — OpenAI: extend `ChatRequest` with common request fields (+ response `logprobs`)
+
+- **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
+- **Official docs**: https://platform.openai.com/docs/api-reference/chat
+- **Official change**: Chat Completions exposes the request parameters `logprobs` / `top_logprobs`, `logit_bias`, `parallel_tool_calls`, `service_tier`, `store`, `metadata`, `prompt_cache_key`, and returns `choices[].logprobs` when `logprobs` is set.
+- **Change summary**: Added eight `omitempty` `ChatRequest` fields — `Logprobs *bool` (`logprobs`), `TopLogprobs *int` (`top_logprobs`), `LogitBias map[string]int` (`logit_bias`), `ParallelToolCalls *bool` (`parallel_tool_calls`), `ServiceTier string` (`service_tier`), `Store *bool` (`store`), `Metadata map[string]string` (`metadata`), `PromptCacheKey string` (`prompt_cache_key`). `clone()` now deep-copies the `LogitBias` / `Metadata` maps (via `maps.Clone`) so a copy's mutations never affect the original. Added response parsing: `Choice.LogProbs *LogProbs` with `LogProbs{Content, Refusal []TokenLogprob}`, `TokenLogprob{Token, Logprob, Bytes, TopLogprobs}`, `TopLogprob{Token, Logprob, Bytes}`.
+- **Affected files**: `schema.go` (fields, `clone()` map deep-copy, `Choice.LogProbs` + log-prob types), `openai_chat_test.go` (request-body serialization + omitempty coverage), `schema_test.go` (clone map-isolation + `logprobs` response parsing), `README.md`, `CLAUDE.md`.
+
+---
+
 ## 2026-06-02 — OpenAI: sync `reasoning_effort` values, add `verbosity`
 
 - **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)

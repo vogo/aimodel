@@ -19,6 +19,7 @@ package aimodel
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 )
 
@@ -124,6 +125,38 @@ type ChatRequest struct {
 	// Verbosity maps to OpenAI's verbosity and controls how detailed the
 	// output is. Use the Verbosity* constants (low/medium/high).
 	Verbosity string `json:"verbosity,omitempty"`
+
+	// Logprobs requests per-token log probabilities in the response. When
+	// true, each Choice carries a LogProbs payload.
+	Logprobs *bool `json:"logprobs,omitempty"`
+
+	// TopLogprobs (0–20) asks for that many most-likely tokens at each
+	// position, each with a log probability. Requires Logprobs to be true.
+	TopLogprobs *int `json:"top_logprobs,omitempty"`
+
+	// LogitBias nudges the likelihood of specific tokens. Keys are token IDs
+	// (as strings); values are bias amounts in [-100, 100].
+	LogitBias map[string]int `json:"logit_bias,omitempty"`
+
+	// ParallelToolCalls toggles whether the model may emit multiple tool
+	// calls in a single turn. Defaults to true server-side when unset.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
+
+	// ServiceTier selects the latency/throughput tier (e.g. "auto",
+	// "default", "flex", "priority"). Kept a plain string for pass-through.
+	ServiceTier string `json:"service_tier,omitempty"`
+
+	// Store asks OpenAI to persist this completion for later retrieval
+	// (e.g. dashboards, evals).
+	Store *bool `json:"store,omitempty"`
+
+	// Metadata attaches up to 16 string key/value pairs to the request,
+	// surfaced alongside a stored completion.
+	Metadata map[string]string `json:"metadata,omitempty"`
+
+	// PromptCacheKey routes requests sharing a cacheable prefix to the same
+	// cache, improving prompt cache hit rates.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 }
 
 // ChatResponse represents a response from the chat completions API.
@@ -142,6 +175,32 @@ type Choice struct {
 	Index        int          `json:"index"`
 	Message      Message      `json:"message"`
 	FinishReason FinishReason `json:"finish_reason"`
+	// LogProbs carries per-token log probabilities when the request set
+	// Logprobs to true; nil otherwise.
+	LogProbs *LogProbs `json:"logprobs,omitempty"`
+}
+
+// LogProbs holds the token log-probability payload for a Choice, mirroring
+// OpenAI's choices[].logprobs object.
+type LogProbs struct {
+	Content []TokenLogprob `json:"content,omitempty"`
+	Refusal []TokenLogprob `json:"refusal,omitempty"`
+}
+
+// TokenLogprob is the log probability of a single output token, plus the
+// most-likely alternatives at that position (TopLogprobs).
+type TokenLogprob struct {
+	Token       string       `json:"token"`
+	Logprob     float64      `json:"logprob"`
+	Bytes       []int        `json:"bytes,omitempty"`
+	TopLogprobs []TopLogprob `json:"top_logprobs,omitempty"`
+}
+
+// TopLogprob is one alternative token and its log probability at a position.
+type TopLogprob struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+	Bytes   []int   `json:"bytes,omitempty"`
 }
 
 // Content represents chat message content that can be either a plain string
@@ -327,6 +386,14 @@ func (r *ChatRequest) clone() ChatRequest {
 	if len(r.Tools) > 0 {
 		c.Tools = make([]Tool, len(r.Tools))
 		copy(c.Tools, r.Tools)
+	}
+
+	if len(r.LogitBias) > 0 {
+		c.LogitBias = maps.Clone(r.LogitBias)
+	}
+
+	if len(r.Metadata) > 0 {
+		c.Metadata = maps.Clone(r.Metadata)
 	}
 
 	return c

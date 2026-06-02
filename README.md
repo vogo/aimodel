@@ -73,6 +73,37 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
+#### Common request fields
+
+All optional and `omitempty`, mapping one-to-one to OpenAI's Chat Completions parameters:
+
+- `Logprobs *bool` → `logprobs`, `TopLogprobs *int` → `top_logprobs`: per-token log probabilities (and the N most-likely alternatives per position) for observability.
+- `LogitBias map[string]int` → `logit_bias`: per-token-ID bias in `[-100, 100]`.
+- `ParallelToolCalls *bool` → `parallel_tool_calls`: whether the model may emit multiple tool calls in one turn.
+- `ServiceTier string` → `service_tier`: latency/throughput tier (e.g. `auto` / `default` / `flex` / `priority`); plain `string` for pass-through.
+- `Store *bool` → `store`, `Metadata map[string]string` → `metadata`: persist the completion and attach up to 16 key/value pairs.
+- `PromptCacheKey string` → `prompt_cache_key`: route requests sharing a prefix to the same cache to improve hit rates.
+
+`clone()` deep-copies the `LogitBias` and `Metadata` maps, so mutating a cloned request never affects the original.
+
+When `Logprobs` is `true`, each `ChatResponse.Choices[i].LogProbs` (a `*LogProbs`) carries the parsed `content` / `refusal` token log probabilities, each token exposing `Logprob`, `Bytes`, and `TopLogprobs`.
+
+```go
+logprobs := true
+topLogprobs := 5
+resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+    Model:          aimodel.ModelOpenaiGPT4o,
+    Logprobs:       &logprobs,
+    TopLogprobs:    &topLogprobs,
+    ServiceTier:    "priority",
+    PromptCacheKey: "tenant-42",
+    Metadata:       map[string]string{"env": "prod"},
+    Messages: []aimodel.Message{
+        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
+    },
+})
+```
+
 #### Response usage
 
 `ChatResponse.Usage` normalizes per-request token counts:

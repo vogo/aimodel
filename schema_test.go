@@ -19,6 +19,7 @@ package aimodel
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -675,8 +676,10 @@ func TestChatRequestClone(t *testing.T) {
 		Messages: []Message{
 			{Role: RoleUser, Content: NewTextContent("Hi")},
 		},
-		Stop:  []string{"END"},
-		Tools: []Tool{{Type: "function", Function: FunctionDefinition{Name: "test"}}},
+		Stop:      []string{"END"},
+		Tools:     []Tool{{Type: "function", Function: FunctionDefinition{Name: "test"}}},
+		LogitBias: map[string]int{"50256": -100},
+		Metadata:  map[string]string{"env": "prod"},
 	}
 
 	cloned := orig.clone()
@@ -686,6 +689,12 @@ func TestChatRequestClone(t *testing.T) {
 	cloned.Stop = append(cloned.Stop, "STOP")
 	cloned.Tools = append(cloned.Tools, Tool{Type: "function", Function: FunctionDefinition{Name: "test2"}})
 	cloned.Model = "gpt-3.5"
+
+	// Mutate the clone's maps (overwrite + add keys).
+	cloned.LogitBias["50256"] = 50
+	cloned.LogitBias["100"] = 1
+	cloned.Metadata["env"] = "staging"
+	cloned.Metadata["region"] = "us"
 
 	// Original should be unchanged.
 	if len(orig.Messages) != 1 {
@@ -699,5 +708,69 @@ func TestChatRequestClone(t *testing.T) {
 	}
 	if orig.Model != "gpt-4o" {
 		t.Errorf("original model = %q", orig.Model)
+	}
+
+	// Maps must be deep-copied: clone mutations must not leak into the original.
+	if len(orig.LogitBias) != 1 || orig.LogitBias["50256"] != -100 {
+		t.Errorf("original LogitBias mutated: %v", orig.LogitBias)
+	}
+	if len(orig.Metadata) != 1 || orig.Metadata["env"] != "prod" {
+		t.Errorf("original Metadata mutated: %v", orig.Metadata)
+	}
+}
+
+func TestChoiceLogProbsUnmarshal(t *testing.T) {
+	data := `{
+		"index": 0,
+		"message": {"role": "assistant", "content": "Hi"},
+		"finish_reason": "stop",
+		"logprobs": {
+			"content": [
+				{
+					"token": "Hi",
+					"logprob": -0.31,
+					"bytes": [72, 105],
+					"top_logprobs": [
+						{"token": "Hi", "logprob": -0.31, "bytes": [72, 105]},
+						{"token": "Hey", "logprob": -1.5, "bytes": [72, 101, 121]}
+					]
+				}
+			]
+		}
+	}`
+
+	var choice Choice
+	if err := json.Unmarshal([]byte(data), &choice); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if choice.LogProbs == nil {
+		t.Fatal("LogProbs is nil, want parsed payload")
+	}
+	if len(choice.LogProbs.Content) != 1 {
+		t.Fatalf("content len = %d, want 1", len(choice.LogProbs.Content))
+	}
+
+	tok := choice.LogProbs.Content[0]
+	if tok.Token != "Hi" || tok.Logprob != -0.31 {
+		t.Errorf("token = %q logprob = %v, want \"Hi\" -0.31", tok.Token, tok.Logprob)
+	}
+	if len(tok.Bytes) != 2 || tok.Bytes[0] != 72 {
+		t.Errorf("bytes = %v, want [72 105]", tok.Bytes)
+	}
+	if len(tok.TopLogprobs) != 2 || tok.TopLogprobs[1].Token != "Hey" {
+		t.Errorf("top_logprobs = %+v, want 2 entries with 'Hey'", tok.TopLogprobs)
+	}
+}
+
+func TestChoiceLogProbsOmittedWhenNil(t *testing.T) {
+	choice := Choice{Index: 0, Message: Message{Role: RoleAssistant, Content: NewTextContent("Hi")}, FinishReason: FinishReasonStop}
+
+	out, err := json.Marshal(choice)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "logprobs") {
+		t.Errorf("logprobs should be omitted when nil, got %s", out)
 	}
 }

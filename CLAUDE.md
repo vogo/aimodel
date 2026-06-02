@@ -55,7 +55,8 @@ The dispatch happens in `chat.go`. Protocol-specific logic is isolated in `opena
 
 ### Key Types (schema.go)
 
-- `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation. `ReasoningEffort` (`reasoning_effort`) and `Verbosity` (`verbosity`) stay plain `string` for pass-through; use the `ReasoningEffort*` (`none/minimal/low/medium/high/xhigh`) and `Verbosity*` (`low/medium/high`) constants.
+- `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation. `ReasoningEffort` (`reasoning_effort`) and `Verbosity` (`verbosity`) stay plain `string` for pass-through; use the `ReasoningEffort*` (`none/minimal/low/medium/high/xhigh`) and `Verbosity*` (`low/medium/high`) constants. Common request fields (all `omitempty`): `Logprobs *bool` / `TopLogprobs *int` / `LogitBias map[string]int` / `ParallelToolCalls *bool` / `ServiceTier string` / `Store *bool` / `Metadata map[string]string` / `PromptCacheKey string`. `clone()` deep-copies the `LogitBias` / `Metadata` maps so a copy's mutations never leak into the original.
+- `Choice.LogProbs *LogProbs` — Per-token log probabilities parsed from `choices[].logprobs` (populated when the request sets `Logprobs: true`): `LogProbs{Content, Refusal []TokenLogprob}`, `TokenLogprob{Token, Logprob, Bytes, TopLogprobs}`, `TopLogprob{Token, Logprob, Bytes}`.
 - `Content` — Polymorphic: marshals as string (plain text) or `[]ContentPart` (multimodal)
 - `Stream` — Concurrent-safe SSE reader with `Recv()` / `Close()` (mutex + atomic bool)
 - `Usage` — Normalizes token counts; `CacheReadTokens` parses OpenAI's nested `prompt_tokens_details.cached_tokens` and `ReasoningTokens` parses `completion_tokens_details.reasoning_tokens` (explicit top-level fields take precedence). `Add` accumulates all counts.
