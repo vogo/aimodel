@@ -9,6 +9,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. 
 It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
 
+## Official API References
+
+aimodel is a thin wrapper over the following official protocols. Each wrapper maps one-to-one to its official documentation:
+
+| Protocol | Official docs | Wrapper code |
+|------|------|------|
+| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
+
+The sync status against the official APIs (target version, change summary, affected files) is recorded in [CHANGES.md](./CHANGES.md).
+
+**Maintenance convention**: when an official API changes, update all three in sync — the wrapper code, this document (README.md / CLAUDE.md), and CHANGES.md — keeping them consistent and continuously up to date.
+
 ## Rules
 
 - delete build binary after test
@@ -65,7 +78,7 @@ Environment variable fallback order:
 
 ### Anthropic Translation
 
-API reference: https://platform.claude.com/docs/en/api/messages
+API reference: see the "Official API References" section above.
 
 Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. System messages are extracted into the separate `system` field. Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
 

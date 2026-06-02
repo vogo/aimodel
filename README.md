@@ -11,6 +11,19 @@ This SDK is a **thin API wrapper** — it translates requests, manages connectio
 It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
 This keeps the SDK minimal and composable. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
+## Official API References
+
+aimodel is a thin wrapper over the following official protocols. Each wrapper maps one-to-one to its official documentation:
+
+| Protocol | Official docs | Wrapper code |
+|------|------|------|
+| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
+
+The sync status against the official APIs (target version, change summary, affected files) is recorded in [CHANGES.md](./CHANGES.md).
+
+**Maintenance convention**: when an official API changes, update all three in sync — the wrapper code, this document, and CHANGES.md — keeping them consistent and continuously up to date.
+
 
 ## Usage
 
