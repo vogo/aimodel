@@ -79,7 +79,7 @@ All optional and `omitempty`, mapping one-to-one to OpenAI's Chat Completions pa
 
 - `Logprobs *bool` → `logprobs`, `TopLogprobs *int` → `top_logprobs`: per-token log probabilities (and the N most-likely alternatives per position) for observability.
 - `LogitBias map[string]int` → `logit_bias`: per-token-ID bias in `[-100, 100]`.
-- `ParallelToolCalls *bool` → `parallel_tool_calls`: whether the model may emit multiple tool calls in one turn.
+- `ParallelToolCalls *bool` → `parallel_tool_calls`: whether the model may emit multiple tool calls in one turn. On Anthropic an explicit `false` maps to `tool_choice.disable_parallel_tool_use:true` (defaulting the choice to `{type:"auto"}` when none is named and tools are present; never attached to `{type:"none"}`).
 - `ServiceTier string` → `service_tier`: latency/throughput tier (e.g. `auto` / `default` / `flex` / `priority`); plain `string` for pass-through.
 - `Store *bool` → `store`, `Metadata map[string]string` → `metadata`: persist the completion and attach up to 16 key/value pairs.
 - `PromptCacheKey string` → `prompt_cache_key`: route requests sharing a prefix to the same cache to improve hit rates.
@@ -199,6 +199,8 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocols — routing is handled internally.
 
 **System message translation**: only the *leading* run of `RoleSystem` messages (those before the first user/assistant turn) is hoisted into Anthropic's top-level `system` field. A `RoleSystem` message that appears mid-conversation is kept inline as a `role:"system"` message in its original position (supported since Opus 4.8), so you can switch instructions mid-session without losing prompt-cache hits.
+
+**Tool choice translation**: `"auto"` → `{type:"auto"}`, `"required"` → `{type:"any"}`, `"none"` → `{type:"none"}` (explicitly forbid any call — distinct from omitting the field, which lets the model choose), and a specific function → `{type:"tool", name:...}`. `ParallelToolCalls: false` adds `disable_parallel_tool_use:true` to the resulting choice (see the request-field note above).
 
 ### Client Options
 

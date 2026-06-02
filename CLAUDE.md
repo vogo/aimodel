@@ -25,6 +25,7 @@ The sync status against the official APIs (target version, change summary) is re
 ## Rules
 
 - delete build binary after test
+- current file only contains core api/model dispatching logic, and core rules, not add any other logic.
 
 ## Build & Test Commands
 
@@ -56,9 +57,6 @@ The dispatch happens in `chat.go`. Protocol-specific logic is isolated in `opena
 ### Key Types (schema.go)
 
 - `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation. `ReasoningEffort` (`reasoning_effort`) and `Verbosity` (`verbosity`) stay plain `string` for pass-through; use the `ReasoningEffort*` (`none/minimal/low/medium/high/xhigh`) and `Verbosity*` (`low/medium/high`) constants. Common request fields (all `omitempty`): `Logprobs *bool` / `TopLogprobs *int` / `LogitBias map[string]int` / `ParallelToolCalls *bool` / `ServiceTier string` / `Store *bool` / `Metadata map[string]string` / `PromptCacheKey string`. `clone()` deep-copies the `LogitBias` / `Metadata` maps so a copy's mutations never leak into the original.
-- `Choice.LogProbs *LogProbs` — Per-token log probabilities parsed from `choices[].logprobs` (populated when the request sets `Logprobs: true`): `LogProbs{Content, Refusal []TokenLogprob}`, `TokenLogprob{Token, Logprob, Bytes, TopLogprobs}`, `TopLogprob{Token, Logprob, Bytes}`.
-- `Content` — Polymorphic: marshals as string (plain text) or `[]ContentPart` (multimodal). `ContentPart` selects its payload by `Type`: `text` → `Text`, `image_url` → `ImageURL`, `input_audio` → `InputAudio{Data, Format}` (base64 + `wav`/`mp3`), `file` → `FilePart{FileID | Filename+FileData}` (uploaded reference or inline base64). All payloads `omitempty`; the string/parts polymorphism lives on `Content`, so adding part fields never changes plain-text behavior.
-- Audio output — `ChatRequest.Modalities []string` (`modalities`, e.g. `["text","audio"]`) + `ChatRequest.Audio *AudioConfig` (`audio`, `{Voice, Format}`), both `omitempty`; `clone()` deep-copies the `Modalities` slice. Generated audio comes back on `Message.Audio *MessageAudio` (`audio`: `{ID, Data, Transcript, ExpiresAt}`, all `omitempty`).
 - `Stream` — Concurrent-safe SSE reader with `Recv()` / `Close()` (mutex + atomic bool)
 - `Usage` — Normalizes token counts; `CacheReadTokens` parses OpenAI's nested `prompt_tokens_details.cached_tokens` and `ReasoningTokens` parses `completion_tokens_details.reasoning_tokens` (explicit top-level fields take precedence). `Add` accumulates all counts.
 - `FinishReason` — Mirrors OpenAI's `finish_reason`: `stop` / `length` / `tool_calls` / `content_filter` / legacy `function_call`.
@@ -84,7 +82,7 @@ Environment variable fallback order:
 
 API reference: see the "Official API References" section above.
 
-Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. Only the **leading** run of system messages (those before the first non-system message) is extracted into the separate top-level `system` field; a system message appearing mid-conversation is kept inline as a `role:"system"` message in its original position (mid-conversation system messages, supported since Opus 4.8) to preserve position semantics and prompt-cache hits. Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
+Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. Only the **leading** run of system messages (those before the first non-system message) is extracted into the separate top-level `system` field; a system message appearing mid-conversation is kept inline as a `role:"system"` message in its original position (mid-conversation system messages, supported since Opus 4.8) to preserve position semantics and prompt-cache hits. `tool_choice` translation: `"auto"`→`{type:"auto"}`, `"required"`→`{type:"any"}`, `"none"`→`{type:"none"}` (forbid all calls — distinct from omitting the field), specific function→`{type:"tool",name}`; `ParallelToolCalls=false` sets `disable_parallel_tool_use:true` on the choice (defaulting to `auto` when none named and tools present, never on `none`). Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
 
 ## Packages
 

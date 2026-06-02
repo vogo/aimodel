@@ -310,7 +310,7 @@ func TestToAnthropicRequestToolChoice(t *testing.T) {
 	}{
 		{"auto", "auto", "auto", "", false},
 		{"required", "required", "any", "", false},
-		{"none", "none", "", "", true},
+		{"none", "none", "none", "", false},
 		{
 			"specific",
 			map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}},
@@ -351,6 +351,87 @@ func TestToAnthropicRequestToolChoice(t *testing.T) {
 			}
 			if ar.ToolChoice.Name != tt.wantName {
 				t.Errorf("name = %q, want %q", ar.ToolChoice.Name, tt.wantName)
+			}
+		})
+	}
+}
+
+func TestToAnthropicRequestParallelToolCalls(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	specificTool := map[string]any{
+		"type":     "function",
+		"function": map[string]any{"name": "get_weather"},
+	}
+
+	tests := []struct {
+		name        string
+		toolChoice  any
+		parallel    *bool
+		withTools   bool
+		wantNil     bool
+		wantType    string
+		wantName    string
+		wantDisable bool // expect disable_parallel_tool_use == true
+	}{
+		{"false_no_choice_with_tools", nil, boolPtr(false), true, false, "auto", "", true},
+		{"false_with_auto", "auto", boolPtr(false), true, false, "auto", "", true},
+		{"false_with_specific", specificTool, boolPtr(false), true, false, "tool", "get_weather", true},
+		{"false_with_none", "none", boolPtr(false), true, false, "none", "", false},
+		{"false_no_choice_no_tools", nil, boolPtr(false), false, true, "", "", false},
+		{"true_with_auto", "auto", boolPtr(true), true, false, "auto", "", false},
+		{"unset_with_auto", "auto", nil, true, false, "auto", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ChatRequest{
+				Model: ModelAnthropicClaude4Sonnet,
+				Messages: []Message{
+					{Role: RoleUser, Content: NewTextContent("Hi")},
+				},
+				ToolChoice:        tt.toolChoice,
+				ParallelToolCalls: tt.parallel,
+			}
+			if tt.withTools {
+				req.Tools = []Tool{
+					{
+						Type: "function",
+						Function: FunctionDefinition{
+							Name:        "get_weather",
+							Description: "Get weather",
+							Parameters:  map[string]any{"type": "object"},
+						},
+					},
+				}
+			}
+
+			ar, err := toAnthropicRequest(req)
+			if err != nil {
+				t.Fatalf("toAnthropicRequest: %v", err)
+			}
+
+			if tt.wantNil {
+				if ar.ToolChoice != nil {
+					t.Errorf("tool_choice should be nil, got %+v", ar.ToolChoice)
+				}
+
+				return
+			}
+
+			if ar.ToolChoice == nil {
+				t.Fatal("tool_choice is nil")
+			}
+			if ar.ToolChoice.Type != tt.wantType {
+				t.Errorf("type = %q, want %q", ar.ToolChoice.Type, tt.wantType)
+			}
+			if ar.ToolChoice.Name != tt.wantName {
+				t.Errorf("name = %q, want %q", ar.ToolChoice.Name, tt.wantName)
+			}
+
+			gotDisable := ar.ToolChoice.DisableParallelToolUse != nil && *ar.ToolChoice.DisableParallelToolUse
+			if gotDisable != tt.wantDisable {
+				t.Errorf("disable_parallel_tool_use = %v (ptr %v), want %v",
+					gotDisable, ar.ToolChoice.DisableParallelToolUse, tt.wantDisable)
 			}
 		})
 	}

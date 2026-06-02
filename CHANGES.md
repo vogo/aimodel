@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: `tool_choice` "none" mapping and `disable_parallel_tool_use`
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Since 2024-10-03, `tool_choice` accepts `disable_parallel_tool_use` (cap the model to at most one tool call per turn) alongside `auto`/`any`/`tool`. Since 2025-02-27, `tool_choice:{type:"none"}` explicitly forbids any tool call (distinct from omitting the field, which lets the model choose).
+- **Change summary**: `convertToolChoice` (`anthropic.go`) previously returned `nil` for `"none"`, dropping the `tool_choice` field entirely (model-chooses semantics) instead of emitting `{type:"none"}` (forbid-all). Now `"none"` maps to `{type:"none"}`. The `anthropicToolChoice` struct gained `DisableParallelToolUse *bool` (`disable_parallel_tool_use,omitempty`). The tool-choice assembly now folds in the canonical `ChatRequest.ParallelToolCalls`: when explicitly `false`, it sets `disable_parallel_tool_use:true` on the resulting choice — defaulting to `{type:"auto"}` to carry the flag when no choice is named but tools are present, and never attaching it to `{type:"none"}` (where it is meaningless). `ParallelToolCalls` unset/`true` leaves the choice untouched. Added `TestToAnthropicRequestParallelToolCalls` (auto/any/tool/none × parallel false/true/unset) and updated the `"none"` case of `TestToAnthropicRequestToolChoice`.
+
+---
+
 ## 2026-06-02 — Anthropic: preserve mid-conversation `system` messages (fix hoisting)
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

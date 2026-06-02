@@ -99,6 +99,9 @@ type anthropicTool struct {
 type anthropicToolChoice struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
+	// DisableParallelToolUse maps the canonical ParallelToolCalls=false:
+	// when set true, Anthropic emits at most one tool call per turn.
+	DisableParallelToolUse *bool `json:"disable_parallel_tool_use,omitempty"`
 }
 
 // --- Anthropic response types ---
@@ -302,10 +305,23 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		ar.Tools = append(ar.Tools, at)
 	}
 
-	// Convert tool choice.
-	if req.ToolChoice != nil {
-		ar.ToolChoice = convertToolChoice(req.ToolChoice)
+	// Convert tool choice, folding in ParallelToolCalls=false as
+	// disable_parallel_tool_use. The flag lives inside tool_choice, so when
+	// the caller disables parallel calls without naming a choice we default
+	// to type "auto" to carry it — but only when tools are present, since a
+	// tool_choice on a tool-less request is rejected. The flag is meaningless
+	// for type "none" (no calls at all), so it is never attached there.
+	tc := convertToolChoice(req.ToolChoice)
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
+		if tc == nil && len(req.Tools) > 0 {
+			tc = &anthropicToolChoice{Type: "auto"}
+		}
+		if tc != nil && tc.Type != "none" {
+			disable := true
+			tc.DisableParallelToolUse = &disable
+		}
 	}
+	ar.ToolChoice = tc
 
 	// Pass through thinking configuration.
 	ar.Thinking = req.Thinking
@@ -471,7 +487,9 @@ func convertToolChoice(tc any) *anthropicToolChoice {
 		case "required":
 			return &anthropicToolChoice{Type: "any"}
 		case "none":
-			return nil
+			// Explicit "none" forbids any tool call; an omitted tool_choice
+			// would instead let the model choose, so emit {type:"none"}.
+			return &anthropicToolChoice{Type: "none"}
 		}
 	case map[string]any:
 		if fn, ok := v["function"].(map[string]any); ok {
