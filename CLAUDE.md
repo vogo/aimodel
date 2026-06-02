@@ -58,6 +58,8 @@ The dispatch happens in `chat.go`. Protocol-specific logic is isolated in `opena
 - `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation
 - `Content` — Polymorphic: marshals as string (plain text) or `[]ContentPart` (multimodal)
 - `Stream` — Concurrent-safe SSE reader with `Recv()` / `Close()` (mutex + atomic bool)
+- `Usage` — Normalizes token counts; `CacheReadTokens` parses OpenAI's nested `prompt_tokens_details.cached_tokens` and `ReasoningTokens` parses `completion_tokens_details.reasoning_tokens` (explicit top-level fields take precedence). `Add` accumulates all counts.
+- `FinishReason` — Mirrors OpenAI's `finish_reason`: `stop` / `length` / `tool_calls` / `content_filter` / legacy `function_call`.
 
 ### Multi-Model Composition (composes/)
 

@@ -55,6 +55,18 @@ fmt.Println(resp.Choices[0].Message.Content.Text())
 
 Both fields are `*int` with `omitempty`. For the Anthropic protocol (which always uses `max_tokens`), the translator prefers `MaxCompletionTokens` over `MaxTokens`, defaulting to 4096 when neither is set.
 
+#### Response usage
+
+`ChatResponse.Usage` normalizes per-request token counts:
+
+- `PromptTokens` / `CompletionTokens` / `TotalTokens` → the OpenAI-compatible top-level counts.
+- `CacheReadTokens` → cache-hit prompt tokens, parsed from OpenAI's nested `prompt_tokens_details.cached_tokens` (an explicit top-level `cache_read_tokens` takes precedence).
+- `ReasoningTokens` → tokens spent on a reasoning model's internal thinking, parsed from OpenAI's nested `completion_tokens_details.reasoning_tokens` (an explicit top-level `reasoning_tokens` takes precedence).
+
+`Usage.Add` accumulates all of the above, which is handy when aggregating multi-turn or multi-call usage.
+
+`ChatResponse.Choices[i].FinishReason` mirrors OpenAI's `finish_reason`: `stop`, `length`, `tool_calls`, `content_filter`, and the legacy `function_call`.
+
 ```go
 maxCompletionTokens := 1024
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{

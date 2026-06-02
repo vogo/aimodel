@@ -38,9 +38,13 @@ type FinishReason string
 
 // FinishReason constants.
 const (
-	FinishReasonStop      FinishReason = "stop"
-	FinishReasonLength    FinishReason = "length"
-	FinishReasonToolCalls FinishReason = "tool_calls"
+	FinishReasonStop          FinishReason = "stop"
+	FinishReasonLength        FinishReason = "length"
+	FinishReasonToolCalls     FinishReason = "tool_calls"
+	FinishReasonContentFilter FinishReason = "content_filter"
+	// FinishReasonFunctionCall is the legacy value emitted by the deprecated
+	// OpenAI functions API; retained for backward compatibility.
+	FinishReasonFunctionCall FinishReason = "function_call"
 )
 
 // Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
@@ -320,21 +324,31 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	// ReasoningTokens reports tokens consumed by a reasoning model's internal
+	// thinking, parsed from OpenAI's completion_tokens_details.reasoning_tokens.
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 // usageJSON is the JSON representation used for unmarshaling Usage,
 // including nested OpenAI prompt_tokens_details.
 type usageJSON struct {
-	PromptTokens        int                  `json:"prompt_tokens"`
-	CompletionTokens    int                  `json:"completion_tokens"`
-	TotalTokens         int                  `json:"total_tokens"`
-	CacheReadTokens     int                  `json:"cache_read_tokens,omitempty"`
-	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	CacheReadTokens         int                      `json:"cache_read_tokens,omitempty"`
+	ReasoningTokens         int                      `json:"reasoning_tokens,omitempty"`
+	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
-// promptTokensDetails captures OpenAI's nested token details.
+// promptTokensDetails captures OpenAI's nested prompt token details.
 type promptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
+}
+
+// completionTokensDetails captures OpenAI's nested completion token details.
+type completionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Usage.
@@ -350,10 +364,16 @@ func (u *Usage) UnmarshalJSON(data []byte) error {
 	u.CompletionTokens = raw.CompletionTokens
 	u.TotalTokens = raw.TotalTokens
 	u.CacheReadTokens = raw.CacheReadTokens
+	u.ReasoningTokens = raw.ReasoningTokens
 
 	// Extract OpenAI's cached_tokens from nested prompt_tokens_details.
 	if u.CacheReadTokens == 0 && raw.PromptTokensDetails != nil {
 		u.CacheReadTokens = raw.PromptTokensDetails.CachedTokens
+	}
+
+	// Extract OpenAI's reasoning_tokens from nested completion_tokens_details.
+	if u.ReasoningTokens == 0 && raw.CompletionTokensDetails != nil {
+		u.ReasoningTokens = raw.CompletionTokensDetails.ReasoningTokens
 	}
 
 	return nil
@@ -365,6 +385,7 @@ func (u *Usage) Add(other *Usage) {
 	u.CompletionTokens += other.CompletionTokens
 	u.TotalTokens += other.TotalTokens
 	u.CacheReadTokens += other.CacheReadTokens
+	u.ReasoningTokens += other.ReasoningTokens
 }
 
 // Error represents an error in the API response body.

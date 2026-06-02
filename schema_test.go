@@ -605,6 +605,70 @@ func TestUsageExplicitCacheReadTokensTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestUsageOpenAICompletionTokensDetails(t *testing.T) {
+	// OpenAI reports reasoning model thinking cost in a nested
+	// completion_tokens_details.reasoning_tokens field.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 80,
+		"total_tokens": 180,
+		"completion_tokens_details": {
+			"reasoning_tokens": 50
+		}
+	}`
+	var u Usage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.ReasoningTokens != 50 {
+		t.Errorf("ReasoningTokens = %d, want 50 (from completion_tokens_details.reasoning_tokens)", u.ReasoningTokens)
+	}
+}
+
+func TestUsageExplicitReasoningTokensTakesPrecedence(t *testing.T) {
+	// An explicit flat reasoning_tokens overrides the nested details value.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 80,
+		"total_tokens": 180,
+		"reasoning_tokens": 40,
+		"completion_tokens_details": {
+			"reasoning_tokens": 50
+		}
+	}`
+	var u Usage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if u.ReasoningTokens != 40 {
+		t.Errorf("ReasoningTokens = %d, want 40 (explicit reasoning_tokens)", u.ReasoningTokens)
+	}
+}
+
+func TestUsageAddWithReasoningTokens(t *testing.T) {
+	base := Usage{PromptTokens: 100, CompletionTokens: 80, TotalTokens: 180, ReasoningTokens: 50}
+	other := Usage{PromptTokens: 200, CompletionTokens: 160, TotalTokens: 360, ReasoningTokens: 70}
+	base.Add(&other)
+	if base.ReasoningTokens != 120 {
+		t.Errorf("ReasoningTokens = %d, want 120", base.ReasoningTokens)
+	}
+}
+
+func TestUsageReasoningTokensOmittedWhenZero(t *testing.T) {
+	u := Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	data, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := raw["reasoning_tokens"]; ok {
+		t.Error("reasoning_tokens should be omitted when zero")
+	}
+}
+
 func TestChatRequestClone(t *testing.T) {
 	orig := &ChatRequest{
 		Model: "gpt-4o",

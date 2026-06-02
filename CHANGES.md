@@ -8,6 +8,16 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — OpenAI: response type alignment (`reasoning_tokens`, `finish_reason` constants)
+
+- **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
+- **Official docs**: https://platform.openai.com/docs/api-reference/chat
+- **Official change**: Response `usage` now carries `completion_tokens_details.reasoning_tokens` (internal thinking cost of reasoning models); `finish_reason` officially includes `content_filter` (and the legacy `function_call`).
+- **Change summary**: Added `Usage.ReasoningTokens int` (`json:"reasoning_tokens,omitempty"`), parsed from nested `completion_tokens_details.reasoning_tokens` (explicit top-level `reasoning_tokens` takes precedence, mirroring `cached_tokens`); `Usage.Add` now accumulates it. Added `FinishReasonContentFilter` (`content_filter`) and `FinishReasonFunctionCall` (`function_call`, legacy compat) constants.
+- **Affected files**: `schema.go` (types, `usageJSON`, `UnmarshalJSON`, `Add`, `FinishReason` constants), `schema_test.go` (coverage), `README.md`, `CLAUDE.md`.
+
+---
+
 ## 2026-06-02 — OpenAI: support `max_completion_tokens`, deprecate `max_tokens`
 
 - **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
