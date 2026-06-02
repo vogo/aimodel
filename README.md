@@ -79,6 +79,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 All optional and `omitempty`, mapping one-to-one to OpenAI's Chat Completions parameters:
 
+- `TopK *int` → `top_k`: top-k truncation sampling (restrict sampling to the K most-likely tokens). Native to Anthropic, where `toAnthropicRequest` maps it straight through. OpenAI's Chat Completions has no `top_k`, so it is simply omitted when unset and passed through verbatim when set.
 - `Logprobs *bool` → `logprobs`, `TopLogprobs *int` → `top_logprobs`: per-token log probabilities (and the N most-likely alternatives per position) for observability.
 - `LogitBias map[string]int` → `logit_bias`: per-token-ID bias in `[-100, 100]`.
 - `ParallelToolCalls *bool` → `parallel_tool_calls`: whether the model may emit multiple tool calls in one turn. On Anthropic an explicit `false` maps to `tool_choice.disable_parallel_tool_use:true` (defaulting the choice to `{type:"auto"}` when none is named and tools are present; never attached to `{type:"none"}`).

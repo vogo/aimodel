@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: pass through `top_k` sampling parameter
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Anthropic's Messages API natively supports `top_k` (top-k truncation sampling — restrict sampling to the K most-likely tokens at each step). The canonical `ChatRequest` had no corresponding field, and the Anthropic wrapper never emitted it.
+- **Change summary**: `ChatRequest` (`schema.go`) gained `TopK *int` (`json:"top_k,omitempty"`), placed next to `TopP`. `anthropicRequest` (`anthropic.go`) gained the matching `TopK *int` (`json:"top_k,omitempty"`) and `toAnthropicRequest` maps `req.TopK` straight through. OpenAI's Chat Completions has no `top_k`: the canonical request is the OpenAI shape itself, so the `omitempty` field is simply omitted when unset and passed through verbatim when set (OpenAI-compatible backends that accept it honour it; the rest ignore the unknown field). **Default behavior unchanged**: unset `TopK` is absent from both wire formats. Added `TestToAnthropicRequestTopK` (set → mapped + serialized `top_k`; unset → `nil` + omitted).
+
+---
+
 ## 2026-06-02 — Anthropic: configurable `anthropic-beta` / `anthropic-version` headers
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

@@ -1272,3 +1272,57 @@ func TestToAnthropicRequestSystemMixed(t *testing.T) {
 		t.Errorf("blocks[1].text = %q", blocks[1].Text)
 	}
 }
+
+// TestToAnthropicRequestTopK verifies that the canonical TopK is mapped to
+// Anthropic's top_k when set, and omitted entirely when unset.
+func TestToAnthropicRequestTopK(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		topK := 40
+		req := &ChatRequest{
+			Model:    ModelAnthropicClaude4Sonnet,
+			Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+			TopK:     &topK,
+		}
+
+		ar, err := toAnthropicRequest(req)
+		if err != nil {
+			t.Fatalf("toAnthropicRequest: %v", err)
+		}
+
+		if ar.TopK == nil || *ar.TopK != topK {
+			t.Fatalf("ar.TopK = %v, want %d", ar.TopK, topK)
+		}
+
+		data, err := json.Marshal(ar)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"top_k":40`) {
+			t.Errorf("marshaled request missing top_k: %s", data)
+		}
+	})
+
+	t.Run("unset", func(t *testing.T) {
+		req := &ChatRequest{
+			Model:    ModelAnthropicClaude4Sonnet,
+			Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		}
+
+		ar, err := toAnthropicRequest(req)
+		if err != nil {
+			t.Fatalf("toAnthropicRequest: %v", err)
+		}
+
+		if ar.TopK != nil {
+			t.Errorf("ar.TopK = %v, want nil", ar.TopK)
+		}
+
+		data, err := json.Marshal(ar)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(data), "top_k") {
+			t.Errorf("marshaled request should omit top_k: %s", data)
+		}
+	})
+}

@@ -150,7 +150,15 @@ type ChatRequest struct {
 	// (o-series, GPT-5.x, …). Prefer it over MaxTokens.
 	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
 
-	TopP             *float64       `json:"top_p,omitempty"`
+	TopP *float64 `json:"top_p,omitempty"`
+
+	// TopK limits sampling to the K most-likely tokens at each step (top-k
+	// truncation). It maps directly to Anthropic's top_k. OpenAI's Chat
+	// Completions has no top_k, so it is simply omitted there when unset and
+	// passed through verbatim when set (OpenAI-compatible backends that do
+	// accept it will honour it; the rest ignore the unknown field).
+	TopK *int `json:"top_k,omitempty"`
+
 	N                *int           `json:"n,omitempty"`
 	Stop             []string       `json:"stop,omitempty"`
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`

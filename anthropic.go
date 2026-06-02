@@ -39,6 +39,7 @@ type anthropicRequest struct {
 	MaxTokens     int                  `json:"max_tokens"`
 	Temperature   *float64             `json:"temperature,omitempty"`
 	TopP          *float64             `json:"top_p,omitempty"`
+	TopK          *int                 `json:"top_k,omitempty"`
 	StopSequences []string             `json:"stop_sequences,omitempty"`
 	Stream        bool                 `json:"stream,omitempty"`
 	Tools         []anthropicTool      `json:"tools,omitempty"`
@@ -193,6 +194,7 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		Model:       req.Model,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
+		TopK:        req.TopK,
 		Stream:      req.Stream,
 	}
 
