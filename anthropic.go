@@ -184,10 +184,15 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		Stream:      req.Stream,
 	}
 
-	// MaxTokens: use provided value or default.
-	if req.MaxTokens != nil {
+	// MaxTokens: Anthropic always uses max_tokens. Prefer the newer
+	// MaxCompletionTokens (OpenAI's reasoning-model field) over the deprecated
+	// MaxTokens, falling back to the default when neither is set.
+	switch {
+	case req.MaxCompletionTokens != nil:
+		ar.MaxTokens = *req.MaxCompletionTokens
+	case req.MaxTokens != nil:
 		ar.MaxTokens = *req.MaxTokens
-	} else {
+	default:
 		ar.MaxTokens = anthropicDefaultMaxTokens
 	}
 

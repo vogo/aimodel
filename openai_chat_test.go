@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -540,6 +541,65 @@ func TestChatCompletionWithCacheReadTokens(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 100 {
 		t.Errorf("PromptTokens = %d, want 100", result.Usage.PromptTokens)
+	}
+}
+
+func TestChatRequestMaxTokensSerialization(t *testing.T) {
+	maxCompletion := 256
+	maxTokens := 512
+
+	tests := []struct {
+		name            string
+		req             ChatRequest
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name: "only MaxCompletionTokens",
+			req: ChatRequest{
+				Model:               ModelOpenaiGPT4o,
+				MaxCompletionTokens: &maxCompletion,
+			},
+			wantContains:    []string{`"max_completion_tokens":256`},
+			wantNotContains: []string{"max_tokens"},
+		},
+		{
+			name: "only MaxTokens",
+			req: ChatRequest{
+				Model:     ModelOpenaiGPT4o,
+				MaxTokens: &maxTokens,
+			},
+			wantContains:    []string{`"max_tokens":512`},
+			wantNotContains: []string{"max_completion_tokens"},
+		},
+		{
+			name: "neither set",
+			req: ChatRequest{
+				Model: ModelOpenaiGPT4o,
+			},
+			wantNotContains: []string{"max_tokens", "max_completion_tokens"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(&tt.req)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			got := string(data)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("body %s does not contain %q", got, want)
+				}
+			}
+			for _, notWant := range tt.wantNotContains {
+				if strings.Contains(got, notWant) {
+					t.Errorf("body %s should not contain %q", got, notWant)
+				}
+			}
+		})
 	}
 }
 

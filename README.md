@@ -48,6 +48,24 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 fmt.Println(resp.Choices[0].Message.Content.Text())
 ```
 
+#### Token limits
+
+- `MaxCompletionTokens` → `max_completion_tokens`: the current OpenAI cap. Its limit covers both visible output tokens and internal reasoning tokens, and it is the **only** token-cap field accepted by reasoning models (o-series, GPT-5.x, …). Prefer it.
+- `MaxTokens` → `max_tokens`: **deprecated** by OpenAI and rejected by reasoning models. Keep it only for older / non-reasoning models that still accept it.
+
+Both fields are `*int` with `omitempty`. For the Anthropic protocol (which always uses `max_tokens`), the translator prefers `MaxCompletionTokens` over `MaxTokens`, defaulting to 4096 when neither is set.
+
+```go
+maxCompletionTokens := 1024
+resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+    Model:               aimodel.ModelOpenaiO3, // reasoning model
+    MaxCompletionTokens: &maxCompletionTokens,
+    Messages: []aimodel.Message{
+        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
+    },
+})
+```
+
 ### Streaming
 
 ```go

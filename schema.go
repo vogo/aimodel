@@ -56,10 +56,25 @@ type StreamOptions struct {
 
 // ChatRequest represents a request to the chat completions API.
 type ChatRequest struct {
-	Model            string         `json:"model"`
-	Messages         []Message      `json:"messages"`
-	Temperature      *float64       `json:"temperature,omitempty"`
-	MaxTokens        *int           `json:"max_tokens,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Temperature *float64  `json:"temperature,omitempty"`
+
+	// MaxTokens is the legacy OpenAI cap on generated tokens.
+	//
+	// Deprecated: OpenAI has deprecated max_tokens on Chat Completions, and
+	// reasoning models (the o-series, GPT-5.x, …) reject it outright — they
+	// require max_completion_tokens instead. Keep MaxTokens only for older /
+	// non-reasoning models that still accept it; new code should set
+	// MaxCompletionTokens.
+	MaxTokens *int `json:"max_tokens,omitempty"`
+
+	// MaxCompletionTokens is the OpenAI cap that supersedes MaxTokens. Its
+	// limit covers both visible output tokens and internal reasoning tokens,
+	// and it is the only token-cap field accepted by reasoning models
+	// (o-series, GPT-5.x, …). Prefer it over MaxTokens.
+	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
+
 	TopP             *float64       `json:"top_p,omitempty"`
 	N                *int           `json:"n,omitempty"`
 	Stop             []string       `json:"stop,omitempty"`

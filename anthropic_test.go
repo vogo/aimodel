@@ -100,6 +100,49 @@ func TestToAnthropicRequestMaxTokens(t *testing.T) {
 	}
 }
 
+func TestToAnthropicRequestMaxCompletionTokens(t *testing.T) {
+	maxCompletion := 2048
+	req := &ChatRequest{
+		Model:               ModelAnthropicClaude4Sonnet,
+		MaxCompletionTokens: &maxCompletion,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.MaxTokens != 2048 {
+		t.Errorf("max_tokens = %d, want 2048", ar.MaxTokens)
+	}
+}
+
+func TestToAnthropicRequestMaxCompletionTokensPreferred(t *testing.T) {
+	maxCompletion := 2048
+	maxTokens := 512
+	req := &ChatRequest{
+		Model:               ModelAnthropicClaude4Sonnet,
+		MaxCompletionTokens: &maxCompletion,
+		MaxTokens:           &maxTokens,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// MaxCompletionTokens takes precedence over the deprecated MaxTokens.
+	if ar.MaxTokens != 2048 {
+		t.Errorf("max_tokens = %d, want 2048 (MaxCompletionTokens preferred)", ar.MaxTokens)
+	}
+}
+
 func TestToAnthropicRequestStopSequences(t *testing.T) {
 	req := &ChatRequest{
 		Model: ModelAnthropicClaude4Sonnet,
