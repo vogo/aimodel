@@ -202,3 +202,163 @@ func TestChatRequest_OpenAIShape_NoCacheControl(t *testing.T) {
 		t.Errorf("CacheBreakpoint field name leaked into OpenAI request body: %s", body)
 	}
 }
+
+// TestToAnthropicRequest_AutoCacheDefault verifies AutoCache=true (no TTL)
+// emits a request-root cache_control of type ephemeral with no ttl.
+func TestToAnthropicRequest_AutoCacheDefault(t *testing.T) {
+	req := &ChatRequest{
+		Model:     "claude-sonnet-4",
+		Messages:  []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+		AutoCache: true,
+	}
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+	if ar.CacheControl == nil || ar.CacheControl.Type != "ephemeral" {
+		t.Fatalf("CacheControl = %+v, want {ephemeral}", ar.CacheControl)
+	}
+	if ar.CacheControl.TTL != "" {
+		t.Errorf("TTL = %q, want empty (default 5m)", ar.CacheControl.TTL)
+	}
+	body, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), `"cache_control":{"type":"ephemeral"}`) {
+		t.Errorf("request-root cache_control not serialized as expected: %s", body)
+	}
+	if strings.Contains(string(body), `"ttl"`) {
+		t.Errorf("ttl should be omitted when empty: %s", body)
+	}
+}
+
+// TestToAnthropicRequest_AutoCache1h verifies AutoCacheTTL "1h" carries the
+// ttl through onto the request-root cache_control.
+func TestToAnthropicRequest_AutoCache1h(t *testing.T) {
+	req := &ChatRequest{
+		Model:        "claude-sonnet-4",
+		Messages:     []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+		AutoCache:    true,
+		AutoCacheTTL: "1h",
+	}
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+	if ar.CacheControl == nil || ar.CacheControl.TTL != "1h" {
+		t.Fatalf("CacheControl = %+v, want ttl=1h", ar.CacheControl)
+	}
+	body, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), `"cache_control":{"type":"ephemeral","ttl":"1h"}`) {
+		t.Errorf("request-root cache_control with ttl not serialized as expected: %s", body)
+	}
+}
+
+// TestToAnthropicRequest_AutoCacheOff verifies that with AutoCache=false the
+// request carries no request-root cache_control (default behavior unchanged),
+// while a per-block CacheBreakpoint still works independently (coexistence).
+func TestToAnthropicRequest_AutoCacheOff(t *testing.T) {
+	req := &ChatRequest{
+		Model: "claude-sonnet-4",
+		Messages: []Message{
+			{Role: RoleSystem, Content: NewTextContent("sys"), CacheBreakpoint: true},
+			{Role: RoleUser, Content: NewTextContent("hi")},
+		},
+	}
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+	if ar.CacheControl != nil {
+		t.Errorf("request-root CacheControl should be nil when AutoCache off, got %+v", ar.CacheControl)
+	}
+	// The block-level breakpoint must still be present and independent.
+	var systemBlocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.System, &systemBlocks); err != nil {
+		t.Fatalf("system not a block array: %v", err)
+	}
+	if last := systemBlocks[len(systemBlocks)-1]; last.CacheControl == nil {
+		t.Error("per-block CacheBreakpoint should still attach cache_control independently of AutoCache")
+	}
+}
+
+// TestChatRequest_OpenAIShape_NoAutoCacheLeak verifies the AutoCache switch
+// never leaks into the canonical (OpenAI-shape) request body.
+func TestChatRequest_OpenAIShape_NoAutoCacheLeak(t *testing.T) {
+	req := &ChatRequest{
+		Model:        "gpt-4",
+		Messages:     []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+		AutoCache:    true,
+		AutoCacheTTL: "1h",
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"cache_control", "AutoCache", "auto_cache", `"ttl"`} {
+		if strings.Contains(string(body), leak) {
+			t.Errorf("AutoCache leaked %q into OpenAI request body: %s", leak, body)
+		}
+	}
+}
+
+// TestFromAnthropicResponse_CacheCreationBreakdown verifies the response
+// usage.cache_creation 5m/1h breakdown and the total cache write count map
+// onto the canonical Usage, with cached tokens still folded into PromptTokens.
+func TestFromAnthropicResponse_CacheCreationBreakdown(t *testing.T) {
+	raw := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-8",` +
+		`"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":2048,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248,` +
+		`"output_tokens":503,"cache_creation":{"ephemeral_5m_input_tokens":148,"ephemeral_1h_input_tokens":100}}}`
+
+	var ar anthropicResponse
+	if err := json.Unmarshal([]byte(raw), &ar); err != nil {
+		t.Fatalf("unmarshal anthropic response: %v", err)
+	}
+	if ar.Usage.CacheCreation == nil {
+		t.Fatal("cache_creation not parsed into anthropicUsage")
+	}
+	if ar.Usage.CacheCreation.Ephemeral5mInputTokens != 148 || ar.Usage.CacheCreation.Ephemeral1hInputTokens != 100 {
+		t.Errorf("cache_creation breakdown = %+v, want {148,100}", ar.Usage.CacheCreation)
+	}
+
+	cr := fromAnthropicResponse(&ar)
+	u := cr.Usage
+	if u.CacheWriteTokens != 248 {
+		t.Errorf("CacheWriteTokens = %d, want 248", u.CacheWriteTokens)
+	}
+	if u.CacheWrite5mTokens != 148 {
+		t.Errorf("CacheWrite5mTokens = %d, want 148", u.CacheWrite5mTokens)
+	}
+	if u.CacheWrite1hTokens != 100 {
+		t.Errorf("CacheWrite1hTokens = %d, want 100", u.CacheWrite1hTokens)
+	}
+	if u.CacheReadTokens != 1800 {
+		t.Errorf("CacheReadTokens = %d, want 1800", u.CacheReadTokens)
+	}
+	if u.PromptTokens != 2048+248+1800 {
+		t.Errorf("PromptTokens = %d, want %d (folded)", u.PromptTokens, 2048+248+1800)
+	}
+}
+
+// TestFromAnthropicResponse_NoCacheCreation verifies that without a
+// cache_creation object the breakdown fields stay zero while the total cache
+// write still reflects cache_creation_input_tokens.
+func TestFromAnthropicResponse_NoCacheCreation(t *testing.T) {
+	ar := anthropicResponse{
+		Content:    []anthropicContentBlock{{Type: "text", Text: "hi"}},
+		StopReason: "end_turn",
+		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7},
+	}
+	u := fromAnthropicResponse(&ar).Usage
+	if u.CacheWriteTokens != 7 {
+		t.Errorf("CacheWriteTokens = %d, want 7", u.CacheWriteTokens)
+	}
+	if u.CacheWrite5mTokens != 0 || u.CacheWrite1hTokens != 0 {
+		t.Errorf("breakdown should be zero without cache_creation, got 5m=%d 1h=%d", u.CacheWrite5mTokens, u.CacheWrite1hTokens)
+	}
+}

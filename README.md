@@ -86,6 +86,7 @@ All optional and `omitempty`, mapping one-to-one to OpenAI's Chat Completions pa
 - `ServiceTier string` → `service_tier`: latency/throughput tier (e.g. `auto` / `default` / `flex` / `priority`); plain `string` for pass-through.
 - `Store *bool` → `store`, `Metadata map[string]string` → `metadata`: persist the completion and attach up to 16 key/value pairs.
 - `PromptCacheKey string` → `prompt_cache_key`: route requests sharing a prefix to the same cache to improve hit rates.
+- `AutoCache bool` + `AutoCacheTTL string` (Anthropic only; both struct-local, never on the OpenAI wire): enable Anthropic's *automatic caching* — a single request-root `cache_control` (`{type:"ephemeral"}`, or with `ttl` `"1h"`; empty TTL keeps the default 5-minute cache). The server caches the last cacheable block and advances the breakpoint forward as the conversation grows, no per-block markers needed. It coexists with the explicit per-block `Message.CacheBreakpoint` / `Tool.CacheBreakpoint` flags. OpenAI-compatible backends ignore it.
 
 `clone()` deep-copies the `LogitBias` and `Metadata` maps, so mutating a cloned request never affects the original.
 
@@ -113,6 +114,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 - `PromptTokens` / `CompletionTokens` / `TotalTokens` → the OpenAI-compatible top-level counts.
 - `CacheReadTokens` → cache-hit prompt tokens, parsed from OpenAI's nested `prompt_tokens_details.cached_tokens` (an explicit top-level `cache_read_tokens` takes precedence).
+- `CacheWriteTokens` → prompt-cache write tokens (Anthropic's `cache_creation_input_tokens`, total). `CacheWrite5mTokens` / `CacheWrite1hTokens` break it down by TTL (Anthropic's `usage.cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`, summing to `CacheWriteTokens`). Cache read/write tokens are subsets of `PromptTokens`, surfaced separately for observability; OpenAI leaves them at 0.
 - `ReasoningTokens` → tokens spent on a reasoning model's internal thinking, parsed from OpenAI's nested `completion_tokens_details.reasoning_tokens` (an explicit top-level `reasoning_tokens` takes precedence).
 
 `Usage.Add` accumulates all of the above, which is handy when aggregating multi-turn or multi-call usage.

@@ -215,6 +215,23 @@ type ChatRequest struct {
 	// cache, improving prompt cache hit rates.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
+	// AutoCache enables Anthropic's automatic prompt caching: a single
+	// cache_control at the request root. The server places the cache
+	// breakpoint on the last cacheable block and advances it forward as the
+	// conversation grows — no per-block CacheBreakpoint needed. It coexists
+	// with the explicit per-block CacheBreakpoint markers (independent fields).
+	//
+	// OpenAI-compatible backends ignore it (OpenAI caches automatically with
+	// no request-side marker). Struct-local: marked json:"-" so the canonical
+	// (OpenAI-shape) request body never carries it; only the Anthropic
+	// translator reads it.
+	AutoCache bool `json:"-"`
+
+	// AutoCacheTTL selects the TTL for AutoCache. Empty means the default
+	// 5-minute ephemeral cache; "1h" requests the 1-hour cache. Ignored when
+	// AutoCache is false. Struct-local: never serialised on the canonical body.
+	AutoCacheTTL string `json:"-"`
+
 	// Modalities lists the output types the model may generate, e.g.
 	// ["text"] or ["text", "audio"]. Required when requesting audio output.
 	Modalities []string `json:"modalities,omitempty"`
@@ -543,6 +560,17 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	// CacheWriteTokens reports tokens written to the prompt cache, parsed from
+	// Anthropic's cache_creation_input_tokens (the total across TTLs). Like
+	// CacheReadTokens it is a subset of PromptTokens, surfaced separately for
+	// observability. OpenAI has no cache-write accounting, so it stays 0 there.
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	// CacheWrite5mTokens / CacheWrite1hTokens break CacheWriteTokens down by
+	// TTL, parsed from Anthropic's usage.cache_creation
+	// {ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}. Their sum equals
+	// CacheWriteTokens. Present only when Anthropic returns the breakdown.
+	CacheWrite5mTokens int `json:"cache_write_5m_tokens,omitempty"`
+	CacheWrite1hTokens int `json:"cache_write_1h_tokens,omitempty"`
 	// ReasoningTokens reports tokens consumed by a reasoning model's internal
 	// thinking, parsed from OpenAI's completion_tokens_details.reasoning_tokens.
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
@@ -555,6 +583,9 @@ type usageJSON struct {
 	CompletionTokens        int                      `json:"completion_tokens"`
 	TotalTokens             int                      `json:"total_tokens"`
 	CacheReadTokens         int                      `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens        int                      `json:"cache_write_tokens,omitempty"`
+	CacheWrite5mTokens      int                      `json:"cache_write_5m_tokens,omitempty"`
+	CacheWrite1hTokens      int                      `json:"cache_write_1h_tokens,omitempty"`
 	ReasoningTokens         int                      `json:"reasoning_tokens,omitempty"`
 	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
@@ -583,6 +614,9 @@ func (u *Usage) UnmarshalJSON(data []byte) error {
 	u.CompletionTokens = raw.CompletionTokens
 	u.TotalTokens = raw.TotalTokens
 	u.CacheReadTokens = raw.CacheReadTokens
+	u.CacheWriteTokens = raw.CacheWriteTokens
+	u.CacheWrite5mTokens = raw.CacheWrite5mTokens
+	u.CacheWrite1hTokens = raw.CacheWrite1hTokens
 	u.ReasoningTokens = raw.ReasoningTokens
 
 	// Extract OpenAI's cached_tokens from nested prompt_tokens_details.
@@ -604,6 +638,9 @@ func (u *Usage) Add(other *Usage) {
 	u.CompletionTokens += other.CompletionTokens
 	u.TotalTokens += other.TotalTokens
 	u.CacheReadTokens += other.CacheReadTokens
+	u.CacheWriteTokens += other.CacheWriteTokens
+	u.CacheWrite5mTokens += other.CacheWrite5mTokens
+	u.CacheWrite1hTokens += other.CacheWrite1hTokens
 	u.ReasoningTokens += other.ReasoningTokens
 }
 

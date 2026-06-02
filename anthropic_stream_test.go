@@ -473,6 +473,60 @@ func TestAnthropicStreamCacheTokensUsage(t *testing.T) {
 	}
 }
 
+// TestAnthropicStreamCacheCreationBreakdown verifies the per-TTL cache
+// creation breakdown from message_start surfaces on the final usage chunk.
+func TestAnthropicStreamCacheCreationBreakdown(t *testing.T) {
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_cc","type":"message","role":"assistant","model":"claude-opus-4-8","content":[],"stop_reason":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":248,"cache_read_input_tokens":1800,"output_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":148,"ephemeral_1h_input_tokens":100}}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	var usageChunk *StreamChunk
+
+	for {
+		chunk, err := s.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		if chunk.Usage != nil {
+			usageChunk = chunk
+		}
+	}
+
+	if usageChunk == nil {
+		t.Fatal("expected a chunk with usage")
+	}
+	u := usageChunk.Usage
+	if u.CacheWriteTokens != 248 {
+		t.Errorf("cache_write_tokens = %d, want 248", u.CacheWriteTokens)
+	}
+	if u.CacheWrite5mTokens != 148 {
+		t.Errorf("cache_write_5m_tokens = %d, want 148", u.CacheWrite5mTokens)
+	}
+	if u.CacheWrite1hTokens != 100 {
+		t.Errorf("cache_write_1h_tokens = %d, want 100", u.CacheWrite1hTokens)
+	}
+	if u.CacheReadTokens != 1800 {
+		t.Errorf("cache_read_tokens = %d, want 1800", u.CacheReadTokens)
+	}
+	// Input/cache tokens still fold into prompt_tokens (behavior unchanged).
+	if u.PromptTokens != 12+248+1800 {
+		t.Errorf("prompt_tokens = %d, want %d", u.PromptTokens, 12+248+1800)
+	}
+}
+
 func TestAnthropicStreamFinishReason(t *testing.T) {
 	body := "" +
 		"event: message_start\n" +

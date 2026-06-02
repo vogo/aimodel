@@ -541,6 +541,56 @@ func TestUsageAddWithCacheReadTokens(t *testing.T) {
 	}
 }
 
+func TestUsageAddWithCacheWriteTokens(t *testing.T) {
+	base := Usage{CacheWriteTokens: 10, CacheWrite5mTokens: 6, CacheWrite1hTokens: 4}
+	other := Usage{CacheWriteTokens: 20, CacheWrite5mTokens: 12, CacheWrite1hTokens: 8}
+	base.Add(&other)
+
+	if base.CacheWriteTokens != 30 {
+		t.Errorf("CacheWriteTokens = %d, want 30", base.CacheWriteTokens)
+	}
+	if base.CacheWrite5mTokens != 18 {
+		t.Errorf("CacheWrite5mTokens = %d, want 18", base.CacheWrite5mTokens)
+	}
+	if base.CacheWrite1hTokens != 12 {
+		t.Errorf("CacheWrite1hTokens = %d, want 12", base.CacheWrite1hTokens)
+	}
+}
+
+func TestUsageCacheWriteTokensJSONRoundTrip(t *testing.T) {
+	in := Usage{
+		PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150,
+		CacheWriteTokens: 30, CacheWrite5mTokens: 18, CacheWrite1hTokens: 12,
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Usage
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.CacheWriteTokens != 30 || out.CacheWrite5mTokens != 18 || out.CacheWrite1hTokens != 12 {
+		t.Errorf("round-trip lost cache write fields: %+v", out)
+	}
+}
+
+func TestUsageCacheWriteTokensOmittedWhenZero(t *testing.T) {
+	data, err := json.Marshal(Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"cache_write_tokens", "cache_write_5m_tokens", "cache_write_1h_tokens"} {
+		if _, ok := raw[k]; ok {
+			t.Errorf("%s should be omitted when zero", k)
+		}
+	}
+}
+
 func TestUsageCacheReadTokensJSON(t *testing.T) {
 	raw := `{"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150, "cache_read_tokens": 20}`
 	var u Usage

@@ -49,6 +49,11 @@ type anthropicRequest struct {
 	// mapped from the canonical ChatRequest.ReasoningEffort. It supersedes
 	// thinking.budget_tokens for new models.
 	Effort string `json:"effort,omitempty"`
+	// CacheControl, when set, is the request-root automatic-caching marker
+	// (mapped from ChatRequest.AutoCache). The server caches the last
+	// cacheable block and advances the breakpoint as the conversation grows.
+	// It coexists with per-block cache_control markers.
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -76,6 +81,10 @@ type anthropicContentBlock struct {
 // anthropicCacheControl is the request-side prompt-cache hint.
 type anthropicCacheControl struct {
 	Type string `json:"type"` // always "ephemeral" today
+	// TTL selects the cache lifetime: empty defaults to 5 minutes, "1h"
+	// requests the 1-hour cache. Used by the request-root automatic-caching
+	// marker; per-block markers leave it empty.
+	TTL string `json:"ttl,omitempty"`
 }
 
 // ephemeralCache returns the canonical 5-minute ephemeral marker used on
@@ -131,6 +140,16 @@ type anthropicUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// CacheCreation breaks CacheCreationInputTokens down by TTL. Anthropic
+	// returns it when 1-hour caching or mixed TTLs are in play; nil otherwise.
+	CacheCreation *anthropicCacheCreation `json:"cache_creation,omitempty"`
+}
+
+// anthropicCacheCreation is the per-TTL breakdown of cache writes; the two
+// fields sum to cache_creation_input_tokens.
+type anthropicCacheCreation struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // totalInputTokens returns the total input tokens including cached tokens.
@@ -340,6 +359,13 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// Map the canonical reasoning effort to Anthropic's top-level effort
 	// field (supersedes thinking.budget_tokens). Empty stays omitted.
 	ar.Effort = req.ReasoningEffort
+
+	// Automatic caching: a single request-root cache_control. The server
+	// caches the last cacheable block and advances the breakpoint as the
+	// conversation grows. Coexists with per-block CacheBreakpoint markers.
+	if req.AutoCache {
+		ar.CacheControl = &anthropicCacheControl{Type: "ephemeral", TTL: req.AutoCacheTTL}
+	}
 
 	return ar, nil
 }
@@ -566,13 +592,28 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 				StopDetails:  ar.StopDetails,
 			},
 		},
-		Usage: Usage{
-			PromptTokens:     ar.Usage.totalInputTokens(),
-			CompletionTokens: ar.Usage.OutputTokens,
-			TotalTokens:      ar.Usage.totalInputTokens() + ar.Usage.OutputTokens,
-			CacheReadTokens:  ar.Usage.CacheReadInputTokens,
-		},
+		Usage: anthropicCanonicalUsage(&ar.Usage),
 	}
+}
+
+// anthropicCanonicalUsage builds a canonical Usage from an Anthropic usage
+// object, folding cached/created tokens into PromptTokens (as before) while
+// surfacing the cache read/write counts and the per-TTL write breakdown.
+func anthropicCanonicalUsage(u *anthropicUsage) Usage {
+	cu := Usage{
+		PromptTokens:     u.totalInputTokens(),
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      u.totalInputTokens() + u.OutputTokens,
+		CacheReadTokens:  u.CacheReadInputTokens,
+		CacheWriteTokens: u.CacheCreationInputTokens,
+	}
+
+	if u.CacheCreation != nil {
+		cu.CacheWrite5mTokens = u.CacheCreation.Ephemeral5mInputTokens
+		cu.CacheWrite1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+	}
+
+	return cu
 }
 
 // parseDataURI parses a data URI (e.g. "data:image/jpeg;base64,/9j...")
