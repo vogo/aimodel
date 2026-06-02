@@ -157,6 +157,23 @@ type ChatRequest struct {
 	// PromptCacheKey routes requests sharing a cacheable prefix to the same
 	// cache, improving prompt cache hit rates.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+
+	// Modalities lists the output types the model may generate, e.g.
+	// ["text"] or ["text", "audio"]. Required when requesting audio output.
+	Modalities []string `json:"modalities,omitempty"`
+
+	// Audio configures audio output (voice and format); required when
+	// "audio" is included in Modalities.
+	Audio *AudioConfig `json:"audio,omitempty"`
+}
+
+// AudioConfig configures the audio output of a request (ChatRequest.Audio).
+// Voice selects the speaker (e.g. "alloy"); Format is the output encoding
+// (e.g. "wav", "mp3", "flac", "opus", "pcm16"). Both stay plain strings for
+// pass-through to OpenAI-compatible backends.
+type AudioConfig struct {
+	Voice  string `json:"voice"`
+	Format string `json:"format"`
 }
 
 // ChatResponse represents a response from the chat completions API.
@@ -211,16 +228,37 @@ type Content struct {
 }
 
 // ContentPart represents a single part in a multimodal content array.
+// Exactly one of the payload fields is set, selected by Type:
+// "text" → Text, "image_url" → ImageURL, "input_audio" → InputAudio,
+// "file" → File.
 type ContentPart struct {
-	Type     string    `json:"type"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *ImageURL `json:"image_url,omitempty"`
+	Type       string      `json:"type"`
+	Text       string      `json:"text,omitempty"`
+	ImageURL   *ImageURL   `json:"image_url,omitempty"`
+	InputAudio *InputAudio `json:"input_audio,omitempty"`
+	File       *FilePart   `json:"file,omitempty"`
 }
 
 // ImageURL represents an image URL in a content part.
 type ImageURL struct {
 	URL    string `json:"url"`
 	Detail string `json:"detail,omitempty"`
+}
+
+// InputAudio represents an audio input in a content part (type "input_audio").
+// Data is the base64-encoded audio; Format is the encoding ("wav" or "mp3").
+type InputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+}
+
+// FilePart represents a file input in a content part (type "file"). Reference
+// an already-uploaded file via FileID, or inline one with Filename + FileData
+// (base64-encoded contents).
+type FilePart struct {
+	FileID   string `json:"file_id,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	FileData string `json:"file_data,omitempty"`
 }
 
 // NewTextContent creates a Content from a plain string.
@@ -289,6 +327,10 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 
+	// Audio carries the generated audio of an assistant message when audio
+	// output was requested (ChatRequest.Modalities includes "audio").
+	Audio *MessageAudio `json:"audio,omitempty"`
+
 	// CacheBreakpoint tells protocol backends that support explicit prompt
 	// caching (Anthropic) to emit a cache boundary at the end of this
 	// message's content blocks. OpenAI-compatible backends silently ignore
@@ -349,6 +391,17 @@ type FunctionCall struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
+// MessageAudio is the generated audio attached to an assistant message
+// (Message.Audio), mirroring OpenAI's message.audio object. Data is the
+// base64-encoded audio; Transcript is its text transcript; ID references the
+// audio for multi-turn reuse; ExpiresAt is its Unix expiry time.
+type MessageAudio struct {
+	ID         string `json:"id,omitempty"`
+	Data       string `json:"data,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
+	ExpiresAt  int64  `json:"expires_at,omitempty"`
+}
+
 // Tool represents a tool definition for the API.
 type Tool struct {
 	Type     string             `json:"type"`
@@ -381,6 +434,11 @@ func (r *ChatRequest) clone() ChatRequest {
 	if len(r.Stop) > 0 {
 		c.Stop = make([]string, len(r.Stop))
 		copy(c.Stop, r.Stop)
+	}
+
+	if len(r.Modalities) > 0 {
+		c.Modalities = make([]string, len(r.Modalities))
+		copy(c.Modalities, r.Modalities)
 	}
 
 	if len(r.Tools) > 0 {

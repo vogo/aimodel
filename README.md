@@ -127,6 +127,37 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
+### Multimodal input & audio output
+
+`Content` is polymorphic — `NewTextContent` for plain text, `NewPartsContent` for a multimodal array. Each `ContentPart` carries one payload selected by `Type`:
+
+- `text` → `Text`
+- `image_url` → `ImageURL{URL, Detail}`
+- `input_audio` → `InputAudio{Data, Format}` — base64 audio plus encoding (`wav` / `mp3`)
+- `file` → `FilePart{FileID}` (reference an uploaded file) or `FilePart{Filename, FileData}` (inline base64 contents)
+
+To request audio output, set `Modalities` (e.g. `["text", "audio"]`) and `Audio` (`AudioConfig{Voice, Format}`); the generated audio comes back on `resp.Choices[i].Message.Audio` (`MessageAudio{ID, Data, Transcript, ExpiresAt}`).
+
+```go
+resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+    Model:      aimodel.ModelOpenaiGPT4o,
+    Modalities: []string{"text", "audio"},
+    Audio:      &aimodel.AudioConfig{Voice: "alloy", Format: "wav"},
+    Messages: []aimodel.Message{
+        {Role: aimodel.RoleUser, Content: aimodel.NewPartsContent(
+            aimodel.ContentPart{Type: "text", Text: "What is said in this clip?"},
+            aimodel.ContentPart{Type: "input_audio", InputAudio: &aimodel.InputAudio{
+                Data: base64Audio, Format: "wav",
+            }},
+        )},
+    },
+})
+
+if a := resp.Choices[0].Message.Audio; a != nil {
+    fmt.Println(a.Transcript) // generated audio's text transcript
+}
+```
+
 ### Streaming
 
 ```go

@@ -774,3 +774,128 @@ func TestChoiceLogProbsOmittedWhenNil(t *testing.T) {
 		t.Errorf("logprobs should be omitted when nil, got %s", out)
 	}
 }
+
+func TestContentMarshalInputAudioAndFile(t *testing.T) {
+	c := NewPartsContent(
+		ContentPart{Type: "text", Text: "transcribe this"},
+		ContentPart{Type: "input_audio", InputAudio: &InputAudio{Data: "aGVsbG8=", Format: "wav"}},
+		ContentPart{Type: "file", File: &FilePart{FileID: "file-abc"}},
+	)
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `[{"type":"text","text":"transcribe this"},` +
+		`{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"wav"}},` +
+		`{"type":"file","file":{"file_id":"file-abc"}}]`
+	if string(data) != want {
+		t.Errorf("got %s\nwant %s", data, want)
+	}
+}
+
+func TestContentUnmarshalInputAudioAndFile(t *testing.T) {
+	raw := `[{"type":"text","text":"transcribe this"},` +
+		`{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"mp3"}},` +
+		`{"type":"file","file":{"filename":"doc.pdf","file_data":"JVBERi0="}}]`
+
+	var c Content
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	parts := c.Parts()
+	if len(parts) != 3 {
+		t.Fatalf("parts len = %d, want 3", len(parts))
+	}
+
+	if c.Text() != "transcribe this" {
+		t.Errorf("text = %q, want %q", c.Text(), "transcribe this")
+	}
+
+	ia := parts[1]
+	if ia.Type != "input_audio" || ia.InputAudio == nil {
+		t.Fatalf("parts[1] = %+v, want input_audio with payload", ia)
+	}
+	if ia.InputAudio.Data != "aGVsbG8=" || ia.InputAudio.Format != "mp3" {
+		t.Errorf("input_audio = %+v", ia.InputAudio)
+	}
+
+	fp := parts[2]
+	if fp.Type != "file" || fp.File == nil {
+		t.Fatalf("parts[2] = %+v, want file with payload", fp)
+	}
+	if fp.File.Filename != "doc.pdf" || fp.File.FileData != "JVBERi0=" {
+		t.Errorf("file = %+v", fp.File)
+	}
+}
+
+func TestContentPartOmitsUnsetPayloads(t *testing.T) {
+	// A plain text part must not serialize image_url / input_audio / file.
+	data, err := json.Marshal(ContentPart{Type: "text", Text: "hi"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(data); got != `{"type":"text","text":"hi"}` {
+		t.Errorf("got %s, want %s", got, `{"type":"text","text":"hi"}`)
+	}
+}
+
+func TestMessageAudioUnmarshal(t *testing.T) {
+	raw := `{
+		"role": "assistant",
+		"content": null,
+		"audio": {
+			"id": "audio_abc",
+			"data": "aGVsbG8=",
+			"transcript": "Hello there.",
+			"expires_at": 1700000000
+		}
+	}`
+
+	var msg Message
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if msg.Audio == nil {
+		t.Fatal("audio is nil, want parsed payload")
+	}
+	if msg.Audio.ID != "audio_abc" || msg.Audio.Data != "aGVsbG8=" {
+		t.Errorf("audio id/data = %+v", msg.Audio)
+	}
+	if msg.Audio.Transcript != "Hello there." {
+		t.Errorf("transcript = %q", msg.Audio.Transcript)
+	}
+	if msg.Audio.ExpiresAt != 1700000000 {
+		t.Errorf("expires_at = %d", msg.Audio.ExpiresAt)
+	}
+}
+
+func TestMessageAudioOmittedWhenNil(t *testing.T) {
+	msg := Message{Role: RoleUser, Content: NewTextContent("Hi")}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "audio") {
+		t.Errorf("audio should be omitted when nil, got %s", data)
+	}
+}
+
+func TestChatRequestCloneModalities(t *testing.T) {
+	orig := &ChatRequest{
+		Model:      ModelOpenaiGPT4o,
+		Messages:   []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		Modalities: []string{"text", "audio"},
+	}
+
+	cloned := orig.clone()
+	cloned.Modalities = append(cloned.Modalities, "image")
+	cloned.Modalities[0] = "audio"
+
+	if len(orig.Modalities) != 2 || orig.Modalities[0] != "text" || orig.Modalities[1] != "audio" {
+		t.Errorf("original Modalities mutated: %v", orig.Modalities)
+	}
+}

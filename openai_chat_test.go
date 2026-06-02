@@ -869,9 +869,80 @@ func TestOpenAIChatRequestCommonFieldsOmitEmpty(t *testing.T) {
 	for _, key := range []string{
 		"logprobs", "top_logprobs", "logit_bias", "parallel_tool_calls",
 		"service_tier", "store", "metadata", "prompt_cache_key",
+		"modalities", "audio",
 	} {
 		if _, ok := (*captured)[key]; ok {
 			t.Errorf("%s should be omitted when empty", key)
 		}
+	}
+}
+
+func TestOpenAIChatRequestModalitiesAudio(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:      ModelOpenaiGPT4o,
+		Messages:   []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		Modalities: []string{"text", "audio"},
+		Audio:      &AudioConfig{Voice: "alloy", Format: "wav"},
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	wantKeys := map[string]string{
+		"modalities": `["text","audio"]`,
+		"audio":      `{"voice":"alloy","format":"wav"}`,
+	}
+
+	for key, want := range wantKeys {
+		val, ok := (*captured)[key]
+		if !ok {
+			t.Errorf("%s not present in request body", key)
+			continue
+		}
+		if string(val) != want {
+			t.Errorf("%s = %s, want %s", key, val, want)
+		}
+	}
+}
+
+func TestOpenAIChatRequestInputAudioContent(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model: ModelOpenaiGPT4o,
+		Messages: []Message{{
+			Role: RoleUser,
+			Content: NewPartsContent(
+				ContentPart{Type: "text", Text: "what is said?"},
+				ContentPart{Type: "input_audio", InputAudio: &InputAudio{Data: "aGVsbG8=", Format: "wav"}},
+			),
+		}},
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	msgs, ok := (*captured)["messages"]
+	if !ok {
+		t.Fatal("messages not present in request body")
+	}
+
+	want := `[{"role":"user","content":[` +
+		`{"type":"text","text":"what is said?"},` +
+		`{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"wav"}}]}]`
+	if string(msgs) != want {
+		t.Errorf("messages = %s\nwant %s", msgs, want)
 	}
 }

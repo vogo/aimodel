@@ -8,6 +8,16 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — OpenAI: multimodal input/output (`input_audio`/`file` parts, `modalities`/`audio`)
+
+- **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
+- **Official docs**: https://platform.openai.com/docs/api-reference/chat
+- **Official change**: Chat Completions supports audio/file multimodal input via content parts `input_audio` and `file`, requests audio output via `modalities` + `audio` (voice/format), and returns generated audio on `choices[].message.audio`.
+- **Change summary**: `ContentPart` extended with `InputAudio *InputAudio` (`input_audio`, `{data, format}`) and `File *FilePart` (`file`, `{file_id | filename + file_data}`), both `omitempty`; the string/parts polymorphism stays on `Content` (`MarshalJSON`/`UnmarshalJSON` unchanged). `ChatRequest` gained `Modalities []string` (`modalities`) and `Audio *AudioConfig` (`audio`, `{voice, format}`), both `omitempty`; `clone()` now deep-copies the `Modalities` slice. `Message` gained `Audio *MessageAudio` (`audio`, `{id, data, transcript, expires_at}`, all `omitempty`) parsing assistant-generated audio. Anthropic translation untouched (no counterparts; new part types fall through its `text`/`image_url` switch safely).
+- **Affected files**: `schema.go` (ContentPart fields + `InputAudio`/`FilePart` types, `ChatRequest.Modalities`/`Audio` + `AudioConfig`, `Message.Audio` + `MessageAudio`, `clone()` Modalities deep-copy), `schema_test.go` (input_audio/file round-trip, part omitempty, message.audio parse, clone Modalities isolation), `openai_chat_test.go` (modalities/audio request-body serialization + omitempty, input_audio content serialization), `README.md`, `CLAUDE.md`.
+
+---
+
 ## 2026-06-02 — OpenAI: extend `ChatRequest` with common request fields (+ response `logprobs`)
 
 - **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
