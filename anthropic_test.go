@@ -809,6 +809,122 @@ func TestToAnthropicRequestThinking(t *testing.T) {
 	}
 }
 
+func TestToAnthropicRequestEffort(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Solve this")},
+		},
+		ReasoningEffort: ReasoningEffortHigh,
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.Effort != ReasoningEffortHigh {
+		t.Errorf("effort = %q, want %q", ar.Effort, ReasoningEffortHigh)
+	}
+
+	// Effort must survive marshalling as a top-level "effort" field.
+	data, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if !strings.Contains(string(data), `"effort":"high"`) {
+		t.Errorf("marshalled request missing effort: %s", data)
+	}
+}
+
+func TestToAnthropicRequestEffortOmittedWhenEmpty(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hello")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.Effort != "" {
+		t.Errorf("effort = %q, want empty", ar.Effort)
+	}
+
+	data, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if strings.Contains(string(data), "effort") {
+		t.Errorf("empty effort should be omitted, got: %s", data)
+	}
+}
+
+func TestToAnthropicRequestThinkingDisplayOmitted(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Think quietly")},
+		},
+		Thinking: &Thinking{
+			Type:    "enabled",
+			Display: "omitted",
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.Thinking == nil || ar.Thinking.Display != "omitted" {
+		t.Fatalf("thinking.display = %v, want omitted", ar.Thinking)
+	}
+
+	data, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if !strings.Contains(string(data), `"display":"omitted"`) {
+		t.Errorf("marshalled request missing display: %s", data)
+	}
+}
+
+func TestToAnthropicRequestThinkingAdaptive(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Let the model decide")},
+		},
+		Thinking:        &Thinking{Type: "adaptive"},
+		ReasoningEffort: ReasoningEffortMedium,
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if ar.Thinking == nil || ar.Thinking.Type != "adaptive" {
+		t.Fatalf("thinking.type = %v, want adaptive", ar.Thinking)
+	}
+
+	// adaptive type carries no budget_tokens; effort drives the depth.
+	if ar.Thinking.BudgetTokens != 0 {
+		t.Errorf("budget_tokens = %d, want 0 for adaptive", ar.Thinking.BudgetTokens)
+	}
+
+	if ar.Effort != ReasoningEffortMedium {
+		t.Errorf("effort = %q, want %q", ar.Effort, ReasoningEffortMedium)
+	}
+}
+
 func TestFromAnthropicResponseThinking(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_think",

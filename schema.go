@@ -73,8 +73,23 @@ const (
 
 // Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
 type Thinking struct {
-	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	// Type selects the thinking mode. Anthropic accepts "enabled", "disabled",
+	// and (since the effort GA) "adaptive"; kept a plain string for pass-through.
+	Type string `json:"type"`
+
+	// BudgetTokens caps the thinking tokens for type "enabled".
+	//
+	// Deprecated: Anthropic's top-level `effort` parameter (mapped from
+	// ChatRequest.ReasoningEffort) GA'd on 2026-02-05 and supersedes
+	// budget_tokens for new models; prefer setting ReasoningEffort, or use
+	// type "adaptive" to let the model size its own thinking. BudgetTokens
+	// remains for models/callers that still pin an explicit budget.
+	BudgetTokens int `json:"budget_tokens,omitempty"`
+
+	// Display controls whether thinking content is streamed back. Set to
+	// "omitted" (Anthropic, since 2026-03-16) to suppress thinking blocks and
+	// speed up streaming; empty streams thinking as usual.
+	Display string `json:"display,omitempty"`
 }
 
 // StreamOptions configures streaming behavior.
@@ -117,7 +132,9 @@ type ChatRequest struct {
 	ToolChoice       any            `json:"tool_choice,omitempty"`
 	Thinking         *Thinking      `json:"thinking,omitempty"`
 
-	// ReasoningEffort maps to OpenAI's reasoning_effort. Use the
+	// ReasoningEffort controls how many reasoning tokens the model spends.
+	// It maps to OpenAI's reasoning_effort and to Anthropic's top-level
+	// effort (GA'd 2026-02-05, supersedes thinking.budget_tokens). Use the
 	// ReasoningEffort* constants (none/minimal/low/medium/high/xhigh) or pass
 	// any value a custom backend accepts.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`

@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: map `effort`, support `thinking.display`, deprecate `budget_tokens`
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Since 2026-02-05, the top-level `effort` parameter GA'd and supersedes `thinking.budget_tokens` for controlling reasoning depth (also enabling `thinking.type:"adaptive"`, where the model sizes its own thinking). Since 2026-03-16, `thinking.display:"omitted"` suppresses thinking content to speed up streaming.
+- **Change summary**: `toAnthropicRequest` (`anthropic.go`) now maps the canonical `ChatRequest.ReasoningEffort` to a new top-level `anthropicRequest.Effort string` (`json:"effort,omitempty"`) — empty stays omitted; the same field still drives OpenAI's `reasoning_effort`. `Thinking` (`schema.go`) gained `Display string` (`json:"display,omitempty"`) for `"omitted"`; its `Type` stays a plain string so `"adaptive"` passes through; `BudgetTokens` got a deprecation note pointing callers at `effort`/`adaptive`. Added tests `TestToAnthropicRequestEffort`, `TestToAnthropicRequestEffortOmittedWhenEmpty`, `TestToAnthropicRequestThinkingDisplayOmitted`, `TestToAnthropicRequestThinkingAdaptive`.
+
+---
+
 ## 2026-06-02 — Anthropic: `tool_choice` "none" mapping and `disable_parallel_tool_use`
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

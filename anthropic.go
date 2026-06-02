@@ -44,6 +44,10 @@ type anthropicRequest struct {
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
 	Thinking      *Thinking            `json:"thinking,omitempty"`
+	// Effort is Anthropic's top-level reasoning-depth control (GA 2026-02-05),
+	// mapped from the canonical ChatRequest.ReasoningEffort. It supersedes
+	// thinking.budget_tokens for new models.
+	Effort string `json:"effort,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -325,6 +329,10 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 
 	// Pass through thinking configuration.
 	ar.Thinking = req.Thinking
+
+	// Map the canonical reasoning effort to Anthropic's top-level effort
+	// field (supersedes thinking.budget_tokens). Empty stays omitted.
+	ar.Effort = req.ReasoningEffort
 
 	return ar, nil
 }

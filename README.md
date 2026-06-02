@@ -57,10 +57,12 @@ Both fields are `*int` with `omitempty`. For the Anthropic protocol (which alway
 
 #### Reasoning effort & verbosity
 
-- `ReasoningEffort` → `reasoning_effort`: how many reasoning tokens the model spends. Use the `ReasoningEffort*` constants — `none` / `minimal` / `low` / `medium` / `high` / `xhigh` (GPT-5.1 defaults to `none`).
+- `ReasoningEffort` → OpenAI `reasoning_effort` / Anthropic top-level `effort`: how many reasoning tokens the model spends. Use the `ReasoningEffort*` constants — `none` / `minimal` / `low` / `medium` / `high` / `xhigh` (GPT-5.1 defaults to `none`). On the Anthropic protocol this `effort` field (GA 2026-02-05) supersedes `thinking.budget_tokens`.
 - `Verbosity` → `verbosity`: how detailed the output is. Use the `Verbosity*` constants — `low` / `medium` / `high`.
 
 Both fields stay plain `string` with `omitempty`, so you can also pass any value a custom OpenAI-compatible backend accepts.
+
+For Anthropic extended thinking, `Thinking` carries `Type` (`enabled` / `disabled` / `adaptive`), the now-deprecated `BudgetTokens` (prefer `ReasoningEffort` or `Type:"adaptive"`), and `Display` — set `Display: "omitted"` to suppress thinking content and speed up streaming.
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
