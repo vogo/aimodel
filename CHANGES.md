@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: preserve mid-conversation `system` messages (fix hoisting)
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Since 2026-05-28 (Opus 4.8), `messages` may contain `role:"system"` entries at non-leading positions (mid-conversation system messages), letting callers change instructions mid-session while keeping prompt-cache hits.
+- **Change summary**: `toAnthropicRequest` (`anthropic.go`) previously hoisted **every** `RoleSystem` message into the top-level `system` field regardless of position, wrongly lifting mid-conversation system messages to the front and dropping their position semantics. Now only the **leading** run of system messages (before the first non-system message) is extracted into `system` (CacheBreakpoint / block-vs-string behavior unchanged); a system message appearing mid-conversation falls through to `toAnthropicMessage` and stays inline as a `role:"system"` message in its original order. Added tests `TestToAnthropicRequestSystemMidConversation` and `TestToAnthropicRequestSystemLeadingAndMid` (the leading-only case stays covered by `TestToAnthropicRequestSystemExtraction`).
+
+---
+
 ## 2026-06-02 — OpenAI: multimodal input/output (`input_audio`/`file` parts, `modalities`/`audio`)
 
 - **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)

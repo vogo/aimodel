@@ -84,7 +84,7 @@ Environment variable fallback order:
 
 API reference: see the "Official API References" section above.
 
-Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. System messages are extracted into the separate `system` field. Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
+Anthropic types are private (`anthropicRequest`, `anthropicResponse`, etc.) and translated to/from the canonical OpenAI-compatible types. Only the **leading** run of system messages (those before the first non-system message) is extracted into the separate top-level `system` field; a system message appearing mid-conversation is kept inline as a `role:"system"` message in its original position (mid-conversation system messages, supported since Opus 4.8) to preserve position semantics and prompt-cache hits. Streaming uses Anthropic-specific SSE event types (`content_block_delta`, `message_delta`, etc.).
 
 ## Packages
 

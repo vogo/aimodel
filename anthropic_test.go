@@ -80,6 +80,102 @@ func TestToAnthropicRequestSystemExtraction(t *testing.T) {
 	}
 }
 
+// TestToAnthropicRequestSystemMidConversation verifies that a system
+// message appearing after the first non-system message is NOT hoisted into
+// the top-level system field, but stays inline as a role:"system" message
+// in its original position.
+func TestToAnthropicRequestSystemMidConversation(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+			{Role: RoleAssistant, Content: NewTextContent("Hello!")},
+			{Role: RoleSystem, Content: NewTextContent("Now switch to terse mode.")},
+			{Role: RoleUser, Content: NewTextContent("Continue")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// No leading system message, so the top-level system field is empty.
+	if ar.System != nil {
+		t.Errorf("system = %s, want nil (no leading system message)", ar.System)
+	}
+
+	// All four messages, including the mid-conversation system, are inlined
+	// in their original order.
+	if len(ar.Messages) != 4 {
+		t.Fatalf("messages len = %d, want 4", len(ar.Messages))
+	}
+
+	wantRoles := []string{"user", "assistant", "system", "user"}
+	for i, want := range wantRoles {
+		if ar.Messages[i].Role != want {
+			t.Errorf("messages[%d].role = %q, want %q", i, ar.Messages[i].Role, want)
+		}
+	}
+
+	var midText string
+	if err := json.Unmarshal(ar.Messages[2].Content, &midText); err != nil {
+		t.Fatalf("unmarshal mid system content: %v", err)
+	}
+	if midText != "Now switch to terse mode." {
+		t.Errorf("mid system text = %q", midText)
+	}
+}
+
+// TestToAnthropicRequestSystemLeadingAndMid verifies the mixed case: a
+// leading system message is hoisted into the top-level system field while a
+// later, mid-conversation system message stays inline in original order.
+func TestToAnthropicRequestSystemLeadingAndMid(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleSystem, Content: NewTextContent("You are helpful.")},
+			{Role: RoleUser, Content: NewTextContent("Hi")},
+			{Role: RoleSystem, Content: NewTextContent("Be concise from now on.")},
+			{Role: RoleAssistant, Content: NewTextContent("Ok.")},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// Only the leading system message lands in the top-level system field.
+	var system string
+	if err := json.Unmarshal(ar.System, &system); err != nil {
+		t.Fatalf("unmarshal system: %v", err)
+	}
+	if system != "You are helpful." {
+		t.Errorf("system = %q, want only the leading system message", system)
+	}
+
+	// The mid-conversation system stays inline between user and assistant.
+	if len(ar.Messages) != 3 {
+		t.Fatalf("messages len = %d, want 3", len(ar.Messages))
+	}
+
+	wantRoles := []string{"user", "system", "assistant"}
+	for i, want := range wantRoles {
+		if ar.Messages[i].Role != want {
+			t.Errorf("messages[%d].role = %q, want %q", i, ar.Messages[i].Role, want)
+		}
+	}
+
+	var midText string
+	if err := json.Unmarshal(ar.Messages[1].Content, &midText); err != nil {
+		t.Fatalf("unmarshal mid system content: %v", err)
+	}
+	if midText != "Be concise from now on." {
+		t.Errorf("mid system text = %q", midText)
+	}
+}
+
 func TestToAnthropicRequestMaxTokens(t *testing.T) {
 	maxTokens := 1024
 	req := &ChatRequest{

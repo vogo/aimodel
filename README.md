@@ -198,6 +198,8 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocols — routing is handled internally.
 
+**System message translation**: only the *leading* run of `RoleSystem` messages (those before the first user/assistant turn) is hoisted into Anthropic's top-level `system` field. A `RoleSystem` message that appears mid-conversation is kept inline as a `role:"system"` message in its original position (supported since Opus 4.8), so you can switch instructions mid-session without losing prompt-cache hits.
+
 ### Client Options
 
 ```go

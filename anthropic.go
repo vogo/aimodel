@@ -213,8 +213,16 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// system field so we can attach cache_control to the last block.
 	var anyCacheableSystem bool
 
+	// seenNonSystem flips once we pass the first non-system message. Only
+	// the leading run of system messages (before any user/assistant turn)
+	// is hoisted into the top-level `system` field; system messages that
+	// appear mid-conversation are kept inline as role:"system" Anthropic
+	// messages (supported since Opus 4.8 / 2026-05-28) so their position
+	// and prompt-cache semantics are preserved.
+	var seenNonSystem bool
+
 	for _, m := range req.Messages {
-		if m.Role == RoleSystem {
+		if m.Role == RoleSystem && !seenNonSystem {
 			if m.CacheBreakpoint {
 				anyCacheableSystem = true
 				useBlocks = true
@@ -240,6 +248,13 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 			}
 
 			continue
+		}
+
+		// Any non-system message ends the leading system run; subsequent
+		// system messages fall through to toAnthropicMessage and stay
+		// inline as role:"system".
+		if m.Role != RoleSystem {
+			seenNonSystem = true
 		}
 
 		am, err := toAnthropicMessage(m)
