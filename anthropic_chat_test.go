@@ -165,6 +165,80 @@ func TestAnthropicChatCompletionDefaultBaseURL(t *testing.T) {
 	}
 }
 
+func TestSetAnthropicHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        []Option
+		wantVersion string
+		wantBeta    string // "" means header must be absent
+	}{
+		{
+			name:        "default",
+			opts:        nil,
+			wantVersion: anthropicAPIVersion,
+			wantBeta:    "",
+		},
+		{
+			name:        "single beta",
+			opts:        []Option{WithAnthropicBeta("context-1m-2025-08-07")},
+			wantVersion: anthropicAPIVersion,
+			wantBeta:    "context-1m-2025-08-07",
+		},
+		{
+			name:        "multiple beta in one call",
+			opts:        []Option{WithAnthropicBeta("compaction-2025-01-01", "context-editing-2025-06-01")},
+			wantVersion: anthropicAPIVersion,
+			wantBeta:    "compaction-2025-01-01,context-editing-2025-06-01",
+		},
+		{
+			name:        "multiple beta accumulate across calls",
+			opts:        []Option{WithAnthropicBeta("a"), WithAnthropicBeta("b", ""), WithAnthropicBeta("c")},
+			wantVersion: anthropicAPIVersion,
+			wantBeta:    "a,b,c",
+		},
+		{
+			name:        "custom version",
+			opts:        []Option{WithAnthropicVersion("2099-01-01")},
+			wantVersion: "2099-01-01",
+			wantBeta:    "",
+		},
+		{
+			name:        "custom version and beta",
+			opts:        []Option{WithAnthropicVersion("2099-01-01"), WithAnthropicBeta("fast-mode")},
+			wantVersion: "2099-01-01",
+			wantBeta:    "fast-mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := append([]Option{WithAPIKey("sk-ant-test"), WithProtocol(ProtocolAnthropic)}, tt.opts...)
+			c, err := NewClient(opts...)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+
+			req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			c.setAnthropicHeaders(req)
+
+			if got := req.Header.Get("anthropic-version"); got != tt.wantVersion {
+				t.Errorf("anthropic-version = %q, want %q", got, tt.wantVersion)
+			}
+
+			_, betaSet := req.Header["Anthropic-Beta"]
+			if got := req.Header.Get("anthropic-beta"); got != tt.wantBeta {
+				t.Errorf("anthropic-beta = %q, want %q", got, tt.wantBeta)
+			}
+			if tt.wantBeta == "" && betaSet {
+				t.Errorf("anthropic-beta header should be absent, got %q", req.Header.Get("anthropic-beta"))
+			}
+		})
+	}
+}
+
 func TestAnthropicChatCompletionStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {

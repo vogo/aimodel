@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: configurable `anthropic-beta` / `anthropic-version` headers
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Many Anthropic capabilities (compaction, context-editing, structured-outputs (during beta), fast-mode, advisor, etc.) are opt-in via the `anthropic-beta` request header (multiple values comma-joined); the `anthropic-version` header (default `2023-06-01`) selects the API version.
+- **Change summary**: Infrastructure only — adds Client-level configurability without wiring any specific beta capability. `Client` (`client.go`) gained `anthropicBeta []string` and `anthropicVersion string`, plus two options following the existing pattern: `WithAnthropicBeta(values ...string)` (appends across calls, ignores empty strings, comma-joined on the wire) and `WithAnthropicVersion(string)` (empty string keeps the default). `setAnthropicHeaders` (`anthropic_chat.go`) now emits `anthropic-version` from `anthropicVersionHeader()` (configured value or `anthropicAPIVersion`) and sets `anthropic-beta` only when `anthropicBetaHeader()` is non-empty. **Default behavior unchanged**: with no option, version stays `2023-06-01` and no `anthropic-beta` header is sent. Added `TestSetAnthropicHeaders` (default / single beta / multiple beta in one call / accumulation across calls / custom version / version+beta).
+
+---
+
 ## 2026-06-02 — Anthropic: new `stop_reason` constants and `stop_details` (refusal classification)
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

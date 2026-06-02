@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // anthropicChatCompletion sends a non-streaming request to the Anthropic Messages API.
@@ -113,7 +114,27 @@ func (c *Client) anthropicChatCompletionStream(ctx context.Context, req *ChatReq
 func (c *Client) setAnthropicHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", anthropicAPIVersion)
+	req.Header.Set("anthropic-version", c.anthropicVersionHeader())
+
+	if beta := c.anthropicBetaHeader(); beta != "" {
+		req.Header.Set("anthropic-beta", beta)
+	}
+}
+
+// anthropicVersionHeader returns the configured "anthropic-version" value,
+// falling back to the default anthropicAPIVersion when none is set.
+func (c *Client) anthropicVersionHeader() string {
+	if c.anthropicVersion != "" {
+		return c.anthropicVersion
+	}
+
+	return anthropicAPIVersion
+}
+
+// anthropicBetaHeader joins the configured beta features into the comma-separated
+// "anthropic-beta" header value, returning "" when none are configured.
+func (c *Client) anthropicBetaHeader() string {
+	return strings.Join(c.anthropicBeta, ",")
 }
 
 func (c *Client) anthropicBaseURL() string {

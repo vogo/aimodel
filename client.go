@@ -29,12 +29,14 @@ const defaultTimeout = 60 * time.Second
 // Client is an AI API client compatible with OpenAI-style endpoints.
 // Set the protocol with WithProtocol to use vendor-specific APIs (e.g., Anthropic).
 type Client struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	protocol   Protocol
-	timeout    time.Duration
-	httpClient *http.Client
+	apiKey           string
+	baseURL          string
+	model            string
+	protocol         Protocol
+	timeout          time.Duration
+	httpClient       *http.Client
+	anthropicBeta    []string
+	anthropicVersion string
 }
 
 // Option configures a Client.
@@ -79,6 +81,32 @@ func WithHTTPClient(hc *http.Client) Option {
 func WithProtocol(p Protocol) Option {
 	return func(c *Client) {
 		c.protocol = p
+	}
+}
+
+// WithAnthropicBeta enables one or more Anthropic beta features via the
+// "anthropic-beta" request header (only used by ProtocolAnthropic). The given
+// values are appended to any previously set ones; on the wire they are joined
+// with commas. Empty strings are ignored. With no beta value configured, the
+// header is omitted (default behavior).
+func WithAnthropicBeta(values ...string) Option {
+	return func(c *Client) {
+		for _, v := range values {
+			if v != "" {
+				c.anthropicBeta = append(c.anthropicBeta, v)
+			}
+		}
+	}
+}
+
+// WithAnthropicVersion overrides the "anthropic-version" request header
+// (only used by ProtocolAnthropic). An empty string keeps the default
+// (anthropicAPIVersion, "2023-06-01").
+func WithAnthropicVersion(version string) Option {
+	return func(c *Client) {
+		if version != "" {
+			c.anthropicVersion = version
+		}
 	}
 }
 

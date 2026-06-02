@@ -217,6 +217,22 @@ client, _ := aimodel.NewClient(
 )
 ```
 
+**Anthropic header options** (no effect under the OpenAI protocol):
+
+```go
+client, _ := aimodel.NewClient(
+    aimodel.WithAPIKey("sk-ant-xxx"),
+    aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+    // Opt into beta capabilities via the "anthropic-beta" header.
+    // Values append across calls and are comma-joined on the wire.
+    aimodel.WithAnthropicBeta("context-1m-2025-08-07"),
+    // Override the "anthropic-version" header (default "2023-06-01").
+    aimodel.WithAnthropicVersion("2023-06-01"),
+)
+```
+
+`WithAnthropicBeta` ignores empty strings and, with no value configured, the `anthropic-beta` header is omitted entirely (default behavior). `WithAnthropicVersion("")` keeps the default version. These are the infrastructure for enabling beta features (compaction, context-editing, structured-outputs, fast-mode, advisor, …).
+
 ### Multi-Model Compose
 
 The `composes` package dispatches requests across multiple backends with failover, random, or weighted strategies:

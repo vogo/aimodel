@@ -73,7 +73,9 @@ Health tracking uses exponential backoff (`2^min(errorCount-1, 6)` × base inter
 
 ### Client Configuration
 
-Option pattern: `WithAPIKey()`, `WithBaseURL()`, `WithProtocol()`, `WithTimeout()`.
+Option pattern: `WithAPIKey()`, `WithBaseURL()`, `WithProtocol()`, `WithTimeout()`, `WithDefaultModel()`, `WithHTTPClient()`.
+
+Anthropic-only header options (no effect on OpenAI protocol): `WithAnthropicBeta(...string)` enables beta features via the `anthropic-beta` header — values append across calls, empty strings are ignored, and they are comma-joined on the wire (header omitted when none set); `WithAnthropicVersion(string)` overrides the `anthropic-version` header (empty keeps the default `2023-06-01`). These are infrastructure for opting into beta capabilities (compaction, context-editing, structured-outputs, fast-mode, advisor, etc.); `setAnthropicHeaders` (`anthropic_chat.go`) emits them.
 
 Environment variable fallback order:
 - API Key: `AI_API_KEY` > `OPENAI_API_KEY` > `ANTHROPIC_API_KEY`
