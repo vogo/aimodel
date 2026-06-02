@@ -20,7 +20,7 @@ aimodel is a thin wrapper over the following official protocols. Each wrapper ma
 | OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
 
-The sync status against the official APIs (target version, change summary, affected files) is recorded in [CHANGES.md](./CHANGES.md).
+The sync status against the official APIs (target version, change summary) is recorded in [CHANGES.md](./CHANGES.md).
 
 **Maintenance convention**: when an official API changes, update all three in sync — the wrapper code, this document, and CHANGES.md — keeping them consistent and continuously up to date.
 
