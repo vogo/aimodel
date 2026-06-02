@@ -55,7 +55,7 @@ The dispatch happens in `chat.go`. Protocol-specific logic is isolated in `opena
 
 ### Key Types (schema.go)
 
-- `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation
+- `ChatRequest` / `ChatResponse` — Use OpenAI-compatible format as canonical representation. `ReasoningEffort` (`reasoning_effort`) and `Verbosity` (`verbosity`) stay plain `string` for pass-through; use the `ReasoningEffort*` (`none/minimal/low/medium/high/xhigh`) and `Verbosity*` (`low/medium/high`) constants.
 - `Content` — Polymorphic: marshals as string (plain text) or `[]ContentPart` (multimodal)
 - `Stream` — Concurrent-safe SSE reader with `Recv()` / `Close()` (mutex + atomic bool)
 - `Usage` — Normalizes token counts; `CacheReadTokens` parses OpenAI's nested `prompt_tokens_details.cached_tokens` and `ReasoningTokens` parses `completion_tokens_details.reasoning_tokens` (explicit top-level fields take precedence). `Add` accumulates all counts.

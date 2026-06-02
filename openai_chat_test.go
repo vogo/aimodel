@@ -679,3 +679,120 @@ func TestChatCompletionWithTools(t *testing.T) {
 		t.Errorf("function name = %q", tc.Function.Name)
 	}
 }
+
+// captureRequestBody starts a test server that records the raw request body of
+// the next chat completion and returns a minimal valid response.
+func captureRequestBody(t *testing.T) (*httptest.Server, *map[string]json.RawMessage) {
+	t.Helper()
+
+	var captured map[string]json.RawMessage
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		// Reset to a fresh map so a prior request's keys don't linger
+		// (json.Unmarshal merges into an existing map rather than replacing it).
+		captured = nil
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ChatResponse{
+			ID: "chatcmpl-capture",
+			Choices: []Choice{
+				{Index: 0, Message: Message{Role: RoleAssistant, Content: NewTextContent("ok")}, FinishReason: FinishReasonStop},
+			},
+		})
+	}))
+
+	return srv, &captured
+}
+
+func TestOpenAIChatRequestVerbosity(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// Verbosity set: serialized as "verbosity".
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:     ModelOpenaiGPT4o,
+		Messages:  []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+		Verbosity: VerbosityHigh,
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	val, ok := (*captured)["verbosity"]
+	if !ok {
+		t.Fatal("verbosity not present in request body")
+	}
+	if string(val) != `"high"` {
+		t.Errorf("verbosity = %s, want %q", val, "high")
+	}
+
+	// Verbosity empty: omitempty drops the field.
+	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    ModelOpenaiGPT4o,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	}); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	if _, ok := (*captured)["verbosity"]; ok {
+		t.Error("verbosity should be omitted when empty")
+	}
+}
+
+func TestOpenAIChatRequestReasoningEffortValues(t *testing.T) {
+	srv, captured := captureRequestBody(t)
+	defer srv.Close()
+
+	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	efforts := []string{
+		ReasoningEffortNone,
+		ReasoningEffortMinimal,
+		ReasoningEffortLow,
+		ReasoningEffortMedium,
+		ReasoningEffortHigh,
+		ReasoningEffortXHigh,
+	}
+
+	for _, effort := range efforts {
+		t.Run(effort, func(t *testing.T) {
+			if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
+				Model:           ModelOpenaiGPT4o,
+				Messages:        []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+				ReasoningEffort: effort,
+			}); err != nil {
+				t.Fatalf("ChatCompletion: %v", err)
+			}
+
+			val, ok := (*captured)["reasoning_effort"]
+			if !ok {
+				t.Fatal("reasoning_effort not present in request body")
+			}
+			if string(val) != `"`+effort+`"` {
+				t.Errorf("reasoning_effort = %s, want %q", val, effort)
+			}
+		})
+	}
+
+	// Verify the constants match the official literal values.
+	want := []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+	for i, effort := range efforts {
+		if effort != want[i] {
+			t.Errorf("constant[%d] = %q, want %q", i, effort, want[i])
+		}
+	}
+}

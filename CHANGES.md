@@ -8,6 +8,16 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — OpenAI: sync `reasoning_effort` values, add `verbosity`
+
+- **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)
+- **Official docs**: https://platform.openai.com/docs/api-reference/chat
+- **Official change**: `reasoning_effort` accepted values extended to `none / minimal / low / medium / high / xhigh` (GPT-5.1 defaults to `none`); new `verbosity` parameter (`low / medium / high`) controls how detailed the output is.
+- **Change summary**: Added `ReasoningEffort*` constants (`none/minimal/low/medium/high/xhigh`) and `Verbosity*` constants (`low/medium/high`); the fields stay plain `string` for pass-through to non-OpenAI backends. Added `ChatRequest.Verbosity string` (`json:"verbosity,omitempty"`); `clone()` needs no change (scalar). 
+- **Affected files**: `schema.go` (constants, `ChatRequest.Verbosity`), `openai_chat_test.go` (request-body serialization coverage), `README.md`, `CLAUDE.md`.
+
+---
+
 ## 2026-06-02 — OpenAI: response type alignment (`reasoning_tokens`, `finish_reason` constants)
 
 - **Official protocol**: OpenAI Chat Completions API (`/chat/completions`)

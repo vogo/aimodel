@@ -55,6 +55,24 @@ fmt.Println(resp.Choices[0].Message.Content.Text())
 
 Both fields are `*int` with `omitempty`. For the Anthropic protocol (which always uses `max_tokens`), the translator prefers `MaxCompletionTokens` over `MaxTokens`, defaulting to 4096 when neither is set.
 
+#### Reasoning effort & verbosity
+
+- `ReasoningEffort` → `reasoning_effort`: how many reasoning tokens the model spends. Use the `ReasoningEffort*` constants — `none` / `minimal` / `low` / `medium` / `high` / `xhigh` (GPT-5.1 defaults to `none`).
+- `Verbosity` → `verbosity`: how detailed the output is. Use the `Verbosity*` constants — `low` / `medium` / `high`.
+
+Both fields stay plain `string` with `omitempty`, so you can also pass any value a custom OpenAI-compatible backend accepts.
+
+```go
+resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+    Model:           aimodel.ModelOpenaiGPT4o,
+    ReasoningEffort: aimodel.ReasoningEffortHigh,
+    Verbosity:       aimodel.VerbosityLow,
+    Messages: []aimodel.Message{
+        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
+    },
+})
+```
+
 #### Response usage
 
 `ChatResponse.Usage` normalizes per-request token counts:

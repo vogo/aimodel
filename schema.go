@@ -47,6 +47,29 @@ const (
 	FinishReasonFunctionCall FinishReason = "function_call"
 )
 
+// ReasoningEffort constants enumerate the official OpenAI reasoning_effort
+// values that constrain how many reasoning tokens a model spends. GPT-5.1
+// defaults to ReasoningEffortNone. ChatRequest.ReasoningEffort stays a plain
+// string so callers can pass through values these constants don't cover (other
+// OpenAI-compatible backends may define their own).
+const (
+	ReasoningEffortNone    = "none"
+	ReasoningEffortMinimal = "minimal"
+	ReasoningEffortLow     = "low"
+	ReasoningEffortMedium  = "medium"
+	ReasoningEffortHigh    = "high"
+	ReasoningEffortXHigh   = "xhigh"
+)
+
+// Verbosity constants enumerate the official OpenAI verbosity values that
+// control how detailed the model's output is. ChatRequest.Verbosity stays a
+// plain string for the same pass-through reason as ReasoningEffort.
+const (
+	VerbosityLow    = "low"
+	VerbosityMedium = "medium"
+	VerbosityHigh   = "high"
+)
+
 // Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
 type Thinking struct {
 	Type         string `json:"type"`
@@ -92,7 +115,15 @@ type ChatRequest struct {
 	Tools            []Tool         `json:"tools,omitempty"`
 	ToolChoice       any            `json:"tool_choice,omitempty"`
 	Thinking         *Thinking      `json:"thinking,omitempty"`
-	ReasoningEffort  string         `json:"reasoning_effort,omitempty"`
+
+	// ReasoningEffort maps to OpenAI's reasoning_effort. Use the
+	// ReasoningEffort* constants (none/minimal/low/medium/high/xhigh) or pass
+	// any value a custom backend accepts.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
+	// Verbosity maps to OpenAI's verbosity and controls how detailed the
+	// output is. Use the Verbosity* constants (low/medium/high).
+	Verbosity string `json:"verbosity,omitempty"`
 }
 
 // ChatResponse represents a response from the chat completions API.
