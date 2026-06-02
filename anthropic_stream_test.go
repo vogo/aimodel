@@ -522,3 +522,44 @@ func TestAnthropicStreamFinishReason(t *testing.T) {
 		t.Errorf("total_tokens = %d, want 105", chunk.Usage.TotalTokens)
 	}
 }
+
+func TestAnthropicStreamRefusalStopDetails(t *testing.T) {
+	body := "" +
+		"event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_r","type":"message","role":"assistant","model":"claude-opus-4","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I can't help."}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber","explanation":"policy"}},"usage":{"output_tokens":7}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	s := newAnthropicStream(io.NopCloser(strings.NewReader(body)))
+
+	// Skip text chunk.
+	if _, err := s.Recv(); err != nil {
+		t.Fatalf("Recv text: %v", err)
+	}
+
+	chunk, err := s.Recv()
+	if err != nil {
+		t.Fatalf("Recv delta: %v", err)
+	}
+
+	if chunk.Choices[0].FinishReason == nil || *chunk.Choices[0].FinishReason != string(FinishReasonRefusal) {
+		t.Fatalf("finish_reason = %v, want %q", chunk.Choices[0].FinishReason, FinishReasonRefusal)
+	}
+
+	sd := chunk.Choices[0].StopDetails
+	if sd == nil {
+		t.Fatal("StopDetails = nil, want populated")
+	}
+
+	if sd.Type != "refusal" || sd.Category != "cyber" || sd.Explanation != "policy" {
+		t.Errorf("StopDetails = %+v, want {refusal cyber policy}", sd)
+	}
+}

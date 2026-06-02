@@ -118,7 +118,11 @@ type anthropicResponse struct {
 	Content      []anthropicContentBlock `json:"content"`
 	StopReason   string                  `json:"stop_reason"`
 	StopSequence *string                 `json:"stop_sequence"`
-	Usage        anthropicUsage          `json:"usage"`
+	// StopDetails carries the structured stop classification (e.g. the refusal
+	// category) returned alongside stop_reason "refusal". Its fields match the
+	// canonical StopDetails exactly, so it deserializes straight into it.
+	StopDetails *StopDetails   `json:"stop_details"`
+	Usage       anthropicUsage `json:"usage"`
 }
 
 type anthropicUsage struct {
@@ -176,8 +180,9 @@ type anthropicMessageDelta struct {
 }
 
 type anthropicMessageDeltaData struct {
-	StopReason   string  `json:"stop_reason,omitempty"`
-	StopSequence *string `json:"stop_sequence,omitempty"`
+	StopReason   string       `json:"stop_reason,omitempty"`
+	StopSequence *string      `json:"stop_sequence,omitempty"`
+	StopDetails  *StopDetails `json:"stop_details,omitempty"`
 }
 
 // --- Translation functions ---
@@ -556,6 +561,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 				Index:        0,
 				Message:      msg,
 				FinishReason: mapAnthropicStopReason(ar.StopReason),
+				StopDetails:  ar.StopDetails,
 			},
 		},
 		Usage: Usage{
@@ -604,6 +610,12 @@ func mapAnthropicStopReason(reason string) FinishReason {
 		return FinishReasonLength
 	case "tool_use":
 		return FinishReasonToolCalls
+	case "model_context_window_exceeded":
+		return FinishReasonModelContextWindowExceeded
+	case "refusal":
+		return FinishReasonRefusal
+	case "pause_turn":
+		return FinishReasonPauseTurn
 	default:
 		return FinishReason(reason)
 	}

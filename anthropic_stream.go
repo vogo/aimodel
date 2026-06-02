@@ -217,6 +217,7 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 						{
 							Index:        0,
 							FinishReason: &reason,
+							StopDetails:  md.Delta.StopDetails,
 						},
 					},
 				}

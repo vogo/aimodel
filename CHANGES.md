@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-06-02 — Anthropic: new `stop_reason` constants and `stop_details` (refusal classification)
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: `stop_reason` gained `model_context_window_exceeded` (2025-09-29; input + output exceeded the model's context window, distinct from hitting the requested `max_tokens`), `pause_turn` (a long-running / server-tool turn was paused and may be replayed), and `refusal` (2026-05-28, Opus 4.8; streaming classifiers intervened on a potential policy violation). When `stop_reason` is `refusal`, the response and the terminal streaming `message_delta` carry `stop_details` (`{type, category, explanation}`) with the refusal classification.
+- **Change summary**: `mapAnthropicStopReason` (`anthropic.go`) previously only mapped `end_turn`/`stop_sequence`/`max_tokens`/`tool_use` and passed everything else through as the raw string. It now maps the three new reasons to dedicated named constants — `FinishReasonModelContextWindowExceeded` / `FinishReasonRefusal` / `FinishReasonPauseTurn` (`schema.go`), whose values are the verbatim Anthropic strings (purely additive: these previously already flowed through as raw strings, so no behavior change — they are NOT folded into `content_filter`/`length`, preserving Anthropic semantics). Added a canonical `StopDetails struct {Type, Category, Explanation string}` (all `omitempty`); `Choice` and `StreamChunkChoice` (`schema.go`) gained `StopDetails *StopDetails` (`json:"stop_details,omitempty"`). `anthropicResponse` (`stop_details`) and `anthropicMessageDeltaData` (`stop_details,omitempty`) deserialize straight into the canonical `*StopDetails` (identical field shape); `fromAnthropicResponse` and the stream `message_delta` branch (`anthropic_stream.go`) propagate it. Added tests: `TestMapAnthropicStopReason` extended with the three new reasons, `TestFromAnthropicResponseRefusalStopDetails`, `TestFromAnthropicResponseNoStopDetails`, `TestAnthropicStreamRefusalStopDetails`.
+
+---
+
 ## 2026-06-02 — Anthropic: map `effort`, support `thinking.display`, deprecate `budget_tokens`
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

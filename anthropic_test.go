@@ -1065,6 +1065,9 @@ func TestMapAnthropicStopReason(t *testing.T) {
 		{"stop_sequence", FinishReasonStop},
 		{"max_tokens", FinishReasonLength},
 		{"tool_use", FinishReasonToolCalls},
+		{"model_context_window_exceeded", FinishReasonModelContextWindowExceeded},
+		{"refusal", FinishReasonRefusal},
+		{"pause_turn", FinishReasonPauseTurn},
 		{"unknown", FinishReason("unknown")},
 	}
 
@@ -1074,6 +1077,55 @@ func TestMapAnthropicStopReason(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFromAnthropicResponseRefusalStopDetails(t *testing.T) {
+	ar := &anthropicResponse{
+		ID:    "msg_refusal",
+		Model: ModelAnthropicClaude4Opus,
+		Content: []anthropicContentBlock{
+			{Type: "text", Text: "I can't help with that."},
+		},
+		StopReason: "refusal",
+		StopDetails: &StopDetails{
+			Type:        "refusal",
+			Category:    "cyber",
+			Explanation: "I cannot provide assistance with cybersecurity attacks.",
+		},
+	}
+
+	cr := fromAnthropicResponse(ar)
+
+	if got := cr.Choices[0].FinishReason; got != FinishReasonRefusal {
+		t.Fatalf("finish_reason = %q, want %q", got, FinishReasonRefusal)
+	}
+
+	sd := cr.Choices[0].StopDetails
+	if sd == nil {
+		t.Fatal("StopDetails = nil, want populated")
+	}
+
+	if sd.Type != "refusal" || sd.Category != "cyber" {
+		t.Errorf("StopDetails = %+v, want type=refusal category=cyber", sd)
+	}
+
+	if sd.Explanation == "" {
+		t.Error("StopDetails.Explanation is empty, want populated")
+	}
+}
+
+func TestFromAnthropicResponseNoStopDetails(t *testing.T) {
+	ar := &anthropicResponse{
+		ID:         "msg_plain",
+		Model:      ModelAnthropicClaude4Sonnet,
+		Content:    []anthropicContentBlock{{Type: "text", Text: "hi"}},
+		StopReason: "end_turn",
+	}
+
+	cr := fromAnthropicResponse(ar)
+	if cr.Choices[0].StopDetails != nil {
+		t.Errorf("StopDetails = %+v, want nil", cr.Choices[0].StopDetails)
 	}
 }
 

@@ -46,7 +46,39 @@ const (
 	// FinishReasonFunctionCall is the legacy value emitted by the deprecated
 	// OpenAI functions API; retained for backward compatibility.
 	FinishReasonFunctionCall FinishReason = "function_call"
+
+	// The following are Anthropic-specific stop_reason values surfaced verbatim
+	// (they have no OpenAI canonical equivalent, so they pass through rather than
+	// being folded into stop/length/content_filter). They are named here only for
+	// readability; callers should treat any non-canonical FinishReason as opaque.
+
+	// FinishReasonModelContextWindowExceeded maps Anthropic's
+	// "model_context_window_exceeded" (input + output exceeded the model's
+	// context window — distinct from hitting the requested max_tokens / "length").
+	FinishReasonModelContextWindowExceeded FinishReason = "model_context_window_exceeded"
+	// FinishReasonRefusal maps Anthropic's "refusal" (streaming classifiers
+	// intervened on a potential policy violation). The classification, when
+	// present, is carried on Choice.StopDetails.
+	FinishReasonRefusal FinishReason = "refusal"
+	// FinishReasonPauseTurn maps Anthropic's "pause_turn" (a long-running turn —
+	// e.g. a server-side tool — was paused; the client may replay it to continue).
+	FinishReasonPauseTurn FinishReason = "pause_turn"
 )
+
+// StopDetails carries Anthropic's structured stop classification, returned
+// alongside stop_reason "refusal" (and surfaced on Choice / StreamChunkChoice).
+// All fields are best-effort and may be empty; Explanation in particular is not
+// guaranteed stable across model versions.
+type StopDetails struct {
+	// Type discriminates the stop classification, e.g. "refusal".
+	Type string `json:"type,omitempty"`
+	// Category is the policy category that triggered the stop, e.g. "cyber" /
+	// "bio"; empty when the stop maps to no named category.
+	Category string `json:"category,omitempty"`
+	// Explanation is a human-readable description of the stop; may be empty and
+	// is not guaranteed stable across versions.
+	Explanation string `json:"explanation,omitempty"`
+}
 
 // ReasoningEffort constants enumerate the official OpenAI reasoning_effort
 // values that constrain how many reasoning tokens a model spends. GPT-5.1
@@ -212,6 +244,9 @@ type Choice struct {
 	// LogProbs carries per-token log probabilities when the request set
 	// Logprobs to true; nil otherwise.
 	LogProbs *LogProbs `json:"logprobs,omitempty"`
+	// StopDetails carries Anthropic's structured stop classification (e.g. the
+	// refusal category); nil when absent.
+	StopDetails *StopDetails `json:"stop_details,omitempty"`
 }
 
 // LogProbs holds the token log-probability payload for a Choice, mirroring
@@ -489,6 +524,9 @@ type StreamChunkChoice struct {
 	Index        int     `json:"index"`
 	Delta        Message `json:"delta"`
 	FinishReason *string `json:"finish_reason"`
+	// StopDetails carries Anthropic's structured stop classification (e.g. the
+	// refusal category) on the terminal message_delta; nil when absent.
+	StopDetails *StopDetails `json:"stop_details,omitempty"`
 }
 
 // Usage tracks token usage for a request.

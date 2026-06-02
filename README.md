@@ -116,7 +116,9 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 `Usage.Add` accumulates all of the above, which is handy when aggregating multi-turn or multi-call usage.
 
-`ChatResponse.Choices[i].FinishReason` mirrors OpenAI's `finish_reason`: `stop`, `length`, `tool_calls`, `content_filter`, and the legacy `function_call`.
+`ChatResponse.Choices[i].FinishReason` mirrors OpenAI's `finish_reason`: `stop`, `length`, `tool_calls`, `content_filter`, and the legacy `function_call`. Anthropic also emits stop reasons with no OpenAI canonical equivalent; these pass through verbatim and are named for readability: `model_context_window_exceeded` (input + output exceeded the model's context window — distinct from `length`), `refusal` (streaming classifiers intervened on a policy violation), and `pause_turn` (a long-running/server-tool turn was paused and may be replayed to continue).
+
+When a refusal carries a classification, both `ChatResponse.Choices[i].StopDetails` (non-streaming) and `StreamChunk.Choices[i].StopDetails` (the terminal `message_delta`) expose it as `StopDetails{Type, Category, Explanation}` (e.g. `{type:"refusal", category:"cyber", explanation:"…"}`); the field is `nil` when absent. `Explanation` is best-effort and not guaranteed stable across model versions.
 
 ```go
 maxCompletionTokens := 1024
