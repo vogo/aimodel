@@ -8,6 +8,15 @@ The official API documentation entries are listed in the "Official API Reference
 
 ---
 
+## 2026-07-10 — Anthropic: merge consecutive parallel `tool_result` into one `user` message
+
+- **Official protocol**: Anthropic Messages API (`/v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Official change**: Anthropic Messages API requires all `tool_result` blocks for one assistant turn's parallel `tool_use` to arrive inside a **single** `role:"user"` message immediately after the assistant turn. Emitting one `user` message per result (the naive 1:1 mapping of canonical `role:"tool"` messages) makes the endpoint reject the extra results (`without tool_result blocks immediately after: call_xxx`), failing any parallel-tool-use request (notably on DeepSeek's Anthropic-compatible endpoint, which strictly validates this).
+- **Change summary**: `toAnthropicRequest` (`anthropic.go`) now detects a run of consecutive canonical `RoleTool` messages and serializes them once into a single `role:"user"` `anthropicMessage` whose content array holds all `tool_result` blocks in original order; the loop index skips the consumed run. The per-block builder is extracted into a `toolResultBlock` helper shared by the run-merge path (`toAnthropicToolResultMessage`) and the single-message fallback, so `CacheBreakpoint` still attaches `cache_control` to exactly the flagged block and the wire shape for a lone tool result is unchanged. A non-consecutive `RoleTool` (separated by user/assistant/system) keeps its own user message; mid-conversation system and assistant `tool_use` serialization are untouched. The non-streaming `anthropicChatCompletion` and streaming `anthropicChatCompletionStream` paths share `toAnthropicRequest`, so both benefit with no separate change. **Default behavior unchanged**: a single tool result still emits one `role:"user"` with a one-element `tool_result` array. Added tests: `TestToAnthropicRequestConsecutiveToolResults` (merge + order + ids), `TestToAnthropicRequestConsecutiveToolResultsCache` (`CacheBreakpoint` survives merge, unflagged blocks stay clean), `TestToAnthropicRequestNonConsecutiveToolResults` (separated runs + inline system not regressed), `TestToAnthropicRequestParallelToolUseRound` (assistant multi-`tool_use` immediately followed by one merged `user`).
+
+---
+
 ## 2026-06-02 — Anthropic: top-level automatic caching + usage `cache_creation` TTL breakdown
 
 - **Official protocol**: Anthropic Messages API (`/v1/messages`)

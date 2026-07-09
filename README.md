@@ -209,6 +209,8 @@ The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocol
 
 **Tool choice translation**: `"auto"` → `{type:"auto"}`, `"required"` → `{type:"any"}`, `"none"` → `{type:"none"}` (explicitly forbid any call — distinct from omitting the field, which lets the model choose), and a specific function → `{type:"tool", name:...}`. `ParallelToolCalls: false` adds `disable_parallel_tool_use:true` to the resulting choice (see the request-field note above).
 
+**Parallel tool results**: Anthropic requires all `tool_result` blocks for one assistant turn's parallel `tool_use` to land in a **single** `role:"user"` message right after the turn. A run of consecutive canonical `RoleTool` messages is therefore merged into one `role:"user"` message (content array = all `tool_result` blocks in original order); a lone or non-consecutive tool result keeps its own one-element `user` message. The merge is driven purely by adjacency in the input array — no `tool_use` id pairing/sorting is attempted.
+
 ### Client Options
 
 ```go

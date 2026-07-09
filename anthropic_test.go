@@ -1326,3 +1326,252 @@ func TestToAnthropicRequestTopK(t *testing.T) {
 		}
 	})
 }
+
+// TestToAnthropicRequestConsecutiveToolResults verifies that a run of
+// consecutive canonical tool-result messages collapses into a single
+// role:"user" Anthropic message whose content array holds all the
+// tool_result blocks in order — required by Anthropic's parallel-tool-use
+// semantics (one assistant turn's results must share one user message).
+func TestToAnthropicRequestConsecutiveToolResults(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("weather in NYC and LA?")},
+			{
+				Role:    RoleAssistant,
+				Content: NewTextContent(""),
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Type: "function", Function: FunctionCall{Name: "get_weather", Arguments: `{"city":"NYC"}`}},
+					{ID: "call_2", Type: "function", Function: FunctionCall{Name: "get_weather", Arguments: `{"city":"LA"}`}},
+				},
+			},
+			{Role: RoleTool, Content: NewTextContent(`{"temp":72}`), ToolCallID: "call_1"},
+			{Role: RoleTool, Content: NewTextContent(`{"temp":80}`), ToolCallID: "call_2"},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// user, assistant, merged user — the two tool results share one message.
+	if len(ar.Messages) != 3 {
+		t.Fatalf("messages len = %d, want 3 (msg=%+v)", len(ar.Messages), ar.Messages)
+	}
+	if ar.Messages[0].Role != "user" {
+		t.Errorf("messages[0] role = %q, want user", ar.Messages[0].Role)
+	}
+	if ar.Messages[1].Role != "assistant" {
+		t.Errorf("messages[1] role = %q, want assistant", ar.Messages[1].Role)
+	}
+	if ar.Messages[2].Role != "user" {
+		t.Errorf("messages[2] role = %q, want user", ar.Messages[2].Role)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[2].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal merged content: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks len = %d, want 2", len(blocks))
+	}
+	for i, want := range []string{"call_1", "call_2"} {
+		if blocks[i].Type != "tool_result" {
+			t.Errorf("blocks[%d] type = %q, want tool_result", i, blocks[i].Type)
+		}
+		if blocks[i].ToolUseID != want {
+			t.Errorf("blocks[%d] tool_use_id = %q, want %q", i, blocks[i].ToolUseID, want)
+		}
+	}
+	if blocks[0].ResultContent != `{"temp":72}` || blocks[1].ResultContent != `{"temp":80}` {
+		t.Errorf("result contents = %q / %q", blocks[0].ResultContent, blocks[1].ResultContent)
+	}
+}
+
+// TestToAnthropicRequestConsecutiveToolResultsCache verifies CacheBreakpoint
+// survives the run merge: only the flagged tool_result block carries
+// cache_control, unflagged blocks stay clean.
+func TestToAnthropicRequestConsecutiveToolResultsCache(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{
+				Role:    RoleAssistant,
+				Content: NewTextContent(""),
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+					{ID: "call_2", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+					{ID: "call_3", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+				},
+			},
+			{Role: RoleTool, Content: NewTextContent("a"), ToolCallID: "call_1"},
+			{Role: RoleTool, Content: NewTextContent("b"), ToolCallID: "call_2", CacheBreakpoint: true},
+			{Role: RoleTool, Content: NewTextContent("c"), ToolCallID: "call_3"},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	if len(ar.Messages) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(ar.Messages))
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[1].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal merged content: %v", err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("blocks len = %d, want 3", len(blocks))
+	}
+	if blocks[0].CacheControl != nil {
+		t.Errorf("blocks[0] should not carry cache_control, got %+v", blocks[0].CacheControl)
+	}
+	if blocks[1].CacheControl == nil || blocks[1].CacheControl.Type != "ephemeral" {
+		t.Errorf("blocks[1] missing ephemeral cache_control, got %+v", blocks[1].CacheControl)
+	}
+	if blocks[2].CacheControl != nil {
+		t.Errorf("blocks[2] should not carry cache_control, got %+v", blocks[2].CacheControl)
+	}
+}
+
+// TestToAnthropicRequestNonConsecutiveToolResults verifies that tool results
+// separated by user/assistant/system turns are NOT merged — each run forms
+// its own user message, and the mid-conversation system message stays inline.
+func TestToAnthropicRequestNonConsecutiveToolResults(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleUser, Content: NewTextContent("first")},
+			{
+				Role:    RoleAssistant,
+				Content: NewTextContent(""),
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+				},
+			},
+			{Role: RoleTool, Content: NewTextContent("r1"), ToolCallID: "call_1"},
+			{Role: RoleSystem, Content: NewTextContent("mid-system note")},
+			{Role: RoleUser, Content: NewTextContent("second")},
+			{
+				Role:    RoleAssistant,
+				Content: NewTextContent(""),
+				ToolCalls: []ToolCall{
+					{ID: "call_2", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+					{ID: "call_3", Type: "function", Function: FunctionCall{Name: "f", Arguments: "{}"}},
+				},
+			},
+			{Role: RoleTool, Content: NewTextContent("r2"), ToolCallID: "call_2"},
+			{Role: RoleTool, Content: NewTextContent("r3"), ToolCallID: "call_3"},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// user, assistant, user(tool1), system(inline), user, assistant, user(merged 2,3)
+	if len(ar.Messages) != 7 {
+		t.Fatalf("messages len = %d, want 7 (msg=%+v)", len(ar.Messages), ar.Messages)
+	}
+	if ar.Messages[2].Role != "user" {
+		t.Errorf("messages[2] role = %q, want user", ar.Messages[2].Role)
+	}
+	// First run is a single tool_result, still wrapped in a 1-element array.
+	var firstBlocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[2].Content, &firstBlocks); err != nil {
+		t.Fatalf("unmarshal first tool result: %v", err)
+	}
+	if len(firstBlocks) != 1 || firstBlocks[0].ToolUseID != "call_1" {
+		t.Errorf("first tool result blocks = %+v", firstBlocks)
+	}
+	if ar.Messages[3].Role != "system" {
+		t.Errorf("messages[3] role = %q, want system (inline mid-conversation)", ar.Messages[3].Role)
+	}
+	// Last run merges call_2 + call_3 into one user message.
+	var lastBlocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[6].Content, &lastBlocks); err != nil {
+		t.Fatalf("unmarshal last merged content: %v", err)
+	}
+	if len(lastBlocks) != 2 {
+		t.Fatalf("last merged blocks len = %d, want 2", len(lastBlocks))
+	}
+	if lastBlocks[0].ToolUseID != "call_2" || lastBlocks[1].ToolUseID != "call_3" {
+		t.Errorf("last merged ids = %q / %q", lastBlocks[0].ToolUseID, lastBlocks[1].ToolUseID)
+	}
+}
+
+// TestToAnthropicRequestParallelToolUseRound verifies a full parallel-tool-use
+// turn: an assistant message with multiple tool_use blocks is immediately
+// followed by a single user message containing all the tool_result blocks —
+// the wire shape Anthropic Messages API requires.
+func TestToAnthropicRequestParallelToolUseRound(t *testing.T) {
+	req := &ChatRequest{
+		Model: ModelAnthropicClaude4Sonnet,
+		Messages: []Message{
+			{Role: RoleSystem, Content: NewTextContent("you are helpful")},
+			{Role: RoleUser, Content: NewTextContent("calculate 2+2 and 3*3")},
+			{
+				Role:    RoleAssistant,
+				Content: NewTextContent("running both"),
+				ToolCalls: []ToolCall{
+					{ID: "call_a", Type: "function", Function: FunctionCall{Name: "add", Arguments: `{"a":2,"b":2}`}},
+					{ID: "call_b", Type: "function", Function: FunctionCall{Name: "mul", Arguments: `{"a":3,"b":3}`}},
+				},
+			},
+			{Role: RoleTool, Content: NewTextContent("4"), ToolCallID: "call_a"},
+			{Role: RoleTool, Content: NewTextContent("9"), ToolCallID: "call_b"},
+		},
+	}
+
+	ar, err := toAnthropicRequest(req)
+	if err != nil {
+		t.Fatalf("toAnthropicRequest: %v", err)
+	}
+
+	// System is hoisted to top-level; messages = [user, assistant, user(merged)].
+	if len(ar.Messages) != 3 {
+		t.Fatalf("messages len = %d, want 3", len(ar.Messages))
+	}
+	if ar.System == nil {
+		t.Fatal("system field not hoisted")
+	}
+	if ar.Messages[1].Role != "assistant" {
+		t.Errorf("messages[1] role = %q, want assistant", ar.Messages[1].Role)
+	}
+	if ar.Messages[2].Role != "user" {
+		t.Fatalf("messages[2] role = %q, want user (merged tool results)", ar.Messages[2].Role)
+	}
+
+	var blocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[2].Content, &blocks); err != nil {
+		t.Fatalf("unmarshal merged content: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks len = %d, want 2", len(blocks))
+	}
+
+	// The merged user message must sit immediately after the assistant turn.
+	var asstBlocks []anthropicContentBlock
+	if err := json.Unmarshal(ar.Messages[1].Content, &asstBlocks); err != nil {
+		t.Fatalf("unmarshal assistant content: %v", err)
+	}
+	var asstIDs []string
+	for _, b := range asstBlocks {
+		if b.Type == "tool_use" {
+			asstIDs = append(asstIDs, b.ID)
+		}
+	}
+	if len(asstIDs) != 2 {
+		t.Fatalf("assistant tool_use count = %d, want 2", len(asstIDs))
+	}
+	for i, id := range asstIDs {
+		if blocks[i].ToolUseID != id {
+			t.Errorf("result[%d] tool_use_id = %q, want %q (matching assistant tool_use order)", i, blocks[i].ToolUseID, id)
+		}
+	}
+}

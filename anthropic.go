@@ -254,7 +254,8 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// and prompt-cache semantics are preserved.
 	var seenNonSystem bool
 
-	for _, m := range req.Messages {
+	for i := 0; i < len(req.Messages); i++ {
+		m := req.Messages[i]
 		if m.Role == RoleSystem && !seenNonSystem {
 			if m.CacheBreakpoint {
 				anyCacheableSystem = true
@@ -288,6 +289,28 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		// inline as role:"system".
 		if m.Role != RoleSystem {
 			seenNonSystem = true
+		}
+
+		// Consecutive RoleTool messages represent the parallel tool_result
+		// blocks for one assistant turn. Anthropic requires all of them to
+		// arrive inside a single role:"user" message immediately after the
+		// assistant turn — emitting one user message per result (the naive
+		// 1:1 mapping) makes the endpoint reject the rest as missing
+		// tool_result blocks. Collect the whole run and serialize it once.
+		if m.Role == RoleTool {
+			runStart := i
+			for i+1 < len(req.Messages) && req.Messages[i+1].Role == RoleTool {
+				i++
+			}
+
+			am, err := toAnthropicToolResultMessage(req.Messages[runStart : i+1])
+			if err != nil {
+				return nil, err
+			}
+
+			ar.Messages = append(ar.Messages, am)
+
+			continue
 		}
 
 		am, err := toAnthropicMessage(m)
@@ -370,6 +393,51 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	return ar, nil
 }
 
+// toolResultBlock builds a single tool_result content block from a canonical
+// tool-result message. It is shared by the consecutive-run merge path and the
+// single-message fallback so the wire shape stays identical. A missing
+// ToolCallID is rejected up front.
+func toolResultBlock(m Message) (anthropicContentBlock, error) {
+	if m.ToolCallID == "" {
+		return anthropicContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
+	}
+
+	block := anthropicContentBlock{
+		Type:          "tool_result",
+		ToolUseID:     m.ToolCallID,
+		ResultContent: m.Content.Text(),
+	}
+	if m.CacheBreakpoint {
+		block.CacheControl = ephemeralCache()
+	}
+
+	return block, nil
+}
+
+// toAnthropicToolResultMessage serializes a run of one or more consecutive
+// canonical tool-result messages into a single Anthropic role:"user" message
+// whose content array holds all the tool_result blocks in order. Anthropic
+// requires the parallel results of one assistant turn to share one user
+// message; merging here keeps the request valid for parallel tool use.
+func toAnthropicToolResultMessage(msgs []Message) (anthropicMessage, error) {
+	blocks := make([]anthropicContentBlock, 0, len(msgs))
+	for _, m := range msgs {
+		block, err := toolResultBlock(m)
+		if err != nil {
+			return anthropicMessage{}, err
+		}
+
+		blocks = append(blocks, block)
+	}
+
+	data, err := json.Marshal(blocks)
+	if err != nil {
+		return anthropicMessage{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
+	}
+
+	return anthropicMessage{Role: "user", Content: data}, nil
+}
+
 func toAnthropicMessage(m Message) (anthropicMessage, error) {
 	am := anthropicMessage{
 		Role: string(m.Role),
@@ -377,29 +445,7 @@ func toAnthropicMessage(m Message) (anthropicMessage, error) {
 
 	// Tool result messages become user messages with tool_result content blocks.
 	if m.Role == RoleTool {
-		if m.ToolCallID == "" {
-			return anthropicMessage{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
-		}
-
-		am.Role = "user"
-
-		block := anthropicContentBlock{
-			Type:          "tool_result",
-			ToolUseID:     m.ToolCallID,
-			ResultContent: m.Content.Text(),
-		}
-		if m.CacheBreakpoint {
-			block.CacheControl = ephemeralCache()
-		}
-
-		data, err := json.Marshal([]anthropicContentBlock{block})
-		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
-		}
-
-		am.Content = data
-
-		return am, nil
+		return toAnthropicToolResultMessage([]Message{m})
 	}
 
 	// Assistant messages with thinking, tool calls, or both require content-block format.
