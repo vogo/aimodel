@@ -303,7 +303,7 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 				i++
 			}
 
-			am, err := toAnthropicToolResultMessage(req.Messages[runStart : i + 1])
+			am, err := toAnthropicToolResultMessage(req.Messages[runStart : i+1])
 			if err != nil {
 				return nil, err
 			}
