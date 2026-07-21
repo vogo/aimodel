@@ -17,88 +17,26 @@
 
 package aimodel
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
+import "github.com/vogo/aimodel/core"
+
+// The error model lives in the core package (providers convert vendor wire
+// errors into it); the root package re-exports it. Sentinel variables are
+// the same instances, so errors.Is matches across packages.
 
 // Sentinel errors for common failure conditions.
 var (
-	ErrNoAPIKey       = errors.New("aimodel: API key is required")
-	ErrNoBaseURL      = errors.New("aimodel: base URL is required")
-	ErrStreamClosed   = errors.New("aimodel: stream is closed")
-	ErrEmptyResponse  = errors.New("aimodel: empty response from API")
-	ErrNoActiveModels = errors.New("aimodel: no active models available")
+	ErrNoAPIKey       = core.ErrNoAPIKey
+	ErrNoBaseURL      = core.ErrNoBaseURL
+	ErrStreamClosed   = core.ErrStreamClosed
+	ErrEmptyResponse  = core.ErrEmptyResponse
+	ErrNoActiveModels = core.ErrNoActiveModels
 )
 
-// APIError represents an error returned by an AI API.
-type APIError struct {
-	StatusCode int
-	Code       string
-	Message    string
-	Type       string
-	Err        error
-}
-
-func (e *APIError) Error() string {
-	return fmt.Sprintf("aimodel: API error (status %d): %s - %s", e.StatusCode, e.Code, e.Message)
-}
-
-func (e *APIError) Unwrap() error {
-	return e.Err
-}
-
-// ModelError associates an error with a specific model name.
-type ModelError struct {
-	Model string
-	Err   error
-}
-
-func (e *ModelError) Error() string {
-	return fmt.Sprintf("aimodel: model %s: %v", e.Model, e.Err)
-}
-
-func (e *ModelError) Unwrap() error {
-	return e.Err
-}
-
-// MultiError collects errors from multiple model attempts.
-type MultiError struct {
-	Errors []ModelError
-}
-
-func (e *MultiError) Error() string {
-	if len(e.Errors) == 0 {
-		return ErrNoActiveModels.Error()
-	}
-
-	var b strings.Builder
-
-	b.WriteString("aimodel: all models failed: ")
-
-	for i, me := range e.Errors {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-
-		fmt.Fprintf(&b, "%s: %v", me.Model, me.Err)
-	}
-
-	return b.String()
-}
-
-// Unwrap returns all wrapped errors for Go 1.20+ multi-error unwrapping.
-// This allows errors.Is and errors.As to match any model's error.
-func (e *MultiError) Unwrap() []error {
-	if len(e.Errors) == 0 {
-		return []error{ErrNoActiveModels}
-	}
-
-	errs := make([]error, len(e.Errors))
-	for i := range e.Errors {
-		errs[i] = &e.Errors[i]
-	}
-
-	return errs
-}
+type (
+	// APIError represents an error returned by an AI API.
+	APIError = core.APIError
+	// ModelError associates an error with a specific model name.
+	ModelError = core.ModelError
+	// MultiError collects errors from multiple model attempts.
+	MultiError = core.MultiError
+)
