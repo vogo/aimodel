@@ -7,6 +7,8 @@ A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero
 
 This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
+The SDK is layered. The **canonical layer** exposes one stable, OpenAI-shaped interface — the greatest common denominator across vendors — so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete, continuously-synced fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Use the canonical interface for cross-vendor portability; full official-API coverage is the native layer's responsibility. Architecture details: [doc/api.md](./doc/api.md).
+
 ## Documentation
 
 This README covers usage. The design lives under [`doc/`](./doc/):
