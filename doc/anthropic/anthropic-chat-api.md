@@ -1,27 +1,27 @@
-# Anthropic Messages API 封装设计与实现
+# Anthropic Messages API — Wrapper Design & Implementation
 
-- **官方协议**:Anthropic Messages API(`POST /v1/messages`)
-- **官方文档**:https://platform.claude.com/docs/en/api/messages
-- **实现文件**:`anthropic.go`(类型与双向翻译)、`anthropic_chat.go`(HTTP 与鉴权)、`anthropic_stream.go`(SSE 解析)
-- **变更记录**:[anthropic-api-changes.md](./anthropic-api-changes.md)
+- **Official protocol**: Anthropic Messages API (`POST /v1/messages`)
+- **Official docs**: https://platform.claude.com/docs/en/api/messages
+- **Implementation**: `anthropic.go` (types and bidirectional translation), `anthropic_chat.go` (HTTP and auth), `anthropic_stream.go` (SSE parsing)
+- **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
-核心设计前提见 [../api.md](../api.md):SDK 以 **OpenAI 格式为规范表示**,Anthropic 协议是唯一需要双向翻译的路径。
+The core premise is in [../api.md](../api.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
 
 ---
 
-## 1. 整体结构
+## 1. Overall structure
 
 ```
 ChatRequest ──toAnthropicRequest()──▶ anthropicRequest ──JSON──▶ POST {base}/v1/messages
                                                                         │
-ChatResponse ◀─fromAnthropicResponse()── anthropicResponse ◀────────────┘   (非流式)
+ChatResponse ◀─fromAnthropicResponse()── anthropicResponse ◀────────────┘   (non-streaming)
 
-Stream.Recv() ◀─anthropicRecvFunc()── SSE events(message_start / content_block_* / message_delta / …)
+Stream.Recv() ◀─anthropicRecvFunc()── SSE events (message_start / content_block_* / message_delta / …)
 ```
 
-**所有 Anthropic 类型都是包私有的**(`anthropicRequest`、`anthropicResponse`、`anthropicContentBlock`…),不对外暴露 —— 调用方始终只面对规范类型,协议细节不泄漏到公开 API。
+**Every Anthropic type is package-private** (`anthropicRequest`, `anthropicResponse`, `anthropicContentBlock`, …) and never exposed — callers only ever face the canonical types, so protocol details cannot leak into the public API.
 
-## 2. 端点、鉴权与请求头
+## 2. Endpoint, auth & headers
 
 ```go
 const (
@@ -31,24 +31,24 @@ const (
 )
 ```
 
-- **Base URL**:`Client.baseURL` 非空则用它,否则回退默认值 —— 这也是构造期允许 Anthropic 协议不传 Base URL 的原因。
-- **请求头**(`setAnthropicHeaders`):
+- **Base URL**: `Client.baseURL` when non-empty, otherwise the default — which is why construction allows the Anthropic protocol without a base URL.
+- **Headers** (`setAnthropicHeaders`):
 
-| 头 | 值 |
+| Header | Value |
 |---|---|
 | `Content-Type` | `application/json` |
-| `x-api-key` | `Client.apiKey`(注意:不是 `Authorization: Bearer`) |
-| `anthropic-version` | `WithAnthropicVersion` 配置值,否则 `2023-06-01` |
-| `anthropic-beta` | `WithAnthropicBeta` 累积值逗号连接;**为空时整个头省略** |
-| `anthropic-user-profile-id` | `WithAnthropicUserProfileID` 配置值;**为空时整个头省略** |
+| `x-api-key` | `Client.apiKey` (note: **not** `Authorization: Bearer`) |
+| `anthropic-version` | `WithAnthropicVersion` value, else `2023-06-01` |
+| `anthropic-beta` | `WithAnthropicBeta` values comma-joined; **header omitted entirely when empty** |
+| `anthropic-user-profile-id` | `WithAnthropicUserProfileID` value; **header omitted entirely when empty** |
 
-`anthropic-beta` 是通用的 beta 能力开关基础设施(compaction、context-editing、structured-outputs、fast-mode、advisor 等),SDK 只负责发头,不为任何具体 beta 能力做字段建模。
+`anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context-editing, structured-outputs, fast-mode, advisor, …). The SDK only emits the header; it models no specific beta capability's fields.
 
-## 3. 请求翻译(`toAnthropicRequest`)
+## 3. Request translation (`toAnthropicRequest`)
 
-### 3.1 直通字段
+### 3.1 Pass-through fields
 
-| 规范字段 | Anthropic 字段 |
+| Canonical field | Anthropic field |
 |---|---|
 | `Model` | `model` |
 | `Temperature` | `temperature` |
@@ -56,140 +56,118 @@ const (
 | `TopK` | `top_k` |
 | `Stop []string` | `stop_sequences` |
 | `Stream` | `stream` |
-| `Thinking` | `thinking`(结构体直接复用) |
+| `Thinking` | `thinking` (struct reused directly) |
 | `ReasoningEffort` | `output_config.effort` |
-| `ResponseFormat`(JSON Schema 形态) | `output_config.format` |
+| `ResponseFormat` (JSON-schema shape) | `output_config.format` |
 | `Container` | `container` |
 | `InferenceGeo` | `inference_geo` |
 
-### 3.2 `max_tokens`(必填)
+### 3.2 `max_tokens` (required)
 
-Anthropic 的 `max_tokens` 是**必填字段**,而规范请求里它可以缺省,因此采用三级回退:
+Anthropic's `max_tokens` is **mandatory**, while the canonical request may omit it, so there is a three-level fallback:
 
 ```
-MaxCompletionTokens(优先) → MaxTokens(已弃用) → 4096(anthropicDefaultMaxTokens)
+MaxCompletionTokens (preferred) → MaxTokens (deprecated) → 4096 (anthropicDefaultMaxTokens)
 ```
 
-### 3.3 system 消息:只提取前导连续段
+### 3.3 System messages: only the leading run is hoisted
 
-这是一处**位置语义敏感**的翻译。Anthropic 把系统提示放在顶层 `system` 字段,但自 Opus 4.8(2026-05-28)起 `messages` 里也允许出现 `role:"system"` 的**会话中系统消息**。
+This is a **position-sensitive** translation. Anthropic puts the system prompt in a top-level `system` field, but since Opus 4.8 (2026-05-28) `messages` may also contain **mid-conversation** `role:"system"` entries.
 
-规则:
+The rule:
 
-- 只有**首个非 system 消息之前**的连续 system 消息会被提取到顶层 `system`;
-- 之后出现的 system 消息**原位保留**为 `role:"system"` 的 Anthropic 消息。
+- only the consecutive system messages **before the first non-system message** are hoisted into the top-level `system`;
+- any system message appearing later stays **in place** as a `role:"system"` Anthropic message.
 
-内部用 `seenNonSystem` 标志实现。这样做保留了两件事:指令的**位置语义**,以及**prompt 缓存命中**(把中途指令上提到最前会让整段前缀失效)。
+A `seenNonSystem` flag implements this. It preserves two things: the instruction's **position semantics**, and **prompt-cache hits** (lifting a mid-conversation instruction to the front invalidates the entire prefix).
 
-`system` 字段有两种线上形态,由 `json.RawMessage` 承载:
+The `system` field has two wire shapes, carried by `json.RawMessage`:
 
-| 条件 | 形态 |
+| Condition | Shape |
 |---|---|
-| 纯文本、无缓存标记 | 字符串(多条用 `\n` 连接) |
-| 含多模态 parts,或任一条设置了 `CacheBreakpoint` | 内容块数组 `[{type:"text",text:...}]` |
+| Plain text, no cache marker | String (multiple entries joined with `\n`) |
+| Contains multimodal parts, or any entry set `CacheBreakpoint` | Block array `[{type:"text",text:…}]` |
 
-设置了缓存标记时,`cache_control` 挂在**最后一个块**上 —— Anthropic 缓存"截至并包含该块"的全部内容。
+When a cache marker is set, `cache_control` attaches to the **last** block — Anthropic caches everything "up to and including" that block.
 
-### 3.4 消息翻译(`toAnthropicMessage`)
+### 3.4 Message translation (`toAnthropicMessage`)
 
-按消息类型选择内容形态:
+The content shape is chosen per message type:
 
-| 输入 | 输出 |
+| Input | Output |
 |---|---|
-| `RoleTool` | `role:"user"` + `[{type:"tool_result", tool_use_id, content}]`;缺 `ToolCallID` 直接报错 |
-| `RoleAssistant` 且含 thinking 或 tool_calls | 块数组:`thinking` 块 → `text` 块 → 每个 `tool_use` 块(`Input` 由 `Function.Arguments` 原样作 `json.RawMessage`) |
-| 含多模态 parts | 块数组:`text` → `{type:"text"}`;`image_url` → `{type:"image", source:…}` |
-| 纯文本 + `CacheBreakpoint` | 单元素块数组(为了挂 `cache_control`) |
-| 纯文本 | 字符串 |
+| `RoleTool` | `role:"user"` + `[{type:"tool_result", tool_use_id, content}]`; a missing `ToolCallID` is an error |
+| `RoleAssistant` with thinking or tool calls | Block array: `thinking` block → `text` block → one `tool_use` block each (`Input` is `Function.Arguments` verbatim as `json.RawMessage`) |
+| Contains multimodal parts | Block array: `text` → `{type:"text"}`; `image_url` → `{type:"image", source:…}` |
+| Plain text + `CacheBreakpoint` | Single-element block array (so there is a block to attach `cache_control` to) |
+| Plain text | String |
 
-**图片来源判别**:`parseDataURI` 识别 `data:<mediaType>;base64,<data>` 形态 → `source{type:"base64", media_type, data}`;否则视为远程 URL → `source{type:"url", url}`。
+**Image source discrimination**: `parseDataURI` recognizes the `data:<mediaType>;base64,<data>` form → `source{type:"base64", media_type, data}`; anything else is treated as a remote URL → `source{type:"url", url}`.
 
-**未映射的部分**:`input_audio` / `file` 内容块在 Anthropic 侧无对应,`switch` 不匹配即安全跳过(不报错、不产生空块)。
+**Unmapped parts**: `input_audio` / `file` content blocks have no Anthropic counterpart — the `switch` simply does not match them, so they are skipped safely (no error, no empty block).
 
-所有块数组形态下,`CacheBreakpoint` 都挂到**最后一个块**。
+In every block-array shape, `CacheBreakpoint` attaches to the **last** block.
 
-### 3.5 工具与 `tool_choice`
+### 3.5 Tools & `tool_choice`
 
-工具映射直白:`Function.Name/Description/Parameters` → `name/description/input_schema`;`Tool.CacheBreakpoint` 为真则挂 `cache_control`(Anthropic 缓存截至并包含该工具的全部工具定义)。
+The base mapping is direct: `Function.Name/Description/Parameters` → `name/description/input_schema`; a true `Tool.CacheBreakpoint` attaches `cache_control` (Anthropic caches every tool definition up to and including it).
 
-Anthropic 工具定义扩展字段原样复制:`Strict` → `strict`、`DeferLoading` → `defer_loading`、`AllowedCallers` → `allowed_callers`、`EagerInputStreaming` → `eager_input_streaming`、`InputExamples` → `input_examples`(均 `omitempty`)。
+The tool-definition extensions are copied verbatim: `Strict` → `strict`, `DeferLoading` → `defer_loading`, `AllowedCallers` → `allowed_callers`, `EagerInputStreaming` → `eager_input_streaming`, `InputExamples` → `input_examples` (all `omitempty`).
 
-`Tool.Type` 兼作 Anthropic 的工具类型,但规范层该字段在 OpenAI 语义下对每个普通工具都是 `"function"`,原样发给 Anthropic 会被拒绝 —— 因此 `"function"` 与空串一并视为 Anthropic 的默认 custom 工具而**不发送**;其余取值(版本化内置工具,如 `web_search_20260209`)原样透传,不枚举、不校验版本名。
+`Tool.Type` doubles as the Anthropic tool type, but in OpenAI semantics that canonical field is `"function"` for every ordinary tool, and sending that verbatim would be rejected — so **`"function"` and empty alike are treated as Anthropic's default custom tool and not sent**. Any other value (a versioned built-in such as `web_search_20260209`) passes through with no enumeration and no version-name validation.
 
-`tool_choice` 映射(`convertToolChoice`):
+The `tool_choice` mapping and the `ParallelToolCalls` folding rules are documented in [../design/tool-use.md](../design/tool-use.md) §2, and the consecutive-`RoleTool` merge in §3.1 of that document.
 
-| 规范值 | Anthropic |
+### 3.6 Reasoning & thinking
+
+- `ReasoningEffort` → `output_config.effort`; empty is omitted. It **supersedes** `thinking.budget_tokens` as the reasoning-depth control for new models. The top-level `anthropicRequest.Effort` is deprecated and no longer assigned, so the two are never sent together.
+- `ResponseFormat` → `output_config.format` (`{type:"json_schema", schema:…}`): both OpenAI's nested `json_schema.schema` and the flat `schema` are accepted; the schema passes through unvalidated and unrewritten; a shape with no extractable schema (e.g. `{type:"json_object"}`) yields **no** `format` rather than a fabricated one. When both `effort` and `format` are empty, the whole `output_config` is omitted.
+- `Thinking.Type`: `"enabled"` / `"disabled"` / `"adaptive"` (the model sizes its own thinking); kept a `string` for pass-through.
+- `Thinking.BudgetTokens`: **deprecated**, retained only for models / callers that still pin an explicit budget.
+- `Thinking.Display`: `"omitted"` (since 2026-03-16) suppresses thinking content to speed up streaming.
+
+### 3.7 Prompt caching
+
+Two coexisting modes — per-block breakpoints and request-root automatic caching. Both switches are `json:"-"` struct-local fields that never appear in an OpenAI-shape body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
+
+## 4. Response translation (`fromAnthropicResponse`)
+
+Content blocks are aggregated into a single assistant message:
+
+| Block type | Destination |
 |---|---|
-| `"auto"` | `{type:"auto"}` |
-| `"required"` | `{type:"any"}` |
-| `"none"` | `{type:"none"}` —— **禁止任何工具调用**,与"省略字段"(模型自选)语义不同 |
-| `{"function":{"name":"x"}}` | `{type:"tool", name:"x"}` |
-| 其它 | `nil`(省略) |
+| `thinking` | Accumulated, joined with `\n` → `Message.Thinking` |
+| `text` | Accumulated, joined with `\n` → `Message.Content` |
+| `tool_use` | Appended as `ToolCall{Index, ID, Type:"function", Function{Name, Arguments:string(Input)}}` |
+| anything else (`server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, future types) | Raw JSON appended to `Message.ExtraBlocks` |
 
-`ParallelToolCalls` 的折叠规则(因为 Anthropic 把该开关放在 `tool_choice` 内部):
+A `text` block carrying `citations` contributes its text as usual **and additionally** appends its whole original block to `ExtraBlocks` — the annotations are not promoted to canonical fields, but they are not lost either.
 
-- 仅当显式为 `false` 时才生效,置 `disable_parallel_tool_use:true`;
-- 未指定 `tool_choice` 但**有工具**时,兜底构造 `{type:"auto"}` 来承载这个标志 —— 无工具时不能凭空发 `tool_choice`(会被拒绝);
-- **绝不**挂到 `{type:"none"}` 上(本就不允许调用,该标志无意义);
-- 未设置或为 `true` 时完全不动 `tool_choice`。
+Fidelity dictates the implementation: `anthropicResponse.Content`'s element type is `anthropicResponseBlock`, which decodes the known fields **while retaining each block's original bytes** (decoding into a known struct and re-marshalling would drop unmodelled fields). That type also shadows the request-side `ResultContent` (tagged `content` too) with a `json.RawMessage` — the response-side `content` is polymorphic (an array for server-tool results, an object for code-execution results), and decoding it as a `string` would fail the entire response.
 
-### 3.6 推理与思考
+Remaining fields: `ID` → `ID`; `Object` is fixed at `"chat.completion"`; `Model` passes through; `container` → `ChatResponse.Container` (`*ResponseContainer{ID, ExpiresAt}` — identical field shape, so it deserializes directly; `ExpiresAt` stays the server string, with no expiry parsing and no auto-renewal); exactly **one `Choice`** is produced (Anthropic has no `n` concept).
 
-- `ReasoningEffort` → `output_config.effort`,空值省略。它**取代** `thinking.budget_tokens` 成为新模型的推理深度控制。顶层 `anthropicRequest.Effort` 已弃用且不再赋值,两者不会同时发出。
-- `ResponseFormat` → `output_config.format`(`{type:"json_schema", schema:…}`):同时接受 OpenAI 的嵌套 `json_schema.schema` 与扁平 `schema`;schema 原样透传,不校验、不改写;无法提取 schema 的形态(如 `{type:"json_object"}`)不伪造 `format`。`effort` 与 `format` 皆空时整个 `output_config` 省略。
-- `Thinking.Type`:`"enabled"` / `"disabled"` / `"adaptive"`(由模型自行决定思考量);保持 `string` 以便透传。
-- `Thinking.BudgetTokens`:**已弃用**,仅为仍需固定预算的模型/调用方保留。
-- `Thinking.Display`:设为 `"omitted"`(2026-03-16 起)可抑制 thinking 内容下发,加快流式响应。
+### 4.1 Stop-reason mapping (`mapAnthropicStopReason`)
 
-### 3.7 Prompt 缓存:两种并存模式
-
-| 模式 | 触发 | 线上表现 |
-|---|---|---|
-| **逐块断点** | `Message.CacheBreakpoint` / `Tool.CacheBreakpoint`(均 `json:"-"`) | 在对应块/工具上挂 `cache_control:{type:"ephemeral"}` |
-| **自动缓存** | `ChatRequest.AutoCache` + `AutoCacheTTL`(均 `json:"-"`) | 请求根挂单个 `cache_control:{type:"ephemeral", ttl:…}` |
-
-自动缓存(2026-02-19 起)由**服务端**把断点放在最后一个可缓存块上,并随对话增长自动前移,省去调用方手工维护断点。`AutoCacheTTL` 为空 → 省略 `ttl` → 默认 5 分钟;`"1h"` → 1 小时缓存。
-
-两者是**独立字段,可以共存**。两个开关都是 `json:"-"` 的结构体局部字段,永远不会出现在 OpenAI 形状的请求体里。
-
-## 4. 响应翻译(`fromAnthropicResponse`)
-
-内容块聚合成单个 assistant 消息:
-
-| 块类型 | 归属 |
+| Anthropic `stop_reason` | Canonical `FinishReason` |
 |---|---|
-| `thinking` | 累积后 `\n` 连接 → `Message.Thinking` |
-| `text` | 累积后 `\n` 连接 → `Message.Content` |
-| `tool_use` | 追加 `ToolCall{Index:序号, ID, Type:"function", Function{Name, Arguments:string(Input)}}` |
-| 其它(`server_tool_use`、`web_search_tool_result`、`code_execution_tool_result`、未来新增类型) | 原始 JSON 追加到 `Message.ExtraBlocks` |
-
-带 `citations` 的 `text` 块照常贡献文本,并**额外**把整块原文追加到 `ExtraBlocks` —— 引用注解不提升为规范字段,但也不丢失。
-
-保真要求决定了实现方式:`anthropicResponse.Content` 的元素类型是 `anthropicResponseBlock`,它在解码已知字段的同时保留每个块的原始字节(先解码到已知结构再 marshal 会丢掉未建模字段)。该类型还用 `json.RawMessage` 遮蔽了请求侧的 `ResultContent`(tag 同为 `content`)—— 响应侧 `content` 是多态的(服务端工具结果为数组、代码执行结果为对象),按 `string` 解码会让整个响应解码失败。
-
-其余字段:`ID` → `ID`;`Object` 固定填 `"chat.completion"`;`Model` 直通;`container` → `ChatResponse.Container`(`*ResponseContainer{ID, ExpiresAt}`,字段形状一致直接反序列化;`ExpiresAt` 保持服务端字符串,不解析过期、不自动续期);固定产出**单个 `Choice`**(Anthropic 无 `n` 概念)。
-
-### 4.1 停止原因映射(`mapAnthropicStopReason`)
-
-| Anthropic `stop_reason` | 规范 `FinishReason` |
-|---|---|
-| `end_turn`、`stop_sequence` | `stop` |
+| `end_turn`, `stop_sequence` | `stop` |
 | `max_tokens` | `length` |
 | `tool_use` | `tool_calls` |
-| `model_context_window_exceeded` | 同名常量(**不**折叠成 `length` —— 是上下文窗口溢出,而非请求的 `max_tokens` 触顶) |
-| `refusal` | 同名常量(流式分类器判定潜在违规而中止) |
-| `pause_turn` | 同名常量(长任务/服务端工具被暂停,客户端可重放继续) |
-| 其它 | 原样透传为 `FinishReason(reason)` |
+| `model_context_window_exceeded` | Same-named constant (**not** folded into `length` — it is a context-window overflow, not the requested `max_tokens` being hit) |
+| `refusal` | Same-named constant (streaming classifiers aborted on a potential policy violation) |
+| `pause_turn` | Same-named constant (a long-running / server-tool turn was paused; the client may replay it) |
+| anything else | Passed through verbatim as `FinishReason(reason)` |
 
-后三者保留 Anthropic 语义而非归一到 `content_filter`/`length`,是有意为之:归一会丢失调用方据以决策(重放?换模型?换提示?)的关键信息。
+The last three keep Anthropic's semantics rather than being normalized into `content_filter` / `length` — deliberately, because normalizing destroys exactly the information a caller decides on (replay? switch model? change the prompt?).
 
 ### 4.2 `stop_details`
 
-`anthropicResponse.StopDetails` 直接声明为规范的 `*StopDetails` —— 两侧字段形状完全一致(`type` / `category` / `explanation`),因此**直接反序列化,无需转换**,再挂到 `Choice.StopDetails`。
+`anthropicResponse.StopDetails` is declared directly as the canonical `*StopDetails` — the field shapes are identical (`type` / `category` / `explanation`), so it **deserializes with no conversion** and is attached to `Choice.StopDetails`.
 
-### 4.3 用量映射(`anthropicCanonicalUsage`)
+### 4.3 Usage mapping (`anthropicCanonicalUsage`)
 
-非流式与流式**共用**这个辅助函数:
+Non-streaming and streaming **share** this helper:
 
 ```
 PromptTokens       = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
@@ -197,70 +175,68 @@ CompletionTokens   = output_tokens
 TotalTokens        = PromptTokens + CompletionTokens
 CacheReadTokens    = cache_read_input_tokens
 CacheWriteTokens   = cache_creation_input_tokens
-CacheWrite5mTokens = cache_creation.ephemeral_5m_input_tokens   (存在时)
-CacheWrite1hTokens = cache_creation.ephemeral_1h_input_tokens   (存在时)
-ReasoningTokens    = output_tokens_details.thinking_tokens      (存在时)
-ServerToolUse      = server_tool_use{web_search_requests, web_fetch_requests}  (存在时)
+CacheWrite5mTokens = cache_creation.ephemeral_5m_input_tokens   (when present)
+CacheWrite1hTokens = cache_creation.ephemeral_1h_input_tokens   (when present)
+ReasoningTokens    = output_tokens_details.thinking_tokens      (when present)
+ServerToolUse      = server_tool_use{web_search_requests, web_fetch_requests}  (when present)
 InferenceGeo       = inference_geo
 ServiceTier        = service_tier
 ```
 
-注意 `PromptTokens` 是**含缓存部分的总输入**(`totalInputTokens()`);缓存读/写计数是它的子集,单独暴露仅供可观测。
+Note that `PromptTokens` is the **total input including the cached portion** (`totalInputTokens()`); the cache read/write counts are subsets of it, surfaced separately purely for observability. `Usage.Add` accumulates every count including `ServerToolUse`, but leaves `InferenceGeo` / `ServiceTier` alone — they describe one request, so neither concatenation nor summation is meaningful.
 
-`Usage.Add` 累加所有计数(含 `ServerToolUse`),但**不动** `InferenceGeo` / `ServiceTier` —— 它们描述单次请求,拼接或累加都没有意义。
+## 5. Streaming (`anthropic_stream.go`)
 
-## 5. 流式实现(`anthropic_stream.go`)
+Anthropic's SSE differs structurally from OpenAI's in two ways, both absorbed by `anthropicRecvFunc`:
 
-Anthropic SSE 与 OpenAI 有两点结构性差异,都由 `anthropicRecvFunc` 吸收:
+1. **Events come in pairs**: an `event: <type>` line followed by a `data: <json>` line. After reading `event:` the parser keeps scanning downward, skipping blank lines and `:` comments, until it finds the `data:`.
+2. **It is stateful**: `message_start` provides `id` / `model` / input-side usage that later chunks must carry.
 
-1. **事件成对出现**:`event: <type>` 行后跟 `data: <json>` 行;解析器读到 `event:` 后继续向下扫描,跳过空行与 `:` 注释,直到取到 `data:`。
-2. **有状态**:`message_start` 提供 `id`/`model`/输入侧 usage,后续 chunk 需要携带这些信息。
+Closure state: `msgID`, `model`, `startUsage`, `blockToTool map[int]int`, `nextToolIdx`, `unknownBlocks map[int]bool`.
 
-闭包持有的状态:`msgID`、`model`、`startUsage`、`blockToTool map[int]int`、`nextToolIdx`、`unknownBlocks map[int]bool`。
+### 5.1 Event handling
 
-### 5.1 事件处理表
-
-| 事件 | 行为 |
+| Event | Behavior |
 |---|---|
-| `message_start` | 记录 `msgID` / `model` / `startUsage`;**带 `container` 时立即产出一个只含 `Container` 的 chunk**,否则不产出 chunk |
-| `content_block_start`(`tool_use`) | 分配工具序号,建立 `blockToTool[块索引]=工具索引`,产出携带 `ID`/`Name` 的工具调用 chunk |
-| `content_block_start`(`text` / `thinking`) | 跳过 |
-| `content_block_start`(未知类型) | 记 `unknownBlocks[块索引]=true`,产出携带原始 `content_block` 的 `ExtraBlocks` chunk |
-| `content_block_delta`(所属块在 `unknownBlocks` 中) | 无论 delta 自身类型,产出携带原始 `delta` 的 `ExtraBlocks` chunk |
-| `content_block_delta` / `text_delta` | 产出 `Delta.Content` |
-| `content_block_delta` / `thinking_delta` | 产出 `Delta.Thinking` |
-| `content_block_delta` / `input_json_delta` | 按 `blockToTool` 查出工具序号,产出 `Function.Arguments` 分片;查不到则跳过 |
-| `content_block_delta` / `signature_delta` | 跳过 |
-| `content_block_delta`(已知块上的未知 delta 类型) | 产出携带原始 `delta` 的 `ExtraBlocks` chunk |
-| `message_delta` | 产出终帧:`FinishReason`(经 `mapAnthropicStopReason`)+ `StopDetails`;若带 `usage`,经 `mergeAnthropicUsage` 合入 `startUsage` 后由 `anthropicCanonicalUsage` 产出完整 `Usage` |
-| `message_stop` | 返回 `io.EOF` |
-| `error` | 返回 `*APIError{Type, Message}` |
-| `ping` / `content_block_stop` | 跳过 |
+| `message_start` | Record `msgID` / `model` / `startUsage`; **when a `container` is present, immediately emit a chunk carrying only `Container`**, otherwise emit nothing |
+| `content_block_start` (`tool_use`) | Allocate a tool index, record `blockToTool[block index] = tool index`, emit a tool-call chunk carrying `ID` / `Name` |
+| `content_block_start` (`text` / `thinking`) | Skip |
+| `content_block_start` (unknown type) | Record `unknownBlocks[block index] = true`, emit an `ExtraBlocks` chunk carrying the raw `content_block` |
+| `content_block_delta` (block index in `unknownBlocks`) | Whatever the delta's own type, emit an `ExtraBlocks` chunk carrying the raw `delta` |
+| `content_block_delta` / `text_delta` | Emit `Delta.Content` |
+| `content_block_delta` / `thinking_delta` | Emit `Delta.Thinking` |
+| `content_block_delta` / `input_json_delta` | Look the tool index up via `blockToTool`, emit a `Function.Arguments` fragment; skip when not found |
+| `content_block_delta` / `signature_delta` | Skip |
+| `content_block_delta` (unknown delta type on a **known** block) | Emit an `ExtraBlocks` chunk carrying the raw `delta` |
+| `message_delta` | Emit the terminal chunk: `FinishReason` (via `mapAnthropicStopReason`) + `StopDetails`; when it carries `usage`, fold it into `startUsage` via `mergeAnthropicUsage` and produce the full `Usage` via `anthropicCanonicalUsage` |
+| `message_stop` | Return `io.EOF` |
+| `error` | Return `*APIError{Type, Message}` |
+| `ping` / `content_block_stop` | Skip |
 
-### 5.2 索引重映射
+### 5.2 Index remapping
 
-Anthropic 对**所有**内容块(text、thinking、tool_use)使用统一递增的块索引,而规范侧 `Message.AppendDelta` 期望的是**仅在工具调用范围内**编号的索引。`blockToTool` 就是这个重映射表:遇到 `tool_use` 的 `content_block_start` 时建立映射,后续 `input_json_delta` 据此把参数分片投递到正确的工具调用上。
+Anthropic uses one monotonically increasing index across **all** content blocks (text, thinking, tool_use), whereas the canonical `Message.AppendDelta` expects indices scoped **to tool calls only**. `blockToTool` is that remapping table: it is populated when a `tool_use` `content_block_start` arrives, and later `input_json_delta` events use it to deliver argument fragments to the correct tool call.
 
-### 5.3 用量的两段拼装
+### 5.3 Two-part usage assembly
 
-Anthropic 把输入侧计数(含缓存读写、`inference_geo`、`service_tier`、`server_tool_use`)放在 `message_start`,把最终 `output_tokens` 放在 `message_delta`。因此解析器先在 `startUsage` 里暂存前者,终帧到达时经 `mergeAnthropicUsage` 合并后再统一转换 —— 这保证流式与非流式拿到**结构完全一致**的 `Usage`。
+Anthropic puts the input-side counts (including cache read/write, `inference_geo`, `service_tier`, `server_tool_use`) on `message_start` and the final `output_tokens` on `message_delta`. The parser therefore stashes the former in `startUsage`, merges the terminal event in via `mergeAnthropicUsage`, and only then converts — which is what guarantees streaming and non-streaming callers get a **structurally identical** `Usage`.
 
-合并而非替换是关键:终帧通常只带 `output_tokens`,`mergeAnthropicUsage` 只更新该事件**实际携带**的字段,否则零值会抹掉 `message_start` 已建立的输入/缓存/地域/服务等级/服务端工具信息。
+Merging rather than replacing is the crucial part: the terminal event typically carries only `output_tokens`, so `mergeAnthropicUsage` updates only the fields that event **actually carries**. Otherwise zero values would wipe out the input, cache, geography, service-tier and server-tool information already established at `message_start`.
 
-### 5.4 容器 ID 的早发
+### 5.4 Container ID is emitted early
 
-`container` 在 `message_start` 里就已知,却要等到有文本 delta 才随 chunk 返回的话,仅有工具事件或随即结束的流会彻底丢失它 —— 而流式路径不产出 `ChatResponse`,调用方没有别的途径拿到下一轮要复用的 ID。因此 `StreamChunk` 新增 `Container` 字段,并在读到 `message_start` 时**立即**产出一个只携带它的 chunk;后续普通 delta 不重复携带,整个流中只出现一次。
+See [../design/streaming.md](../design/streaming.md) §3.
 
-## 6. 错误处理
+## 6. Error handling
 
-`parseAnthropicErrorResponse`:读取响应体(上限 1 MB)→ 解析 `{"type":"error","error":{"type":..,"message":..}}` → 填充 `APIError{StatusCode, Type, Message}`;JSON 解析失败或 `message` 为空时,把**原始 body 原样**放入 `Message`,不丢失诊断信息。
+`parseAnthropicErrorResponse`: read the body (capped at 1 MB) → decode `{"type":"error","error":{"type":…,"message":…}}` → fill in `APIError{StatusCode, Type, Message}`. When the JSON fails to decode or `message` is empty, the **raw body goes into `Message` verbatim**, so diagnostics are never lost.
 
-流式路径下的 `error` 事件同样产出 `*APIError`,但没有 HTTP 状态码(`StatusCode` 为 0)。
+An `error` event on the streaming path likewise produces an `*APIError`, but without an HTTP status code (`StatusCode` is 0).
 
-## 7. 已知不映射项
+## 7. Known unmapped fields
 
-以下规范字段在 Anthropic 侧无对应,翻译时静默忽略:`N`、`FrequencyPenalty`、`PresencePenalty`、`Seed`、`User`、`Verbosity`、`Logprobs` / `TopLogprobs` / `LogitBias`、`ServiceTier`(请求侧;响应 `usage.service_tier` 有映射)、`Store`、`Metadata`、`PromptCacheKey`、`Modalities` / `Audio`、`StreamOptions`(Anthropic 流式总是返回 usage)。
+These canonical fields have no Anthropic counterpart and are silently ignored during translation: `N`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `Verbosity`, `Logprobs` / `TopLogprobs` / `LogitBias`, `ServiceTier` (request side only — the response's `usage.service_tier` *is* mapped), `Store`, `Metadata`, `PromptCacheKey`, `Modalities` / `Audio`, `StreamOptions` (Anthropic streaming always returns usage).
 
-`ResponseFormat` 仅在 JSON Schema 形态下映射到 `output_config.format`;其余形态(如 `{type:"json_object"}`)按上表忽略,不伪造配置。
+`ResponseFormat` is mapped only in its JSON-schema shape (§3.6); other shapes are ignored like the rest, with no fabricated config.
 
-反向上,`LogProbs` 与 `Message.Audio` 在 Anthropic 响应里永不出现,保持 `nil`。
+In the other direction, `LogProbs` and `Message.Audio` never appear in an Anthropic response and stay `nil`.
