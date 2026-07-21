@@ -84,6 +84,7 @@ client, err := aimodel.NewClient(
 | `WithHTTPClient(*http.Client)` | 自定义 HTTP 客户端 | 传 `nil` 直接 `panic`(编程错误) |
 | `WithAnthropicBeta(...string)` | `anthropic-beta` 头 | 仅 Anthropic 协议;多次调用累加,空串忽略,线上逗号连接 |
 | `WithAnthropicVersion(string)` | `anthropic-version` 头 | 仅 Anthropic 协议;空串保留默认 `2023-06-01` |
+| `WithAnthropicUserProfileID(string)` | `anthropic-user-profile-id` 头 | 仅 Anthropic 协议;关联终端用户档案,空串不发送该头 |
 
 ### 3.2 环境变量回退
 
@@ -135,17 +136,21 @@ type ChatCompleter interface {
 - `MaxCompletionTokens *int` —— 取代前者,上限同时覆盖可见输出与内部推理 token。
 
 **推理/思考**:
-- `ReasoningEffort string` —— 映射 OpenAI `reasoning_effort` 与 Anthropic 顶层 `effort`;常量 `ReasoningEffortNone/Minimal/Low/Medium/High/XHigh`。
+- `ReasoningEffort string` —— 映射 OpenAI `reasoning_effort` 与 Anthropic `output_config.effort`;常量 `ReasoningEffortNone/Minimal/Low/Medium/High/XHigh`。
 - `Verbosity string` —— OpenAI `verbosity`;常量 `VerbosityLow/Medium/High`。
 - `Thinking *Thinking` —— `{Type, BudgetTokens(弃用), Display}`,详见 Anthropic 文档。
 
 **工具**:`Tools []Tool`、`ToolChoice any`(`"auto"`/`"required"`/`"none"` 或 `{"type":"function","function":{"name":...}}`)、`ParallelToolCalls *bool`。
+
+`Tool` 除 `Type` / `Function` / `CacheBreakpoint` 外,还带 Anthropic 工具定义扩展(均 `omitempty`,原样复制到 Anthropic 工具对象):`Strict *bool`、`DeferLoading *bool`、`AllowedCallers []string`、`EagerInputStreaming *bool`、`InputExamples []any`。`Type` 兼作 Anthropic 工具类型:OpenAI 的 `"function"`(及空串)表示 Anthropic 默认 custom 工具,**不发送**;其余取值(版本化内置工具)原样透传。
 
 **流式**:`Stream bool`、`StreamOptions *StreamOptions{IncludeUsage}`。
 
 **可观测/路由**(OpenAI):`Logprobs`、`TopLogprobs`、`LogitBias`、`ServiceTier`、`Store`、`Metadata`、`PromptCacheKey`。
 
 **多模态**:`Modalities []string`、`Audio *AudioConfig{Voice, Format}`。
+
+**Anthropic 直通**:`Container string`(复用服务端执行容器)、`InferenceGeo string`(数据驻留路由),均 `omitempty`。
 
 **Anthropic 局部开关**(`json:"-"`,不出现在 OpenAI body):`AutoCache bool`、`AutoCacheTTL string`。
 
@@ -190,6 +195,13 @@ type ChatResponse struct {
     Choices []Choice
     Usage   Usage
     Error   *Error
+    Container *ResponseContainer  // Anthropic 服务端执行容器
+}
+
+// ExpiresAt 保持服务端原字符串:不解析过期、不自动续期、不重试。
+type ResponseContainer struct {
+    ID        string
+    ExpiresAt string
 }
 
 type Choice struct {
@@ -215,15 +227,24 @@ type Usage struct {
     CacheWrite5mTokens int  // 按 TTL 拆分
     CacheWrite1hTokens int
     ReasoningTokens    int  // 推理模型内部思考消耗
+    ServerToolUse *ServerToolUse  // 服务端工具调用次数(Anthropic)
+    InferenceGeo  string          // 实际推理地域(Anthropic)
+    ServiceTier   string          // 服务等级(Anthropic)
+}
+
+type ServerToolUse struct {
+    WebSearchRequests int
+    WebFetchRequests  int
 }
 ```
 
 要点:
 
 - **缓存读/写 token 是 `PromptTokens` 的子集**,单独暴露只为可观测性,不要重复累加计费。
-- `UnmarshalJSON` 会解析 OpenAI 的嵌套结构:`prompt_tokens_details.cached_tokens` → `CacheReadTokens`,`completion_tokens_details.reasoning_tokens` → `ReasoningTokens`;**显式顶层字段优先**(顶层非 0 时不覆盖)。
+- `UnmarshalJSON` 会解析嵌套结构:`prompt_tokens_details.cached_tokens` → `CacheReadTokens`,`completion_tokens_details.reasoning_tokens`(OpenAI)/ `output_tokens_details.thinking_tokens`(Anthropic)→ `ReasoningTokens`;**显式顶层字段优先**(顶层非 0 时不覆盖)。
 - `CacheWrite5mTokens + CacheWrite1hTokens == CacheWriteTokens`(Anthropic 返回明细时)。
-- `Add(other)` 累加全部计数,便于跨多轮/多模型汇总。
+- `ServerToolUse` 的两个计数各自 `omitempty`,为 0 时从 JSON 省略;无服务端工具调用时整个对象为 `nil`。
+- `Add(other)` 累加全部计数(含 `ServerToolUse`),便于跨多轮/多模型汇总;`InferenceGeo` / `ServiceTier` 描述单次请求,**不参与累加**。
 
 ## 5. 流式抽象(stream.go)
 
@@ -240,6 +261,7 @@ func (s *Stream) Close() error                 // 幂等,可与 Recv 并发
 - **协议差异被 `recv` 闭包吸收**。`Stream` 结构体本身与协议无关,OpenAI 由 `openaiRecvFunc` 构造(逐行 `data:` 解析,`[DONE]` → `io.EOF`),Anthropic 由 `anthropicRecvFunc` 构造(`event:`+`data:` 成对解析,`message_stop` → `io.EOF`)。
 - **并发安全**:`Recv` 持互斥锁串行化;`Close` 用 `CompareAndSwap` 保证只执行一次,并**直接关闭底层 reader** 以解除阻塞中的 `Recv`(`http.Response.Body.Close` 可并发调用)。已关闭后 `Recv` 返回 `ErrStreamClosed`。
 - **用量捕获**:任何携带 `Usage` 的 chunk 都会被记录到 `s.usage`,`Usage()` 在流结束后返回它。
+- **容器 ID**:`StreamChunk.Container`(`*ResponseContainer`)在 Anthropic 流式下于读到 `message_start` 时**立即**发出一次,后续 chunk 不重复携带。流式不产出 `ChatResponse`,若等到文本 delta 才附带,仅有工具事件或随即结束的流会丢失下一轮要复用的 ID。
 - **SSE 行上限** `maxStreamLineSize = 1 MB`(`bufio.Scanner` 缓冲初始 64 KB)。
 
 ### 5.1 增量合并
@@ -250,6 +272,8 @@ func (tc *ToolCall) Merge(delta *ToolCall)
 ```
 
 `AppendDelta` 拼接文本与 thinking,并按 `ToolCall.Index` 就地合并工具调用(必要时用占位元素扩容切片);`Merge` 对 ID/Type/Name 采取"非空覆盖",对 `Arguments` 采取"字符串追加"(工具参数 JSON 是分片流式下发的)。
+
+`AppendDelta` 还会按到达顺序追加 `Message.ExtraBlocks`(`[]json.RawMessage`,`json:"-"`)—— 协议未建模的内容块原文逃生口,**不解析、不合并、不改写**,由调用方自行按序处理。
 
 ### 5.2 流拦截(intercept.go / WrapStream)
 

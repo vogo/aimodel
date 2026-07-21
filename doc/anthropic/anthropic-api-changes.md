@@ -13,6 +13,30 @@
 
 ---
 
+## 2026-07-21 — `output_config`、usage 扩展、`container`/`inference_geo`、工具字段、未知块保留、profile 头
+
+**官方变更**
+
+自 2026-06-02 同步以来的六项新增,本次作为**同一个版本项**一起跟进:
+
+1. 推理深度与结构化输出合并进单个 `output_config` 对象 —— `output_config.effort`(`low`/`medium`/`high`/`xhigh`/`max`)取代原顶层 `effort`,`output_config.format`(`{type:"json_schema", schema:…}`)取代已弃用的 `output_format`。
+2. 响应 `usage` 新增 `output_tokens_details.thinking_tokens`(思考 token 成本)、`server_tool_use`(`{web_search_requests, web_fetch_requests}`)、`inference_geo`、`service_tier`。
+3. 请求接受 `container`(复用服务端代码执行容器)与 `inference_geo`(数据驻留路由);响应与 `message_start` 返回 `container` 形如 `{id, expires_at}`。
+4. `content[]` 中出现服务端工具块(`server_tool_use`、`web_search_tool_result`、`code_execution_tool_result` 等)与 `citations` 引用注解。
+5. 工具定义接受 `type`(版本化内置工具,默认 `custom`)、`strict`、`defer_loading`、`allowed_callers`、`eager_input_streaming`、`input_examples`。
+6. `anthropic-user-profile-id` 请求头把请求关联到终端用户档案。
+
+**wrapper 变更**
+
+- **`output_config`**:`anthropicRequest` 新增 `OutputConfig *anthropicOutputConfig`(含 `Effort string` 与 `Format *anthropicOutputFormat{Type, Schema any}`)。新增 `toAnthropicOutputConfig` / `toAnthropicOutputFormat` 助手:`ReasoningEffort` → `effort`,JSON Schema 形态的 `ResponseFormat` → `format`,同时接受 OpenAI 的嵌套 `json_schema.schema` 与扁平 `schema`;schema 本身原样透传,不做校验或改写;无法提取 schema 的形态(如 `{type:"json_object"}`)不伪造 `format`。两半皆空时整个字段省略。**行为变更**:顶层 `anthropicRequest.Effort` 标注弃用且不再赋值,线上改发 `output_config.effort`,字段本身保留以维持内部源码兼容。
+- **Usage**:`anthropicUsage` 新增 `OutputTokensDetails` / `ServerToolUse` / `InferenceGeo` / `ServiceTier`。规范 `Usage` 新增 `ServerToolUse *ServerToolUse`(零值计数 `omitempty`)、`InferenceGeo`、`ServiceTier`;`ReasoningTokens` 现在也取自 Anthropic 的 `output_tokens_details.thinking_tokens`(显式顶层 `reasoning_tokens` 仍优先)。三者均经 `usageJSON` 往返;`Usage.Add` 累加服务端工具计数,但不动 geo/tier(它们描述单次请求)。流式不再只覆写 `output_tokens`:新增 `mergeAnthropicUsage`,只更新终止 `message_delta` 实际携带的字段,`message_start` 的输入/缓存/geo/tier/服务端工具信息因此得以保留。
+- **`container` / `inference_geo`**:`ChatRequest` 新增两个 `omitempty` 字段直通到 `anthropicRequest`。`anthropicResponse.Container` 因字段形状一致,直接反序列化到新的规范 `ResponseContainer{ID, ExpiresAt string}` —— `ExpiresAt` 保持服务端字符串,不解析过期、不自动续期、不重试。非流式挂 `ChatResponse.Container`;流式新增 `StreamChunk.Container`,在解析到 `message_start` 时**立即发出一次**,使仅有工具事件或随即结束的流也不丢失容器 ID。
+- **未知内容块**:`Message` 新增 `ExtraBlocks []json.RawMessage`(`json:"-"`,仅运行时)。`anthropicResponse.Content` 由 `[]anthropicContentBlock` 改为新的 `[]anthropicResponseBlock` —— 既解码已知字段,又保留每个块的原始 JSON(先解码再 marshal 会丢失未建模字段)。`fromAnthropicResponse` 新增 `default` 分支追加未识别块;带 `citations` 的 `text` 块照常贡献文本,并额外保留整块原文。`anthropic_stream.go` 逐事件同理:未识别的 `content_block_start` 发出原始 `content_block` 并记录 index,该 index 上后续所有 delta(以及已知块上未知类型的 delta)发出原始 `delta`,按到达顺序。**顺带修复一个解码故障**:`anthropicContentBlock.ResultContent` 是 tag 为 `content` 的 `string`,而响应侧 `content` 是多态的(服务端工具结果为数组、代码执行结果为对象),含此类块的响应此前**整体解码失败**;`anthropicResponseBlock` 用 `json.RawMessage` 遮蔽该键,请求侧字符串语义不变。`Message.AppendDelta` 只追加不解析、不合并。`signature_delta` 仍被忽略,`text`/`thinking`/`tool_use`/`input_json_delta` 行为不变。
+- **工具字段**:规范 `Tool` 与 `anthropicTool` 同时新增 `Strict *bool` / `DeferLoading *bool` / `AllowedCallers []string` / `EagerInputStreaming *bool` / `InputExamples []any`(均 `omitempty`),在工具转换循环中原样复制;`anthropicTool` 另有 `Type string`。`ChatRequest.clone()` 现在复制每个工具的 `AllowedCallers` / `InputExamples` slice(元素保持浅拷贝,符合既有 `any` 契约)。**与规范的偏离**:规范原本要求 `Tool.Type` 无条件映射,但规范层该字段在 OpenAI 语义下对每个普通工具都是 `"function"`,发给 Anthropic 会被拒绝 —— 因此 `"function"` 与空串一并视为默认 custom 工具而不发送,其余取值(如 `web_search_20260209`)原样透传,不枚举、不校验。
+- **`anthropic-user-profile-id`**:`Client` 新增 `anthropicUserProfileID` 与 `WithAnthropicUserProfileID(string)`(空串忽略,与 `WithAnthropicVersion` 一致);`setAnthropicHeaders` 仅在非空时发送该头。
+- **默认行为不变**:不设置任何新字段时,请求 wire JSON 与此前一致,唯一区别是 `ReasoningEffort` 改落在 `output_config.effort` 而非顶层 `effort`;新增的 `json:"-"` 成员不会进入 OpenAI 请求体;响应缺少新成员时新增字段保持零值/nil 并从 JSON 省略;默认不发送新请求头。
+- **有意未实现**:不枚举 Anthropic 版本化内置工具类型(类型名作为不透明 `string`);不解析 `citations` 为规范字段(改为保留原始块);`tool_reference` / `tool_search` 元协议延后;顶层 `effort` 本次保留(不再赋值)而非删除。
+
 ## 2026-06-02 — 顶层自动缓存 + usage 的 `cache_creation` TTL 明细
 
 **官方变更**
