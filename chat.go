@@ -59,7 +59,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*S
 
 // openaiChatCompletion sends a non-streaming request using the OpenAI-compatible API.
 func (c *Client) openaiChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
-	r := req.clone()
+	r := req.Clone()
 	r.Stream = false
 
 	c.applyDefaultModel(&r)
@@ -97,7 +97,7 @@ func (c *Client) openaiChatCompletion(ctx context.Context, req *ChatRequest) (*C
 
 // openaiChatCompletionStream sends a streaming request using the OpenAI-compatible API.
 func (c *Client) openaiChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
-	r := req.clone()
+	r := req.Clone()
 	r.Stream = true
 
 	// Request usage data in the final stream chunk if not already set.

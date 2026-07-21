@@ -732,7 +732,7 @@ func TestChatRequestClone(t *testing.T) {
 		Metadata:  map[string]string{"env": "prod"},
 	}
 
-	cloned := orig.clone()
+	cloned := orig.Clone()
 
 	// Modify the clone's slices.
 	cloned.Messages = append(cloned.Messages, Message{Role: RoleAssistant, Content: NewTextContent("Hello")})
@@ -941,7 +941,7 @@ func TestChatRequestCloneModalities(t *testing.T) {
 		Modalities: []string{"text", "audio"},
 	}
 
-	cloned := orig.clone()
+	cloned := orig.Clone()
 	cloned.Modalities = append(cloned.Modalities, "image")
 	cloned.Modalities[0] = "audio"
 

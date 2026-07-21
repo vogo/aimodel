@@ -29,7 +29,7 @@ import (
 
 // anthropicChatCompletion sends a non-streaming request to the Anthropic Messages API.
 func (c *Client) anthropicChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
-	r := req.clone()
+	r := req.Clone()
 	r.Stream = false
 
 	c.applyDefaultModel(&r)
@@ -76,7 +76,7 @@ func (c *Client) anthropicChatCompletion(ctx context.Context, req *ChatRequest) 
 
 // anthropicChatCompletionStream sends a streaming request to the Anthropic Messages API.
 func (c *Client) anthropicChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
-	r := req.clone()
+	r := req.Clone()
 	r.Stream = true
 
 	c.applyDefaultModel(&r)
