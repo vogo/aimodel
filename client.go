@@ -29,14 +29,15 @@ const defaultTimeout = 60 * time.Second
 // Client is an AI API client compatible with OpenAI-style endpoints.
 // Set the protocol with WithProtocol to use vendor-specific APIs (e.g., Anthropic).
 type Client struct {
-	apiKey           string
-	baseURL          string
-	model            string
-	protocol         Protocol
-	timeout          time.Duration
-	httpClient       *http.Client
-	anthropicBeta    []string
-	anthropicVersion string
+	apiKey                 string
+	baseURL                string
+	model                  string
+	protocol               Protocol
+	timeout                time.Duration
+	httpClient             *http.Client
+	anthropicBeta          []string
+	anthropicVersion       string
+	anthropicUserProfileID string
 }
 
 // Option configures a Client.
@@ -106,6 +107,17 @@ func WithAnthropicVersion(version string) Option {
 	return func(c *Client) {
 		if version != "" {
 			c.anthropicVersion = version
+		}
+	}
+}
+
+// WithAnthropicUserProfileID sets the "anthropic-user-profile-id" request
+// header (only used by ProtocolAnthropic), which associates requests with an
+// end-user profile. An empty string leaves the header unset (default).
+func WithAnthropicUserProfileID(id string) Option {
+	return func(c *Client) {
+		if id != "" {
+			c.anthropicUserProfileID = id
 		}
 	}
 }

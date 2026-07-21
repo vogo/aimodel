@@ -350,7 +350,7 @@ func TestFromAnthropicResponse_CacheCreationBreakdown(t *testing.T) {
 // write still reflects cache_creation_input_tokens.
 func TestFromAnthropicResponse_NoCacheCreation(t *testing.T) {
 	ar := anthropicResponse{
-		Content:    []anthropicContentBlock{{Type: "text", Text: "hi"}},
+		Content:    responseBlocks([]anthropicContentBlock{{Type: "text", Text: "hi"}}),
 		StopReason: "end_turn",
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7},
 	}

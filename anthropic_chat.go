@@ -119,6 +119,10 @@ func (c *Client) setAnthropicHeaders(req *http.Request) {
 	if beta := c.anthropicBetaHeader(); beta != "" {
 		req.Header.Set("anthropic-beta", beta)
 	}
+
+	if c.anthropicUserProfileID != "" {
+		req.Header.Set("anthropic-user-profile-id", c.anthropicUserProfileID)
+	}
 }
 
 // anthropicVersionHeader returns the configured "anthropic-version" value,

@@ -215,6 +215,17 @@ type ChatRequest struct {
 	// cache, improving prompt cache hit rates.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
+	// Container reuses a server-side execution container (Anthropic) across
+	// requests, keeping the code-execution state alive. Pass back the ID from
+	// a previous response's Container. Empty means "let the server allocate
+	// one"; the field is then omitted entirely.
+	Container string `json:"container,omitempty"`
+
+	// InferenceGeo pins where inference runs for data-residency purposes
+	// (Anthropic, e.g. "us" / "eu"). Kept a plain string for pass-through;
+	// empty is omitted.
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
 	// AutoCache enables Anthropic's automatic prompt caching: a single
 	// cache_control at the request root. The server places the cache
 	// breakpoint on the last cacheable block and advances it forward as the
@@ -259,6 +270,18 @@ type ChatResponse struct {
 	Choices []Choice `json:"choices"`
 	Usage   Usage    `json:"usage"`
 	Error   *Error   `json:"error,omitempty"`
+	// Container identifies the server-side execution container this response
+	// used (Anthropic). Pass its ID back via ChatRequest.Container to reuse the
+	// container on the next turn; nil when the response carries none.
+	Container *ResponseContainer `json:"container,omitempty"`
+}
+
+// ResponseContainer is the server-side execution container returned alongside
+// a response (Anthropic). ExpiresAt is kept as the server-supplied string —
+// this wrapper neither parses nor acts on the expiry.
+type ResponseContainer struct {
+	ID        string `json:"id"`
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 // Choice represents a single completion choice.
@@ -418,12 +441,30 @@ type Message struct {
 	// request body never carries the field. Only the Anthropic translator
 	// reads it.
 	CacheBreakpoint bool `json:"-"`
+
+	// ExtraBlocks preserves the raw JSON of protocol content blocks this
+	// wrapper does not model — Anthropic server-tool blocks
+	// (server_tool_use, web_search_tool_result, code_execution_tool_result,
+	// …), any future block type, and text blocks carrying citations (the
+	// text is still extracted into Content; the whole original block is kept
+	// here so the annotations are not lost).
+	//
+	// Elements are the verbatim response/SSE sub-objects in arrival order —
+	// never re-marshalled — so unknown fields survive. Streaming appends the
+	// original content_block of an unrecognized content_block_start and the
+	// original delta of any subsequent unrecognized content_block_delta as
+	// separate elements; callers reassemble them if they need to.
+	//
+	// Struct-local: marked json:"-" so the canonical (OpenAI-shape) body is
+	// unchanged. Only the Anthropic translator writes it.
+	ExtraBlocks []json.RawMessage `json:"-"`
 }
 
 // AppendDelta merges a streaming delta message into this message.
 func (m *Message) AppendDelta(delta *Message) {
 	m.Content.text += delta.Content.text
 	m.Thinking += delta.Thinking
+	m.ExtraBlocks = append(m.ExtraBlocks, delta.ExtraBlocks...)
 
 	for _, dtc := range delta.ToolCalls {
 		idx := dtc.Index
@@ -481,6 +522,11 @@ type MessageAudio struct {
 
 // Tool represents a tool definition for the API.
 type Tool struct {
+	// Type is OpenAI's tool kind — "function" for every tool OpenAI defines.
+	// For Anthropic it doubles as the tool type: "function" (and empty) means
+	// the default custom tool and is not sent, while any other value is passed
+	// through verbatim so versioned server tools ("web_search_20260209",
+	// "code_execution_20260521", …) work without this wrapper enumerating them.
 	Type     string             `json:"type"`
 	Function FunctionDefinition `json:"function"`
 
@@ -489,6 +535,29 @@ type Tool struct {
 	// the one flagged. OpenAI-compatible backends ignore the field.
 	// Struct-local: never serialised on the canonical request body.
 	CacheBreakpoint bool `json:"-"`
+
+	// Strict requests exact schema validation of the tool input, guaranteeing
+	// the arguments match the declared schema (Anthropic's top-level `strict`
+	// on the tool definition; OpenAI carries the same flag inside `function`).
+	Strict *bool `json:"strict,omitempty"`
+
+	// DeferLoading keeps this tool's schema out of the initial context, to be
+	// discovered on demand by Anthropic's tool-search tools. Not every tool may
+	// be deferred — at least one must stay loaded.
+	DeferLoading *bool `json:"defer_loading,omitempty"`
+
+	// AllowedCallers restricts who may invoke this tool, e.g.
+	// ["code_execution_20260120"] for programmatic tool calling (the model
+	// calls it from inside the code-execution sandbox).
+	AllowedCallers []string `json:"allowed_callers,omitempty"`
+
+	// EagerInputStreaming enables fine-grained streaming of this tool's input
+	// (partial JSON is emitted as it is generated rather than buffered).
+	EagerInputStreaming *bool `json:"eager_input_streaming,omitempty"`
+
+	// InputExamples are sample tool inputs shown to the model to demonstrate
+	// correct usage of a complex schema. Elements are arbitrary JSON values.
+	InputExamples []any `json:"input_examples,omitempty"`
 }
 
 // FunctionDefinition describes a function available to the model.
@@ -521,6 +590,20 @@ func (r *ChatRequest) clone() ChatRequest {
 	if len(r.Tools) > 0 {
 		c.Tools = make([]Tool, len(r.Tools))
 		copy(c.Tools, r.Tools)
+
+		// Duplicate each tool's slice fields so a copy appending to or
+		// rewriting them cannot reach back into the original request. The
+		// elements themselves (dynamic `any` values) stay shallow, matching
+		// the existing contract for Function.Parameters.
+		for i := range c.Tools {
+			if len(c.Tools[i].AllowedCallers) > 0 {
+				c.Tools[i].AllowedCallers = append([]string(nil), c.Tools[i].AllowedCallers...)
+			}
+
+			if len(c.Tools[i].InputExamples) > 0 {
+				c.Tools[i].InputExamples = append([]any(nil), c.Tools[i].InputExamples...)
+			}
+		}
 	}
 
 	if len(r.LogitBias) > 0 {
@@ -542,6 +625,12 @@ type StreamChunk struct {
 	Model   string              `json:"model"`
 	Choices []StreamChunkChoice `json:"choices"`
 	Usage   *Usage              `json:"usage,omitempty"`
+	// Container identifies the server-side execution container this stream
+	// uses (Anthropic). It is reported once, on the chunk carrying the
+	// message_start information, so callers can reuse the ID on the next turn
+	// even when the stream produces only tool events; nil on every other chunk
+	// and whenever the response carries no container.
+	Container *ResponseContainer `json:"container,omitempty"`
 }
 
 // StreamChunkChoice represents a choice within a stream chunk.
@@ -572,8 +661,33 @@ type Usage struct {
 	CacheWrite5mTokens int `json:"cache_write_5m_tokens,omitempty"`
 	CacheWrite1hTokens int `json:"cache_write_1h_tokens,omitempty"`
 	// ReasoningTokens reports tokens consumed by a reasoning model's internal
-	// thinking, parsed from OpenAI's completion_tokens_details.reasoning_tokens.
+	// thinking, parsed from OpenAI's completion_tokens_details.reasoning_tokens
+	// and from Anthropic's usage.output_tokens_details.thinking_tokens (an
+	// explicit top-level reasoning_tokens takes precedence over either nested
+	// source). Like the OpenAI count it is a subset of CompletionTokens.
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+
+	// ServerToolUse counts the server-side tool invocations billed with this
+	// request (Anthropic usage.server_tool_use); nil when the protocol reports
+	// none.
+	ServerToolUse *ServerToolUse `json:"server_tool_use,omitempty"`
+
+	// InferenceGeo reports the geography inference actually ran in (Anthropic
+	// usage.inference_geo, e.g. "us"). It is a property of the single request,
+	// so Usage.Add does not combine it.
+	InferenceGeo string `json:"inference_geo,omitempty"`
+
+	// ServiceTier reports the latency/throughput tier that served the request
+	// (e.g. "standard", "priority", "batch"). Like InferenceGeo it describes
+	// one request and is not combined by Usage.Add.
+	ServiceTier string `json:"service_tier,omitempty"`
+}
+
+// ServerToolUse counts server-side tool invocations reported on Usage.
+// Both counts are omitted from JSON when zero.
+type ServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	WebFetchRequests  int `json:"web_fetch_requests,omitempty"`
 }
 
 // usageJSON is the JSON representation used for unmarshaling Usage,
@@ -587,6 +701,9 @@ type usageJSON struct {
 	CacheWrite5mTokens      int                      `json:"cache_write_5m_tokens,omitempty"`
 	CacheWrite1hTokens      int                      `json:"cache_write_1h_tokens,omitempty"`
 	ReasoningTokens         int                      `json:"reasoning_tokens,omitempty"`
+	ServerToolUse           *ServerToolUse           `json:"server_tool_use,omitempty"`
+	InferenceGeo            string                   `json:"inference_geo,omitempty"`
+	ServiceTier             string                   `json:"service_tier,omitempty"`
 	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
@@ -618,6 +735,9 @@ func (u *Usage) UnmarshalJSON(data []byte) error {
 	u.CacheWrite5mTokens = raw.CacheWrite5mTokens
 	u.CacheWrite1hTokens = raw.CacheWrite1hTokens
 	u.ReasoningTokens = raw.ReasoningTokens
+	u.ServerToolUse = raw.ServerToolUse
+	u.InferenceGeo = raw.InferenceGeo
+	u.ServiceTier = raw.ServiceTier
 
 	// Extract OpenAI's cached_tokens from nested prompt_tokens_details.
 	if u.CacheReadTokens == 0 && raw.PromptTokensDetails != nil {
@@ -632,7 +752,9 @@ func (u *Usage) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Add accumulates token counts from another Usage into this one.
+// Add accumulates token counts from another Usage into this one. Counts are
+// summed; InferenceGeo and ServiceTier describe a single request and are left
+// untouched.
 func (u *Usage) Add(other *Usage) {
 	u.PromptTokens += other.PromptTokens
 	u.CompletionTokens += other.CompletionTokens
@@ -642,6 +764,15 @@ func (u *Usage) Add(other *Usage) {
 	u.CacheWrite5mTokens += other.CacheWrite5mTokens
 	u.CacheWrite1hTokens += other.CacheWrite1hTokens
 	u.ReasoningTokens += other.ReasoningTokens
+
+	if other.ServerToolUse != nil {
+		if u.ServerToolUse == nil {
+			u.ServerToolUse = &ServerToolUse{}
+		}
+
+		u.ServerToolUse.WebSearchRequests += other.ServerToolUse.WebSearchRequests
+		u.ServerToolUse.WebFetchRequests += other.ServerToolUse.WebFetchRequests
+	}
 }
 
 // Error represents an error in the API response body.

@@ -1,35 +1,53 @@
-# aimodel 文档
+# aimodel Documentation
 
-`aimodel` 是多协议(OpenAI 兼容、Anthropic)AI 模型 API 的 Go SDK —— 零外部依赖的**薄 API 封装**:只做请求翻译、连接管理与响应规一化,不含重试、限流、校验、缓存、日志/指标。
+`aimodel` is a Go SDK for multi-protocol (OpenAI-compatible, Anthropic) AI model APIs — a zero-dependency **thin API wrapper** that only translates requests, manages connections, and normalizes responses. It carries no retry, rate limiting, validation, caching, or logging/metrics.
 
-## 目录
+This directory holds the design documentation. The root [README.md](../README.md) covers usage.
 
-| 文档 | 内容 |
+## Architecture
+
+| Document | Contents |
 |---|---|
-| [api.md](./api.md) | **核心 API 设计** —— 设计定位、规范表示、客户端与协议分派、数据模型、流式抽象、错误模型、多模型编排 |
-| [anthropic/anthropic-chat-api.md](./anthropic/anthropic-chat-api.md) | Anthropic Messages API 封装的设计与实现:双向翻译、prompt 缓存、SSE |
-| [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic API 各版本变更与 wrapper 跟进记录 |
-| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions 封装的设计与实现:零翻译路径、字段对齐、SSE |
-| [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI API 各版本变更与 wrapper 跟进记录 |
+| [api.md](./api.md) | **Start here** — design scope, the OpenAI-shaped canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
 
-## 仓库根文档
+## Design topics (cross-protocol)
 
-- [../README.md](../README.md) —— 完整用法:请求/响应字段、token 限制、reasoning effort、多模态、流式、Anthropic 协议、多模型 compose。
-- [../CLAUDE.md](../CLAUDE.md) —— 架构、协议分派与 Anthropic 翻译细节(面向 AI 助手)。
-- [../CHANGES.md](../CHANGES.md) —— 与官方 API 的同步状态总账(两个协议合并倒序)。
+| Document | Contents |
+|---|---|
+| [design/data-model.md](./design/data-model.md) | Canonical `ChatRequest` / `Message` / `Content` / `ChatResponse` / `Usage`, field by field |
+| [design/streaming.md](./design/streaming.md) | The `Stream` abstraction, delta merging, `ExtraBlocks`, stream interception |
+| [design/tool-use.md](./design/tool-use.md) | Tool definitions and their Anthropic extensions, `tool_choice`, parallel tool results |
+| [design/prompt-caching.md](./design/prompt-caching.md) | Per-block breakpoints, automatic caching, cache accounting |
+| [design/errors.md](./design/errors.md) | Sentinel errors, `APIError`, `ModelError`, `MultiError` |
+| [design/compose.md](./design/compose.md) | Selection strategies, health tracking, recovery probes, cancellation |
 
-## 官方 API 参考
+## Protocols
 
-| 协议 | 官方文档 | wrapper 代码 |
+| Document | Contents |
+|---|---|
+| [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: bidirectional translation, headers, SSE events |
+| [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
+| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: the zero-translation path, field alignment, SSE |
+| [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI change log |
+
+## Root documents
+
+- [../README.md](../README.md) — usage: installation, chat completion, reasoning effort, multimodal, streaming, the Anthropic protocol, client options, multi-model compose.
+- [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
+- [../CHANGES.md](../CHANGES.md) — index and merged timeline of both protocols' change logs.
+
+## Official API references
+
+| Protocol | Official docs | Wrapper code |
 |---|---|---|
-| OpenAI(OpenAI 兼容) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
+| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
 
-## 维护约定
+## Maintenance convention
 
-官方 API 变更时,**同步更新四处**并保持一致:
+When an official API changes, update these in sync:
 
-1. wrapper 代码;
-2. 仓库根 `README.md` / `CLAUDE.md`;
-3. 仓库根 `CHANGES.md`;
-4. `doc/` 下对应协议的实现文档与变更记录。
+1. the wrapper code;
+2. the relevant document here — a `design/` topic and/or the protocol's `*-chat-api.md`;
+3. that protocol's change log (`*-api-changes.md`);
+4. the root `README.md` / `CLAUDE.md` **only if** the public usage surface or the agent-facing guidance changed — they link here rather than restating design.
