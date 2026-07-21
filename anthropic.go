@@ -45,10 +45,24 @@ type anthropicRequest struct {
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
 	Thinking      *Thinking            `json:"thinking,omitempty"`
-	// Effort is Anthropic's top-level reasoning-depth control (GA 2026-02-05),
-	// mapped from the canonical ChatRequest.ReasoningEffort. It supersedes
-	// thinking.budget_tokens for new models.
+	// Effort is Anthropic's former top-level reasoning-depth control.
+	//
+	// Deprecated: superseded by OutputConfig.Effort — reasoning depth now
+	// lives inside output_config. Kept only so existing internal callers keep
+	// compiling; toAnthropicRequest no longer assigns it, so it is never sent
+	// alongside output_config.effort.
 	Effort string `json:"effort,omitempty"`
+	// OutputConfig carries Anthropic's output configuration: the reasoning
+	// effort (mapped from ChatRequest.ReasoningEffort) and the structured
+	// output format (mapped from ChatRequest.ResponseFormat). Omitted when
+	// both are absent.
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	// Container reuses a server-side execution container across requests,
+	// mapped straight through from ChatRequest.Container.
+	Container string `json:"container,omitempty"`
+	// InferenceGeo pins the inference geography for data residency, mapped
+	// straight through from ChatRequest.InferenceGeo.
+	InferenceGeo string `json:"inference_geo,omitempty"`
 	// CacheControl, when set, is the request-root automatic-caching marker
 	// (mapped from ChatRequest.AutoCache). The server caches the last
 	// cacheable block and advances the breakpoint as the conversation grows.
@@ -59,6 +73,23 @@ type anthropicRequest struct {
 type anthropicMessage struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+}
+
+// anthropicOutputConfig is the request-side output configuration: how deeply
+// the model reasons, and how its answer is shaped.
+type anthropicOutputConfig struct {
+	// Effort selects the reasoning depth (low/medium/high/xhigh/max).
+	Effort string `json:"effort,omitempty"`
+	// Format constrains the response to a schema (structured outputs).
+	Format *anthropicOutputFormat `json:"format,omitempty"`
+}
+
+// anthropicOutputFormat is the structured-output format inside output_config.
+// Schema holds the caller's JSON Schema as-is — this wrapper never validates
+// or rewrites it.
+type anthropicOutputFormat struct {
+	Type   string `json:"type"`
+	Schema any    `json:"schema,omitempty"`
 }
 
 type anthropicContentBlock struct {
@@ -104,10 +135,21 @@ type anthropicContentSource struct {
 }
 
 type anthropicTool struct {
+	// Type selects the tool kind. Empty means the default custom tool;
+	// versioned built-in types ("web_search_20260209",
+	// "code_execution_20260521", …) pass through unvalidated.
+	Type         string                 `json:"type,omitempty"`
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description,omitempty"`
 	InputSchema  any                    `json:"input_schema"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	// The following mirror the canonical Tool fields one-to-one; see their
+	// documentation on Tool (schema.go).
+	Strict              *bool    `json:"strict,omitempty"`
+	DeferLoading        *bool    `json:"defer_loading,omitempty"`
+	AllowedCallers      []string `json:"allowed_callers,omitempty"`
+	EagerInputStreaming *bool    `json:"eager_input_streaming,omitempty"`
+	InputExamples       []any    `json:"input_examples,omitempty"`
 }
 
 type anthropicToolChoice struct {
@@ -121,18 +163,61 @@ type anthropicToolChoice struct {
 // --- Anthropic response types ---
 
 type anthropicResponse struct {
-	ID           string                  `json:"id"`
-	Type         string                  `json:"type"`
-	Role         string                  `json:"role"`
-	Model        string                  `json:"model"`
-	Content      []anthropicContentBlock `json:"content"`
-	StopReason   string                  `json:"stop_reason"`
-	StopSequence *string                 `json:"stop_sequence"`
+	ID           string                   `json:"id"`
+	Type         string                   `json:"type"`
+	Role         string                   `json:"role"`
+	Model        string                   `json:"model"`
+	Content      []anthropicResponseBlock `json:"content"`
+	StopReason   string                   `json:"stop_reason"`
+	StopSequence *string                  `json:"stop_sequence"`
 	// StopDetails carries the structured stop classification (e.g. the refusal
 	// category) returned alongside stop_reason "refusal". Its fields match the
 	// canonical StopDetails exactly, so it deserializes straight into it.
 	StopDetails *StopDetails   `json:"stop_details"`
 	Usage       anthropicUsage `json:"usage"`
+	// Container is the server-side execution container the response used. Its
+	// fields match the canonical ResponseContainer exactly, so it deserializes
+	// straight into it; nil when absent or null.
+	Container *ResponseContainer `json:"container"`
+}
+
+// anthropicResponseBlock is a response-side content block: the known fields
+// decoded into anthropicContentBlock, plus the verbatim JSON of the whole
+// block. Keeping the original bytes is what lets unmodelled blocks (server
+// tool results, future types) and text-block citations survive into
+// Message.ExtraBlocks without a lossy decode/re-encode round trip.
+type anthropicResponseBlock struct {
+	anthropicContentBlock
+	// Citations, when present, holds the raw citation annotations of a text
+	// block. This wrapper does not interpret them — the field only signals
+	// that the original block carries more than the extracted text.
+	Citations json.RawMessage `json:"citations,omitempty"`
+
+	// Content shadows the embedded block's request-side ResultContent (also
+	// tagged "content", but a string). Response-side "content" is polymorphic
+	// — server-tool result blocks carry an array, code-execution results an
+	// object — so decoding it as a string would fail the whole response
+	// instead of preserving the block. Shallower fields win in encoding/json,
+	// so this one takes the value and ResultContent stays request-only.
+	Content json.RawMessage `json:"content,omitempty"`
+
+	raw json.RawMessage
+}
+
+// UnmarshalJSON decodes the known fields and retains the original bytes.
+func (b *anthropicResponseBlock) UnmarshalJSON(data []byte) error {
+	// alias drops the method set, so decoding it does not recurse.
+	type alias anthropicResponseBlock
+
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+
+	*b = anthropicResponseBlock(a)
+	b.raw = append(json.RawMessage(nil), data...)
+
+	return nil
 }
 
 type anthropicUsage struct {
@@ -143,6 +228,28 @@ type anthropicUsage struct {
 	// CacheCreation breaks CacheCreationInputTokens down by TTL. Anthropic
 	// returns it when 1-hour caching or mixed TTLs are in play; nil otherwise.
 	CacheCreation *anthropicCacheCreation `json:"cache_creation,omitempty"`
+	// OutputTokensDetails breaks the output tokens down; its thinking_tokens
+	// is Anthropic's source for the canonical Usage.ReasoningTokens.
+	OutputTokensDetails *anthropicOutputTokensDetails `json:"output_tokens_details,omitempty"`
+	// ServerToolUse counts the server-side tool invocations billed with this
+	// request; nil when no server tool ran.
+	ServerToolUse *anthropicServerToolUse `json:"server_tool_use,omitempty"`
+	// InferenceGeo reports the geography inference ran in (e.g. "us").
+	InferenceGeo string `json:"inference_geo,omitempty"`
+	// ServiceTier reports the tier that served the request.
+	ServiceTier string `json:"service_tier,omitempty"`
+}
+
+// anthropicOutputTokensDetails is the per-category breakdown of output tokens.
+type anthropicOutputTokensDetails struct {
+	ThinkingTokens int `json:"thinking_tokens"`
+}
+
+// anthropicServerToolUse counts server-side tool invocations. Its fields match
+// the canonical ServerToolUse exactly.
+type anthropicServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests"`
+	WebFetchRequests  int `json:"web_fetch_requests"`
 }
 
 // anthropicCacheCreation is the per-TTL breakdown of cache writes; the two
@@ -175,9 +282,11 @@ type anthropicMessageStart struct {
 }
 
 type anthropicContentBlockStart struct {
-	Type         string                `json:"type"`
-	Index        int                   `json:"index"`
-	ContentBlock anthropicContentBlock `json:"content_block"`
+	Type  string `json:"type"`
+	Index int    `json:"index"`
+	// ContentBlock retains its raw JSON so an unrecognized block can be
+	// preserved verbatim on Message.ExtraBlocks.
+	ContentBlock anthropicResponseBlock `json:"content_block"`
 }
 
 type anthropicContentBlockDelta struct {
@@ -191,6 +300,25 @@ type anthropicDelta struct {
 	Text        string `json:"text,omitempty"`
 	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
+
+	// raw is the verbatim delta sub-object, kept for the same reason as
+	// anthropicResponseBlock.raw.
+	raw json.RawMessage
+}
+
+// UnmarshalJSON decodes the known fields and retains the original bytes.
+func (d *anthropicDelta) UnmarshalJSON(data []byte) error {
+	type alias anthropicDelta
+
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+
+	*d = anthropicDelta(a)
+	d.raw = append(json.RawMessage(nil), data...)
+
+	return nil
 }
 
 type anthropicMessageDelta struct {
@@ -210,11 +338,13 @@ type anthropicMessageDeltaData struct {
 // toAnthropicRequest converts a ChatRequest to an Anthropic API request.
 func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	ar := &anthropicRequest{
-		Model:       req.Model,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		TopK:        req.TopK,
-		Stream:      req.Stream,
+		Model:        req.Model,
+		Temperature:  req.Temperature,
+		TopP:         req.TopP,
+		TopK:         req.TopK,
+		Stream:       req.Stream,
+		Container:    req.Container,
+		InferenceGeo: req.InferenceGeo,
 	}
 
 	// MaxTokens: Anthropic always uses max_tokens. Prefer the newer
@@ -348,10 +478,24 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// including the flagged one.
 	for _, t := range req.Tools {
 		at := anthropicTool{
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			InputSchema: t.Function.Parameters,
+			Name:                t.Function.Name,
+			Description:         t.Function.Description,
+			InputSchema:         t.Function.Parameters,
+			Strict:              t.Strict,
+			DeferLoading:        t.DeferLoading,
+			AllowedCallers:      t.AllowedCallers,
+			EagerInputStreaming: t.EagerInputStreaming,
+			InputExamples:       t.InputExamples,
 		}
+
+		// "function" is OpenAI's only tool kind and the canonical default, so
+		// it maps to Anthropic's default custom tool — omitted rather than
+		// sent as a bogus type. Any other value (a versioned built-in tool)
+		// passes through unvalidated.
+		if t.Type != "" && t.Type != "function" {
+			at.Type = t.Type
+		}
+
 		if t.CacheBreakpoint {
 			at.CacheControl = ephemeralCache()
 		}
@@ -379,9 +523,12 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// Pass through thinking configuration.
 	ar.Thinking = req.Thinking
 
-	// Map the canonical reasoning effort to Anthropic's top-level effort
-	// field (supersedes thinking.budget_tokens). Empty stays omitted.
-	ar.Effort = req.ReasoningEffort
+	// Output configuration: the canonical reasoning effort and a JSON-schema
+	// response format both live under output_config. The deprecated top-level
+	// effort field is deliberately left unset so only one of the two is sent.
+	if oc := toAnthropicOutputConfig(req); oc != nil {
+		ar.OutputConfig = oc
+	}
 
 	// Automatic caching: a single request-root cache_control. The server
 	// caches the last cacheable block and advances the breakpoint as the
@@ -391,6 +538,49 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	}
 
 	return ar, nil
+}
+
+// toAnthropicOutputConfig builds the output_config object from the canonical
+// reasoning effort and response format. Either half may be absent; when both
+// are, it returns nil so the field is omitted entirely.
+func toAnthropicOutputConfig(req *ChatRequest) *anthropicOutputConfig {
+	format := toAnthropicOutputFormat(req.ResponseFormat)
+	if req.ReasoningEffort == "" && format == nil {
+		return nil
+	}
+
+	return &anthropicOutputConfig{
+		Effort: req.ReasoningEffort,
+		Format: format,
+	}
+}
+
+// toAnthropicOutputFormat translates a canonical ResponseFormat into
+// Anthropic's structured-output format. Only JSON-schema shapes are
+// recognized: OpenAI's {type:"json_schema", json_schema:{schema:…}} and the
+// flat {type:"json_schema", schema:…}. Anything else — including
+// {type:"json_object"}, which has no Anthropic counterpart — yields nil rather
+// than a fabricated config, keeping this a thin translation.
+func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
+	m, ok := rf.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	if t, _ := m["type"].(string); t != "json_schema" {
+		return nil
+	}
+
+	schema := m["schema"]
+	if nested, ok := m["json_schema"].(map[string]any); ok {
+		schema = nested["schema"]
+	}
+
+	if schema == nil {
+		return nil
+	}
+
+	return &anthropicOutputFormat{Type: "json_schema", Schema: schema}
 }
 
 // toolResultBlock builds a single tool_result content block from a canonical
@@ -605,6 +795,14 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 			thinkingParts = append(thinkingParts, block.Thinking)
 		case "text":
 			textParts = append(textParts, block.Text)
+
+			// A text block may carry citation annotations this wrapper does
+			// not promote to the canonical layer. The text is still extracted
+			// above; keep the whole original block so the annotations remain
+			// reachable.
+			if len(block.Citations) > 0 {
+				msg.ExtraBlocks = append(msg.ExtraBlocks, block.raw)
+			}
 		case "tool_use":
 			msg.ToolCalls = append(msg.ToolCalls, ToolCall{
 				Index: len(msg.ToolCalls),
@@ -615,6 +813,12 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 					Arguments: string(block.Input),
 				},
 			})
+		default:
+			// Server-tool blocks (server_tool_use, web_search_tool_result,
+			// code_execution_tool_result, …) and any block type added after
+			// this wrapper was written. Preserve the original JSON instead of
+			// dropping it silently.
+			msg.ExtraBlocks = append(msg.ExtraBlocks, block.raw)
 		}
 	}
 
@@ -638,7 +842,8 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 				StopDetails:  ar.StopDetails,
 			},
 		},
-		Usage: anthropicCanonicalUsage(&ar.Usage),
+		Usage:     anthropicCanonicalUsage(&ar.Usage),
+		Container: ar.Container,
 	}
 }
 
@@ -652,6 +857,8 @@ func anthropicCanonicalUsage(u *anthropicUsage) Usage {
 		TotalTokens:      u.totalInputTokens() + u.OutputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,
+		InferenceGeo:     u.InferenceGeo,
+		ServiceTier:      u.ServiceTier,
 	}
 
 	if u.CacheCreation != nil {
@@ -659,7 +866,61 @@ func anthropicCanonicalUsage(u *anthropicUsage) Usage {
 		cu.CacheWrite1hTokens = u.CacheCreation.Ephemeral1hInputTokens
 	}
 
+	if u.OutputTokensDetails != nil {
+		cu.ReasoningTokens = u.OutputTokensDetails.ThinkingTokens
+	}
+
+	if u.ServerToolUse != nil {
+		cu.ServerToolUse = &ServerToolUse{
+			WebSearchRequests: u.ServerToolUse.WebSearchRequests,
+			WebFetchRequests:  u.ServerToolUse.WebFetchRequests,
+		}
+	}
+
 	return cu
+}
+
+// mergeAnthropicUsage folds a later usage object (the terminal message_delta)
+// into the baseline captured at message_start. Only fields the later object
+// actually carries are applied — a terminal event that reports just
+// output_tokens must not blank out the input, cache, geo, tier or server-tool
+// information already established.
+func mergeAnthropicUsage(base, next *anthropicUsage) {
+	if next.InputTokens != 0 {
+		base.InputTokens = next.InputTokens
+	}
+
+	if next.OutputTokens != 0 {
+		base.OutputTokens = next.OutputTokens
+	}
+
+	if next.CacheCreationInputTokens != 0 {
+		base.CacheCreationInputTokens = next.CacheCreationInputTokens
+	}
+
+	if next.CacheReadInputTokens != 0 {
+		base.CacheReadInputTokens = next.CacheReadInputTokens
+	}
+
+	if next.CacheCreation != nil {
+		base.CacheCreation = next.CacheCreation
+	}
+
+	if next.OutputTokensDetails != nil {
+		base.OutputTokensDetails = next.OutputTokensDetails
+	}
+
+	if next.ServerToolUse != nil {
+		base.ServerToolUse = next.ServerToolUse
+	}
+
+	if next.InferenceGeo != "" {
+		base.InferenceGeo = next.InferenceGeo
+	}
+
+	if next.ServiceTier != "" {
+		base.ServiceTier = next.ServiceTier
+	}
 }
 
 // parseDataURI parses a data URI (e.g. "data:image/jpeg;base64,/9j...")

@@ -23,6 +23,24 @@ import (
 	"testing"
 )
 
+// responseBlocks wraps hand-built content blocks as response blocks, filling
+// in the raw JSON the way a real decode would. Fixtures that need exact
+// original bytes (unknown blocks, citations) decode real JSON instead.
+func responseBlocks(blocks []anthropicContentBlock) []anthropicResponseBlock {
+	out := make([]anthropicResponseBlock, 0, len(blocks))
+
+	for _, b := range blocks {
+		raw, err := json.Marshal(b)
+		if err != nil {
+			panic(err)
+		}
+
+		out = append(out, anthropicResponseBlock{anthropicContentBlock: b, raw: raw})
+	}
+
+	return out
+}
+
 func TestToAnthropicRequestBasic(t *testing.T) {
 	req := &ChatRequest{
 		Model: ModelAnthropicClaude4Sonnet,
@@ -483,9 +501,9 @@ func TestFromAnthropicResponseText(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_123",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: []anthropicContentBlock{
+		Content: responseBlocks([]anthropicContentBlock{
 			{Type: "text", Text: "Hello!"},
-		},
+		}),
 		StopReason: "end_turn",
 		Usage: anthropicUsage{
 			InputTokens:  10,
@@ -522,7 +540,7 @@ func TestFromAnthropicResponseToolUse(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_456",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: []anthropicContentBlock{
+		Content: responseBlocks([]anthropicContentBlock{
 			{Type: "text", Text: "Let me check the weather."},
 			{
 				Type:  "tool_use",
@@ -530,7 +548,7 @@ func TestFromAnthropicResponseToolUse(t *testing.T) {
 				Name:  "get_weather",
 				Input: json.RawMessage(`{"city":"NYC"}`),
 			},
-		},
+		}),
 		StopReason: "tool_use",
 		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 30},
 	}
@@ -823,18 +841,23 @@ func TestToAnthropicRequestEffort(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	if ar.Effort != ReasoningEffortHigh {
-		t.Errorf("effort = %q, want %q", ar.Effort, ReasoningEffortHigh)
+	if ar.OutputConfig == nil || ar.OutputConfig.Effort != ReasoningEffortHigh {
+		t.Errorf("output_config = %+v, want effort %q", ar.OutputConfig, ReasoningEffortHigh)
 	}
 
-	// Effort must survive marshalling as a top-level "effort" field.
+	// The deprecated top-level effort must not be sent alongside it.
+	if ar.Effort != "" {
+		t.Errorf("top-level effort = %q, want empty", ar.Effort)
+	}
+
+	// Effort must survive marshalling inside "output_config".
 	data, err := json.Marshal(ar)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	if !strings.Contains(string(data), `"effort":"high"`) {
-		t.Errorf("marshalled request missing effort: %s", data)
+	if !strings.Contains(string(data), `"output_config":{"effort":"high"}`) {
+		t.Errorf("marshalled request missing output_config effort: %s", data)
 	}
 }
 
@@ -920,8 +943,8 @@ func TestToAnthropicRequestThinkingAdaptive(t *testing.T) {
 		t.Errorf("budget_tokens = %d, want 0 for adaptive", ar.Thinking.BudgetTokens)
 	}
 
-	if ar.Effort != ReasoningEffortMedium {
-		t.Errorf("effort = %q, want %q", ar.Effort, ReasoningEffortMedium)
+	if ar.OutputConfig == nil || ar.OutputConfig.Effort != ReasoningEffortMedium {
+		t.Errorf("output_config = %+v, want effort %q", ar.OutputConfig, ReasoningEffortMedium)
 	}
 }
 
@@ -929,11 +952,11 @@ func TestFromAnthropicResponseThinking(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_think",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: []anthropicContentBlock{
+		Content: responseBlocks([]anthropicContentBlock{
 			{Type: "thinking", Thinking: "Let me analyze this step by step."},
 			{Type: "thinking", Thinking: "The answer involves calculus."},
 			{Type: "text", Text: "The answer is 42."},
-		},
+		}),
 		StopReason: "end_turn",
 		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 50},
 	}
@@ -1084,9 +1107,9 @@ func TestFromAnthropicResponseRefusalStopDetails(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_refusal",
 		Model: ModelAnthropicClaude4Opus,
-		Content: []anthropicContentBlock{
+		Content: responseBlocks([]anthropicContentBlock{
 			{Type: "text", Text: "I can't help with that."},
-		},
+		}),
 		StopReason: "refusal",
 		StopDetails: &StopDetails{
 			Type:        "refusal",
@@ -1119,7 +1142,7 @@ func TestFromAnthropicResponseNoStopDetails(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:         "msg_plain",
 		Model:      ModelAnthropicClaude4Sonnet,
-		Content:    []anthropicContentBlock{{Type: "text", Text: "hi"}},
+		Content:    responseBlocks([]anthropicContentBlock{{Type: "text", Text: "hi"}}),
 		StopReason: "end_turn",
 	}
 
@@ -1209,9 +1232,9 @@ func TestFromAnthropicResponseCacheTokens(t *testing.T) {
 	ar := &anthropicResponse{
 		ID:    "msg_cache",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: []anthropicContentBlock{
+		Content: responseBlocks([]anthropicContentBlock{
 			{Type: "text", Text: "Cached response."},
-		},
+		}),
 		StopReason: "end_turn",
 		Usage: anthropicUsage{
 			InputTokens:              10,

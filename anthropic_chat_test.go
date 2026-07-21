@@ -72,9 +72,9 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(anthropicResponse{
 			ID:    "msg_test",
 			Model: ModelAnthropicClaude4Sonnet,
-			Content: []anthropicContentBlock{
+			Content: responseBlocks([]anthropicContentBlock{
 				{Type: "text", Text: "Hello!"},
-			},
+			}),
 			StopReason: "end_turn",
 			Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5},
 		})
@@ -236,6 +236,108 @@ func TestSetAnthropicHeaders(t *testing.T) {
 				t.Errorf("anthropic-beta header should be absent, got %q", req.Header.Get("anthropic-beta"))
 			}
 		})
+	}
+}
+
+// TestSetAnthropicHeadersUserProfileID verifies the profile header is sent
+// only when configured with a non-empty value, and that it does not disturb
+// the version / beta headers.
+func TestSetAnthropicHeadersUserProfileID(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        []Option
+		wantProfile string // "" means the header must be absent
+	}{
+		{
+			name: "unset",
+		},
+		{
+			name:        "set",
+			opts:        []Option{WithAnthropicUserProfileID("user_abc123")},
+			wantProfile: "user_abc123",
+		},
+		{
+			name: "empty string is ignored",
+			opts: []Option{WithAnthropicUserProfileID("")},
+		},
+		{
+			name:        "coexists with beta and version",
+			opts:        []Option{WithAnthropicUserProfileID("user_abc123"), WithAnthropicBeta("fast-mode"), WithAnthropicVersion("2099-01-01")},
+			wantProfile: "user_abc123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := append([]Option{WithAPIKey("sk-ant-test"), WithProtocol(ProtocolAnthropic)}, tt.opts...)
+
+			c, err := NewClient(opts...)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+
+			req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+
+			c.setAnthropicHeaders(req)
+
+			_, present := req.Header["Anthropic-User-Profile-Id"]
+
+			if tt.wantProfile == "" {
+				if present {
+					t.Errorf("anthropic-user-profile-id should be absent, got %q", req.Header.Get("anthropic-user-profile-id"))
+				}
+
+				return
+			}
+
+			if got := req.Header.Get("anthropic-user-profile-id"); got != tt.wantProfile {
+				t.Errorf("anthropic-user-profile-id = %q, want %q", got, tt.wantProfile)
+			}
+		})
+	}
+}
+
+// TestSetAnthropicHeadersUserProfileIDOverWire verifies the header reaches an
+// observable HTTP server on a real Anthropic request.
+func TestSetAnthropicHeadersUserProfileIDOverWire(t *testing.T) {
+	var gotProfile, gotVersion string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotProfile = r.Header.Get("anthropic-user-profile-id")
+		gotVersion = r.Header.Get("anthropic-version")
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","model":"claude-sonnet-4","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(
+		WithAPIKey("sk-ant-test"),
+		WithProtocol(ProtocolAnthropic),
+		WithBaseURL(srv.URL),
+		WithAnthropicUserProfileID("user_abc123"),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    ModelAnthropicClaude4Sonnet,
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	if gotProfile != "user_abc123" {
+		t.Errorf("anthropic-user-profile-id = %q, want user_abc123", gotProfile)
+	}
+
+	if gotVersion != anthropicAPIVersion {
+		t.Errorf("anthropic-version = %q, want %q", gotVersion, anthropicAPIVersion)
 	}
 }
 

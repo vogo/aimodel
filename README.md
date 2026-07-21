@@ -88,7 +88,24 @@ All optional and `omitempty`, mapping one-to-one to OpenAI's Chat Completions pa
 - `PromptCacheKey string` → `prompt_cache_key`: route requests sharing a prefix to the same cache to improve hit rates.
 - `AutoCache bool` + `AutoCacheTTL string` (Anthropic only; both struct-local, never on the OpenAI wire): enable Anthropic's *automatic caching* — a single request-root `cache_control` (`{type:"ephemeral"}`, or with `ttl` `"1h"`; empty TTL keeps the default 5-minute cache). The server caches the last cacheable block and advances the breakpoint forward as the conversation grows, no per-block markers needed. It coexists with the explicit per-block `Message.CacheBreakpoint` / `Tool.CacheBreakpoint` flags. OpenAI-compatible backends ignore it.
 
-`clone()` deep-copies the `LogitBias` and `Metadata` maps, so mutating a cloned request never affects the original.
+- `Container string` → `container` (Anthropic): reuse a server-side execution container across requests, keeping its code-execution state alive. Pass back the ID from a previous `ChatResponse.Container` / `StreamChunk.Container`.
+- `InferenceGeo string` → `inference_geo` (Anthropic): pin the inference geography for data residency (e.g. `"us"` / `"eu"`); plain `string` for pass-through.
+
+`ReasoningEffort` and a JSON-schema `ResponseFormat` are both translated into Anthropic's `output_config` (see [Anthropic translation](#anthropic-translation)).
+
+`clone()` deep-copies the `LogitBias` and `Metadata` maps and each tool's `AllowedCallers` / `InputExamples` slices, so mutating a cloned request never affects the original.
+
+#### Tool definition fields
+
+Beyond `Type` / `Function` / `CacheBreakpoint`, `Tool` carries the Anthropic tool-definition extensions (all `omitempty`, copied verbatim into the Anthropic tool object):
+
+- `Strict *bool` → `strict`: guarantee the tool input validates exactly against the declared schema.
+- `DeferLoading *bool` → `defer_loading`: keep this tool's schema out of the initial context for on-demand discovery by tool search. At least one tool must stay loaded.
+- `AllowedCallers []string` → `allowed_callers`: restrict who may invoke the tool, e.g. `["code_execution_20260120"]` for programmatic tool calling.
+- `EagerInputStreaming *bool` → `eager_input_streaming`: stream this tool's input as partial JSON instead of buffering it.
+- `InputExamples []any` → `input_examples`: sample inputs demonstrating a complex schema.
+
+`Tool.Type` doubles as the Anthropic tool type. OpenAI's `"function"` (and empty) means Anthropic's default *custom* tool and is not sent; any other value — a versioned built-in such as `"web_search_20260209"` or `"code_execution_20260521"` — passes through verbatim. This wrapper neither enumerates nor validates those type names.
 
 When `Logprobs` is `true`, each `ChatResponse.Choices[i].LogProbs` (a `*LogProbs`) carries the parsed `content` / `refusal` token log probabilities, each token exposing `Logprob`, `Bytes`, and `TopLogprobs`.
 
@@ -115,9 +132,13 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 - `PromptTokens` / `CompletionTokens` / `TotalTokens` → the OpenAI-compatible top-level counts.
 - `CacheReadTokens` → cache-hit prompt tokens, parsed from OpenAI's nested `prompt_tokens_details.cached_tokens` (an explicit top-level `cache_read_tokens` takes precedence).
 - `CacheWriteTokens` → prompt-cache write tokens (Anthropic's `cache_creation_input_tokens`, total). `CacheWrite5mTokens` / `CacheWrite1hTokens` break it down by TTL (Anthropic's `usage.cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`, summing to `CacheWriteTokens`). Cache read/write tokens are subsets of `PromptTokens`, surfaced separately for observability; OpenAI leaves them at 0.
-- `ReasoningTokens` → tokens spent on a reasoning model's internal thinking, parsed from OpenAI's nested `completion_tokens_details.reasoning_tokens` (an explicit top-level `reasoning_tokens` takes precedence).
+- `ReasoningTokens` → tokens spent on a reasoning model's internal thinking, parsed from OpenAI's nested `completion_tokens_details.reasoning_tokens` and Anthropic's `usage.output_tokens_details.thinking_tokens` (an explicit top-level `reasoning_tokens` takes precedence over either).
+- `ServerToolUse *ServerToolUse` → server-side tool invocations billed with the request (Anthropic's `usage.server_tool_use`), carrying `WebSearchRequests` / `WebFetchRequests`; `nil` when no server tool ran, and each zero count is omitted from JSON.
+- `InferenceGeo string` / `ServiceTier string` → where inference ran and which tier served it (Anthropic's `usage.inference_geo` / `usage.service_tier`).
 
-`Usage.Add` accumulates all of the above, which is handy when aggregating multi-turn or multi-call usage.
+`Usage.Add` accumulates all the counts above, including `ServerToolUse`. `InferenceGeo` and `ServiceTier` describe a single request, so `Add` leaves them untouched.
+
+`ChatResponse.Container` (and `StreamChunk.Container`, reported once on the chunk carrying the `message_start` information) exposes the server-side execution container as `ResponseContainer{ID, ExpiresAt}`; `ExpiresAt` stays the server-supplied string and this wrapper neither parses the expiry nor renews the container. Feed `ID` back via `ChatRequest.Container` to reuse it.
 
 `ChatResponse.Choices[i].FinishReason` mirrors OpenAI's `finish_reason`: `stop`, `length`, `tool_calls`, `content_filter`, and the legacy `function_call`. Anthropic also emits stop reasons with no OpenAI canonical equivalent; these pass through verbatim and are named for readability: `model_context_window_exceeded` (input + output exceeded the model's context window — distinct from `length`), `refusal` (streaming classifiers intervened on a policy violation), and `pause_turn` (a long-running/server-tool turn was paused and may be replayed to continue).
 
@@ -211,6 +232,11 @@ The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocol
 
 **Parallel tool results**: Anthropic requires all `tool_result` blocks for one assistant turn's parallel `tool_use` to land in a **single** `role:"user"` message right after the turn. A run of consecutive canonical `RoleTool` messages is therefore merged into one `role:"user"` message (content array = all `tool_result` blocks in original order); a lone or non-consecutive tool result keeps its own one-element `user` message. The merge is driven purely by adjacency in the input array — no `tool_use` id pairing/sorting is attempted.
 
+<a id="anthropic-translation"></a>
+**Output configuration**: `ReasoningEffort` maps to `output_config.effort` (`low`/`medium`/`high`/`xhigh`/`max`) and a JSON-schema `ResponseFormat` maps to `output_config.format` (`{type:"json_schema", schema:…}`). Both OpenAI's nested `{type:"json_schema", json_schema:{schema:…}}` and the flat `{type:"json_schema", schema:…}` are recognized; the schema itself is passed through untouched — no validation, no rewriting. A format with no extractable JSON schema (e.g. `{type:"json_object"}`) yields no `output_config.format` rather than a fabricated one. When both parts are empty the whole field is omitted. The former top-level `effort` parameter is deprecated and no longer emitted, so only one of the two is ever sent.
+
+**Unrecognized content blocks**: response content blocks this wrapper does not model — `server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, and anything added after this release — are preserved verbatim on `Message.ExtraBlocks` (`[]json.RawMessage`, `json:"-"`, runtime-only) instead of being dropped. A `text` block that carries `citations` still contributes its text to `Content` *and* keeps its whole original block there, so the annotations remain reachable without this wrapper interpreting them. In streaming, an unrecognized `content_block_start` contributes its original `content_block`, and each subsequent unrecognized `content_block_delta` its original `delta`, as separate elements in arrival order; `Message.AppendDelta` appends them without parsing or merging, so callers reassemble them as they see fit.
+
 ### Client Options
 
 ```go
@@ -233,10 +259,13 @@ client, _ := aimodel.NewClient(
     aimodel.WithAnthropicBeta("context-1m-2025-08-07"),
     // Override the "anthropic-version" header (default "2023-06-01").
     aimodel.WithAnthropicVersion("2023-06-01"),
+    // Associate requests with an end-user profile via
+    // the "anthropic-user-profile-id" header.
+    aimodel.WithAnthropicUserProfileID("user_abc123"),
 )
 ```
 
-`WithAnthropicBeta` ignores empty strings and, with no value configured, the `anthropic-beta` header is omitted entirely (default behavior). `WithAnthropicVersion("")` keeps the default version. These are the infrastructure for enabling beta features (compaction, context-editing, structured-outputs, fast-mode, advisor, …).
+`WithAnthropicBeta` ignores empty strings and, with no value configured, the `anthropic-beta` header is omitted entirely (default behavior). `WithAnthropicVersion("")` keeps the default version. `WithAnthropicUserProfileID("")` leaves the header unset (default). These are the infrastructure for enabling beta features (compaction, context-editing, structured-outputs, fast-mode, advisor, …).
 
 ### Multi-Model Compose
 

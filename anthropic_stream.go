@@ -50,6 +50,11 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 		// but AppendDelta expects indices scoped to tool calls only.
 		blockToTool = make(map[int]int)
 		nextToolIdx int
+
+		// unknownBlocks records the indices whose content_block_start carried
+		// a type this wrapper does not model, so their subsequent deltas are
+		// preserved verbatim instead of being interpreted or dropped.
+		unknownBlocks = make(map[int]bool)
 	)
 
 	return func() (*StreamChunk, error) {
@@ -101,6 +106,18 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 				model = ms.Message.Model
 				startUsage = ms.Message.Usage
 
+				// Surface the execution container as soon as it is known.
+				// Waiting for a text delta would lose it on streams that only
+				// produce tool events or end immediately, and the caller needs
+				// the ID to reuse the container on the next turn.
+				if ms.Message.Container != nil {
+					return &StreamChunk{
+						ID:        msgID,
+						Model:     model,
+						Container: ms.Message.Container,
+					}, nil
+				}
+
 				continue
 
 			case "content_block_start":
@@ -137,11 +154,27 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 							},
 						},
 					}, nil
-				case "thinking":
+				case "text", "thinking":
 					continue
-				}
+				default:
+					// Unmodelled block (server_tool_use, a tool result, a
+					// future type). Emit its original JSON and remember the
+					// index so its deltas are preserved too.
+					unknownBlocks[cbs.Index] = true
 
-				continue
+					return &StreamChunk{
+						ID:    msgID,
+						Model: model,
+						Choices: []StreamChunkChoice{
+							{
+								Index: 0,
+								Delta: Message{
+									ExtraBlocks: []json.RawMessage{cbs.ContentBlock.raw},
+								},
+							},
+						},
+					}, nil
+				}
 
 			case "content_block_delta":
 				var cbd anthropicContentBlockDelta
@@ -152,6 +185,22 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 				chunk := &StreamChunk{
 					ID:    msgID,
 					Model: model,
+				}
+
+				// A delta belonging to an unrecognized block carries no
+				// meaning this wrapper can assign, whatever its own type is —
+				// keep it verbatim alongside the block start.
+				if unknownBlocks[cbd.Index] {
+					chunk.Choices = []StreamChunkChoice{
+						{
+							Index: 0,
+							Delta: Message{
+								ExtraBlocks: []json.RawMessage{cbd.Delta.raw},
+							},
+						},
+					}
+
+					return chunk, nil
 				}
 
 				switch cbd.Delta.Type {
@@ -197,7 +246,16 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 						},
 					}
 				default:
-					continue
+					// A delta type added after this wrapper was written, on a
+					// block it does know. Preserve it rather than drop it.
+					chunk.Choices = []StreamChunkChoice{
+						{
+							Index: 0,
+							Delta: Message{
+								ExtraBlocks: []json.RawMessage{cbd.Delta.raw},
+							},
+						},
+					}
 				}
 
 				return chunk, nil
@@ -223,9 +281,11 @@ func anthropicRecvFunc(sc *bufio.Scanner) func() (*StreamChunk, error) {
 				}
 
 				if md.Usage != nil {
-					// Input/cache counts come from message_start; the final
-					// output_tokens arrives here on message_delta.
-					startUsage.OutputTokens = md.Usage.OutputTokens
+					// message_start established the input/cache counts and the
+					// geo / tier / server-tool information; the terminal event
+					// typically carries only output_tokens. Merge instead of
+					// replacing so the baseline survives.
+					mergeAnthropicUsage(&startUsage, md.Usage)
 					u := anthropicCanonicalUsage(&startUsage)
 					chunk.Usage = &u
 				}
