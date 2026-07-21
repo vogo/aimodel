@@ -3,7 +3,7 @@
 How the canonical request expresses prompt-cache intent across protocols, and how cache accounting comes back.
 
 - **Canonical fields**: `schema.go` (`Message.CacheBreakpoint`, `Tool.CacheBreakpoint`, `ChatRequest.AutoCache` / `AutoCacheTTL`)
-- **Anthropic wire mapping**: [../anthropic/anthropic-chat-api.md](../anthropic/anthropic-chat-api.md) §3.7
+- **Anthropic wire mapping**: [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §3.7
 
 ---
 

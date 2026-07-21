@@ -20,7 +20,7 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 | Prompt caching | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) |
 | Error model | [doc/design/errors.md](./doc/design/errors.md) |
 | Multi-model composition | [doc/design/compose.md](./doc/design/compose.md) |
-| Anthropic wire mapping | [doc/anthropic/anthropic-chat-api.md](./doc/anthropic/anthropic-chat-api.md) |
+| Anthropic wire mapping | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 | OpenAI wire mapping | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
 
 Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
@@ -169,7 +169,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocols — routing is handled internally, and the canonical types stay OpenAI-shaped either way.
 
-Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-chat-api.md](./doc/anthropic/anthropic-chat-api.md).
+Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md).
 
 ### Client Options
 

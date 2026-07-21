@@ -5,7 +5,7 @@ This file is the **index** of aimodel's sync status against the official API pro
 | Protocol | Official docs | Change log | Implementation notes |
 |---|---|---|---|
 | OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [doc/openai/openai-api-changes.md](./doc/openai/openai-api-changes.md) | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [doc/anthropic/anthropic-api-changes.md](./doc/anthropic/anthropic-api-changes.md) | [doc/anthropic/anthropic-chat-api.md](./doc/anthropic/anthropic-chat-api.md) |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [doc/anthropic/anthropic-api-changes.md](./doc/anthropic/anthropic-api-changes.md) | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 
 Each protocol's change log is ordered newest-first, and every entry records at least: the date, the official change, and the wrapper change summary.
 

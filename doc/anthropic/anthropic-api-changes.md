@@ -4,7 +4,7 @@ This file records **how aimodel's Anthropic wrapper tracks the official Messages
 
 - **Official protocol**: Anthropic Messages API (`POST /v1/messages`)
 - **Official docs**: https://platform.claude.com/docs/en/api/messages
-- **Implementation notes**: [anthropic-chat-api.md](./anthropic-chat-api.md)
+- **Implementation notes**: [anthropic-message-api.md](./anthropic-message-api.md)
 - **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
 **Maintenance convention**: see [../api.md](../api.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.

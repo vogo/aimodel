@@ -3,7 +3,7 @@
 The canonical request/response types in `schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../api.md](../api.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
 
 - **Canonical types**: `schema.go`
-- **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-chat-api.md](../anthropic/anthropic-chat-api.md)
+- **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md)
 
 Pointer types (`*float64` / `*int` / `*bool`) exist to distinguish "unset" from "explicitly zero": `Temperature=0` differs from omitting temperature, and only an explicit `ParallelToolCalls=false` triggers Anthropic's `disable_parallel_tool_use`.
 

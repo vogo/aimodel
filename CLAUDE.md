@@ -44,7 +44,7 @@ go tool cover -func=coverage.out
 | Prompt caching (breakpoints, auto-cache, cache accounting) | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) | `schema.go`, `anthropic.go` |
 | Errors | [doc/design/errors.md](./doc/design/errors.md) | `errors.go` |
 | Multi-model dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
-| Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-chat-api.md](./doc/anthropic/anthropic-chat-api.md) | `anthropic*.go` |
+| Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `anthropic*.go` |
 | OpenAI path (zero-translation), SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `openai*.go` |
 
 ## Architecture at a glance

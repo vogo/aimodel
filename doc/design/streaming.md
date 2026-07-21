@@ -3,7 +3,7 @@
 The protocol-independent streaming abstraction, delta merging, unmodelled-block preservation, and stream interception.
 
 - **Implementation**: `stream.go`, `intercept.go`
-- **Per-protocol SSE parsing**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) §4.1 · [../anthropic/anthropic-chat-api.md](../anthropic/anthropic-chat-api.md) §5
+- **Per-protocol SSE parsing**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) §4.1 · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §5
 
 ---
 

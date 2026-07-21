@@ -12,7 +12,7 @@ This document covers the **cross-cutting architecture**: design scope, the canon
 | Prompt-cache modes and accounting | [design/prompt-caching.md](./design/prompt-caching.md) |
 | Sentinel errors, `APIError`, `MultiError` | [design/errors.md](./design/errors.md) |
 | Multi-model dispatch strategies and health tracking | [design/compose.md](./design/compose.md) |
-| Per-protocol wire mapping | [anthropic/anthropic-chat-api.md](./anthropic/anthropic-chat-api.md) · [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
+| Per-protocol wire mapping | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) · [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
 
 ---
 
