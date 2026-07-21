@@ -296,7 +296,7 @@ func TestChatRequestClone_ToolSlices(t *testing.T) {
 		},
 	}
 
-	c := orig.clone()
+	c := orig.Clone()
 
 	c.Tools[0].AllowedCallers[0] = "mutated"
 	c.Tools[0].AllowedCallers = append(c.Tools[0].AllowedCallers, "extra")
