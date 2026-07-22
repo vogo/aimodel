@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package anthropic_test
+package e2e_test
 
 import (
 	"context"
