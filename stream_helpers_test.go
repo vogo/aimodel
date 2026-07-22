@@ -20,14 +20,14 @@ package aimodel
 import (
 	"io"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/openai"
 )
 
 // newOpenAIStream builds a root Stream backed by the OpenAI provider's SSE
 // decoder, exercising the real decoder together with the Stream lifecycle.
 func newOpenAIStream(body io.ReadCloser) *Stream {
-	p, err := openai.New(core.Config{APIKey: "sk-test", BaseURL: "https://example.com"})
+	p, err := openai.New(ais.Config{APIKey: "sk-test", BaseURL: "https://example.com"})
 	if err != nil {
 		panic(err)
 	}

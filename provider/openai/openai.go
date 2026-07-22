@@ -31,7 +31,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // Name is the registered provider name and the default provider selected when
@@ -39,15 +39,15 @@ import (
 const Name = "openai"
 
 func init() {
-	core.Register(Name, New)
+	ais.Register(Name, New)
 }
 
 // New constructs an OpenAI-compatible provider. It requires a non-empty base
 // URL (OpenAI-compatible endpoints have no universal default) and accepts no
 // vendor options.
-func New(cfg core.Config) (core.ChatProvider, error) {
+func New(cfg ais.Config) (ais.ChatProvider, error) {
 	if cfg.BaseURL == "" {
-		return nil, core.ErrNoBaseURL
+		return nil, ais.ErrNoBaseURL
 	}
 
 	if cfg.Options != nil {
@@ -68,9 +68,9 @@ type provider struct {
 // NewChatRequest serializes the canonical request as the OpenAI wire body and
 // builds the HTTP request. On a streaming call it defaults stream_options to
 // include usage in the final chunk, unless the caller already set it.
-func (p *provider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*http.Request, error) {
+func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
 	if req.Stream && req.StreamOptions == nil {
-		req.StreamOptions = &core.StreamOptions{IncludeUsage: true}
+		req.StreamOptions = &ais.StreamOptions{IncludeUsage: true}
 	}
 
 	body, err := json.Marshal(req)
@@ -91,14 +91,14 @@ func (p *provider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*
 
 // ParseChatResponse decodes an OpenAI-shape completion. A body-level error
 // object becomes an APIError; a response with no choices is ErrEmptyResponse.
-func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error) {
-	var result core.ChatResponse
+func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
+	var result ais.ChatResponse
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("aimodel: decode response: %w", err)
 	}
 
 	if result.Error != nil {
-		return nil, &core.APIError{
+		return nil, &ais.APIError{
 			Code:    result.Error.Code,
 			Message: result.Error.Message,
 			Type:    result.Error.Type,
@@ -106,7 +106,7 @@ func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error)
 	}
 
 	if len(result.Choices) == 0 {
-		return nil, core.ErrEmptyResponse
+		return nil, ais.ErrEmptyResponse
 	}
 
 	return &result, nil
@@ -116,17 +116,17 @@ func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error)
 // falling back to the raw body when it carries no recognizable error object.
 func (p *provider) ParseErrorResponse(statusCode int, body []byte) error {
 	var errResp struct {
-		Error *core.Error `json:"error"`
+		Error *ais.Error `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == nil {
-		return &core.APIError{
+		return &ais.APIError{
 			StatusCode: statusCode,
 			Message:    string(body),
 		}
 	}
 
-	return &core.APIError{
+	return &ais.APIError{
 		StatusCode: statusCode,
 		Code:       errResp.Error.Code,
 		Message:    errResp.Error.Message,

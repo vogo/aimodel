@@ -33,7 +33,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // Name is the registered provider name. Select it via the root package's
@@ -41,7 +41,7 @@ import (
 const Name = "anthropic"
 
 func init() {
-	core.Register(Name, New)
+	ais.Register(Name, New)
 }
 
 // Options carries Anthropic-specific configuration. Pass it to the root
@@ -64,7 +64,7 @@ type Options struct {
 
 // New constructs an Anthropic provider. The base URL is optional (it defaults
 // to the public endpoint). cfg.Options, when set, must be Options.
-func New(cfg core.Config) (core.ChatProvider, error) {
+func New(cfg ais.Config) (ais.ChatProvider, error) {
 	p := &provider{
 		apiKey:  cfg.APIKey,
 		baseURL: cfg.BaseURL,
@@ -111,7 +111,7 @@ func (p *provider) endpoint() string {
 
 // NewChatRequest translates the canonical request into the Anthropic wire
 // shape and builds the HTTP request with the Anthropic auth/version headers.
-func (p *provider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*http.Request, error) {
+func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
 	ar, err := toAnthropicRequest(req)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (p *provider) setHeaders(req *http.Request) {
 
 // ParseChatResponse decodes an Anthropic message response and converts it to
 // the canonical ChatResponse.
-func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error) {
+func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
 	var result anthropicResponse
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("aimodel: decode response: %w", err)
@@ -156,7 +156,7 @@ func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error)
 
 	cr := fromAnthropicResponse(&result)
 	if len(cr.Choices) == 0 {
-		return nil, core.ErrEmptyResponse
+		return nil, ais.ErrEmptyResponse
 	}
 
 	return cr, nil
@@ -167,13 +167,13 @@ func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error)
 func (p *provider) ParseErrorResponse(statusCode int, body []byte) error {
 	var errResp anthropicErrorResponse
 	if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error.Message == "" {
-		return &core.APIError{
+		return &ais.APIError{
 			StatusCode: statusCode,
 			Message:    string(body),
 		}
 	}
 
-	return &core.APIError{
+	return &ais.APIError{
 		StatusCode: statusCode,
 		Type:       errResp.Error.Type,
 		Message:    errResp.Error.Message,

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package aimodel
+package ais
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ import (
 
 func TestChatRequestJSON(t *testing.T) {
 	req := &ChatRequest{
-		Model: ModelOpenaiGPT4o,
+		Model: "gpt-4o",
 		Messages: []Message{
 			{Role: RoleUser, Content: NewTextContent("Hello")},
 		},
@@ -43,7 +43,7 @@ func TestChatRequestJSON(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if decoded.Model != ModelOpenaiGPT4o {
+	if decoded.Model != "gpt-4o" {
 		t.Errorf("model = %q", decoded.Model)
 	}
 	if len(decoded.Messages) != 1 {
@@ -59,7 +59,7 @@ func TestChatRequestJSON(t *testing.T) {
 
 func TestChatRequestOmitsEmptyFields(t *testing.T) {
 	req := &ChatRequest{
-		Model: ModelOpenaiGPT4o,
+		Model: "gpt-4o",
 		Messages: []Message{
 			{Role: RoleUser, Content: NewTextContent("Hi")},
 		},
@@ -435,7 +435,7 @@ func TestMessageAppendDeltaThinking(t *testing.T) {
 
 func TestChatRequestReasoningEffort(t *testing.T) {
 	req := &ChatRequest{
-		Model: ModelOpenaiGPT4o,
+		Model: "gpt-4o",
 		Messages: []Message{
 			{Role: RoleUser, Content: NewTextContent("Hi")},
 		},
@@ -936,7 +936,7 @@ func TestMessageAudioOmittedWhenNil(t *testing.T) {
 
 func TestChatRequestCloneModalities(t *testing.T) {
 	orig := &ChatRequest{
-		Model:      ModelOpenaiGPT4o,
+		Model:      "gpt-4o",
 		Messages:   []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
 		Modalities: []string{"text", "audio"},
 	}

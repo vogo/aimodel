@@ -17,7 +17,11 @@
 
 package aimodel
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/vogo/aimodel/ais"
+)
 
 // InterceptStream installs onChunk and onDone callbacks on s without changing
 // the consumer-visible Stream API. onChunk fires for every non-nil chunk
@@ -26,7 +30,7 @@ import "sync"
 //
 // InterceptStream is additive: callers using Recv/Close see no behavior
 // change. The callbacks must be cheap and must not call Recv/Close on s.
-func InterceptStream(s *Stream, onChunk func(*StreamChunk), onDone func(err error)) *Stream {
+func InterceptStream(s *Stream, onChunk func(*ais.StreamChunk), onDone func(err error)) *Stream {
 	if s == nil {
 		if onDone != nil {
 			onDone(nil)
@@ -46,7 +50,7 @@ func InterceptStream(s *Stream, onChunk func(*StreamChunk), onDone func(err erro
 	}
 
 	inner := s.recv
-	s.recv = func() (*StreamChunk, error) {
+	s.recv = func() (*ais.StreamChunk, error) {
 		chunk, err := inner()
 		if chunk != nil && onChunk != nil {
 			onChunk(chunk)
@@ -60,7 +64,7 @@ func InterceptStream(s *Stream, onChunk func(*StreamChunk), onDone func(err erro
 	}
 
 	prevOnClose := s.onClose
-	s.onClose = func(u *Usage) {
+	s.onClose = func(u *ais.Usage) {
 		if prevOnClose != nil {
 			prevOnClose(u)
 		}

@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 )
 
@@ -63,9 +64,9 @@ func runOpenAICapture(t *testing.T, build func(url string) (*Client, error)) cap
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "gpt-4o",
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -112,7 +113,7 @@ func TestNewClientTrailingSlashTrimmed(t *testing.T) {
 func TestNewClientCustomTimeout(t *testing.T) {
 	c, err := NewClient(
 		WithAPIKey("sk-test"),
-		WithBaseURL("https://api.example.com/v1"),
+		WithBaseURL("https://ais.example.com/v1"),
 		WithTimeout(5*time.Minute),
 	)
 	if err != nil {
@@ -130,7 +131,7 @@ func TestNewClientTimeoutWithCustomHTTPClient(t *testing.T) {
 	// Timeout should apply regardless of option ordering.
 	c, err := NewClient(
 		WithAPIKey("sk-test"),
-		WithBaseURL("https://api.example.com/v1"),
+		WithBaseURL("https://ais.example.com/v1"),
 		WithTimeout(5*time.Minute),
 		WithHTTPClient(custom),
 	)
@@ -152,7 +153,7 @@ func TestNewClientCustomHTTPClient(t *testing.T) {
 
 	c, err := NewClient(
 		WithAPIKey("sk-test"),
-		WithBaseURL("https://api.example.com/v1"),
+		WithBaseURL("https://ais.example.com/v1"),
 		WithHTTPClient(custom),
 	)
 	if err != nil {
@@ -209,7 +210,7 @@ func TestNewClientAIEnvOverridesOpenAIEnv(t *testing.T) {
 		t.Setenv("AI_API_KEY", "sk-ai")
 		t.Setenv("AI_BASE_URL", url)
 		t.Setenv("OPENAI_API_KEY", "sk-openai")
-		t.Setenv("OPENAI_BASE_URL", "https://openai.api.com/v1")
+		t.Setenv("OPENAI_BASE_URL", "https://openai.ais.com/v1")
 
 		return NewClient()
 	})
@@ -226,7 +227,7 @@ func TestNewClientAIEnvOverridesOpenAIEnv(t *testing.T) {
 func TestNewClientOptionOverridesEnv(t *testing.T) {
 	got := runOpenAICapture(t, func(url string) (*Client, error) {
 		t.Setenv("AI_API_KEY", "sk-env")
-		t.Setenv("AI_BASE_URL", "https://env.api.com/v1")
+		t.Setenv("AI_BASE_URL", "https://env.ais.com/v1")
 
 		return NewClient(WithAPIKey("sk-option"), WithBaseURL(url))
 	})
@@ -245,9 +246,9 @@ func TestNewClientNoAPIKeyError(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	_, err := NewClient(WithBaseURL("https://api.example.com/v1"))
-	if !errors.Is(err, ErrNoAPIKey) {
-		t.Errorf("err = %v, want ErrNoAPIKey", err)
+	_, err := NewClient(WithBaseURL("https://ais.example.com/v1"))
+	if !errors.Is(err, ais.ErrNoAPIKey) {
+		t.Errorf("err = %v, want ais.ErrNoAPIKey", err)
 	}
 }
 
@@ -271,8 +272,8 @@ func TestNewClientNoBaseURLErrorForOpenAI(t *testing.T) {
 
 	// The OpenAI provider requires a base URL at construction time.
 	_, err := NewClient(WithAPIKey("sk-test"))
-	if !errors.Is(err, ErrNoBaseURL) {
-		t.Errorf("err = %v, want ErrNoBaseURL", err)
+	if !errors.Is(err, ais.ErrNoBaseURL) {
+		t.Errorf("err = %v, want ais.ErrNoBaseURL", err)
 	}
 }
 

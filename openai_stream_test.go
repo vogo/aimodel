@@ -22,6 +22,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/vogo/aimodel/ais"
 )
 
 func TestStreamRecvSingleChunk(t *testing.T) {
@@ -109,8 +111,8 @@ func TestStreamClose(t *testing.T) {
 	}
 
 	_, err := s.Recv()
-	if !errors.Is(err, ErrStreamClosed) {
-		t.Errorf("got %v, want ErrStreamClosed", err)
+	if !errors.Is(err, ais.ErrStreamClosed) {
+		t.Errorf("got %v, want ais.ErrStreamClosed", err)
 	}
 }
 
@@ -149,10 +151,10 @@ func TestStreamCloseIdempotent(t *testing.T) {
 		t.Fatalf("second Close: %v, want nil", err)
 	}
 
-	// Recv after close should return ErrStreamClosed.
+	// Recv after close should return ais.ErrStreamClosed.
 	_, err := s.Recv()
-	if !errors.Is(err, ErrStreamClosed) {
-		t.Errorf("got %v, want ErrStreamClosed", err)
+	if !errors.Is(err, ais.ErrStreamClosed) {
+		t.Errorf("got %v, want ais.ErrStreamClosed", err)
 	}
 }
 
@@ -166,9 +168,9 @@ func TestStreamAPIError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	var apiErr *APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *APIError, got %T", err)
+		t.Fatalf("expected *ais.APIError, got %T", err)
 	}
 	if apiErr.Code != "rate_limit_exceeded" {
 		t.Errorf("code = %q", apiErr.Code)
@@ -237,11 +239,11 @@ func TestStreamCloseOnCloseCallback(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	var callbackUsage *Usage
+	var callbackUsage *ais.Usage
 	var callbackCalled bool
 
 	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
-	s = WrapStream(s, func(u *Usage) {
+	s = WrapStream(s, func(u *ais.Usage) {
 		callbackCalled = true
 		callbackUsage = u
 	})
@@ -313,10 +315,10 @@ func TestStreamCloseOnCloseCallbackWithoutUsage(t *testing.T) {
 	body += "data: [DONE]\n\n"
 
 	var callbackCalled bool
-	var callbackUsage *Usage
+	var callbackUsage *ais.Usage
 
 	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
-	s = WrapStream(s, func(u *Usage) {
+	s = WrapStream(s, func(u *ais.Usage) {
 		callbackCalled = true
 		callbackUsage = u
 	})
@@ -345,9 +347,9 @@ func TestStreamCloseOnCloseCallbackWithoutUsage(t *testing.T) {
 
 func TestWrapStreamNil(t *testing.T) {
 	var callbackCalled bool
-	var callbackUsage *Usage
+	var callbackUsage *ais.Usage
 
-	result := WrapStream(nil, func(u *Usage) {
+	result := WrapStream(nil, func(u *ais.Usage) {
 		callbackCalled = true
 		callbackUsage = u
 	})

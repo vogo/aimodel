@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 )
 
@@ -100,11 +101,11 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	result, err := c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model: "claude-sonnet-4",
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleSystem, Content: aimodel.NewTextContent("You are helpful.")},
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")},
+		Messages: []ais.Message{
+			{Role: ais.RoleSystem, Content: ais.NewTextContent("You are helpful.")},
+			{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")},
 		},
 	})
 	if err != nil {
@@ -123,7 +124,7 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		t.Errorf("content = %q", result.Choices[0].Message.Content.Text())
 	}
 
-	if result.Choices[0].FinishReason != aimodel.FinishReasonStop {
+	if result.Choices[0].FinishReason != ais.FinishReasonStop {
 		t.Errorf("finish_reason = %q", result.Choices[0].FinishReason)
 	}
 
@@ -149,15 +150,15 @@ func TestAnthropicChatCompletionAPIError(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	var apiErr *aimodel.APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T: %v", err, err)
 	}
@@ -195,9 +196,9 @@ func TestAnthropicUserProfileIDOverWire(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -259,9 +260,9 @@ func TestAnthropicChatCompletionStream(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	stream, err := c.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -324,15 +325,15 @@ func TestAnthropicChatCompletionStreamAPIError(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	_, err = c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	var apiErr *aimodel.APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T: %v", err, err)
 	}
@@ -372,9 +373,9 @@ func TestAnthropicEnvFallback(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)

@@ -34,7 +34,7 @@ It **deliberately excludes** retry, rate limiting, request validation, caching /
 
 ## 2. Canonical representation: OpenAI-shaped
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `core` package; the root `aimodel` package re-exports them as **type aliases** (not copies), so callers, provider subpackages, and `composes` all exchange the identical types with one source of truth. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
+The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `ais` package; callers, provider subpackages, and `composes` all use them directly (`ais.ChatRequest`, `ais.Message`, etc.) with the root `aimodel` package as the client facade. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
 
 ```
                      ┌──────────────────────────────┐
@@ -105,7 +105,7 @@ client, err := aimodel.NewClient(
 | `WithTimeout(time.Duration)` | HTTP timeout | Default 60s; **applied after all options**, so option order does not matter |
 | `WithHTTPClient(*http.Client)` | Custom HTTP client | `nil` panics outright (a programming error) |
 
-The built-in `openai` and `anthropic` providers register themselves on import (the root package imports both by default). A third protocol is added by writing a subpackage that implements the provider contract and calls `core.Register` in its `init` — **no root-package change required**. See §3.4.
+The built-in `openai` and `anthropic` providers register themselves on import (the root package imports both by default). A third protocol is added by writing a subpackage that implements the provider contract and calls `ais.Register` in its `init` — **no root-package change required**. See §3.4.
 
 ### 3.2 Environment-variable fallback
 
@@ -139,7 +139,7 @@ type ChatCompleter interface {
 }
 ```
 
-`chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `core.ChatProvider`:
+`chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `ais.ChatProvider`:
 
 1. `req.Clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
 2. set the `Stream` flag and `applyDefaultModel` fills an empty `Model`;
@@ -147,7 +147,7 @@ type ChatCompleter interface {
 4. the core layer sends the single HTTP request;
 5. a non-2xx response is read (under the shared size limit) and handed to `provider.ParseErrorResponse`; a success is normalized by `provider.ParseChatResponse`, or wrapped in a `Stream` driven by `provider.NewStreamDecoder`.
 
-The provider contract (in `core`) is exactly this vendor boundary — request building, response parsing, error parsing, and per-event SSE decoding:
+The provider contract (in `ais`) is exactly this vendor boundary — request building, response parsing, error parsing, and per-event SSE decoding:
 
 ```go
 type ChatProvider interface {
@@ -158,7 +158,7 @@ type ChatProvider interface {
 }
 ```
 
-Providers are addressed by a stable string name through a concurrency-safe registry. `core.Register(name, factory)` is monotonic: an empty name, a nil factory, or a duplicate name panics, so dispatch never depends on import order. The registry only resolves a name to a factory — it never guesses a protocol from the model and takes no part in `composes`' multi-model selection.
+Providers are addressed by a stable string name through a concurrency-safe registry. `ais.Register(name, factory)` is monotonic: an empty name, a nil factory, or a duplicate name panics, so dispatch never depends on import order. The registry only resolves a name to a factory — it never guesses a protocol from the model and takes no part in `composes`' multi-model selection.
 
 ## 4. Model constants (`model.go`)
 
@@ -168,8 +168,8 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 
 | Path | Contents |
 |---|---|
-| `core/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
-| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types and errors are re-exported here as aliases (`schema.go` / `errors.go`) |
+| `ais/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
+| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types come from the `ais` package |
 | `provider/openai/` | OpenAI-compatible provider: request building, response/error parsing, SSE decoder. Registers `openai.Name` on import |
 | `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`. Registers `anthropic.Name` on import |
 | `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |

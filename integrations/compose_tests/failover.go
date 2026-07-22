@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/composes"
 )
 
@@ -39,9 +40,9 @@ func testFailover(clients []*aimodel.Client) {
 		log.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+	resp, err := cc.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("Say hello!")},
 		},
 	})
 	if err != nil {

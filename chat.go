@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/vogo/aimodel/ais"
 )
 
 // ChatCompleter is the chat capability contract. Capabilities are defined as
@@ -30,8 +32,8 @@ import (
 // never by changing this one. Both *Client and composes.ComposeClient
 // implement it.
 type ChatCompleter interface {
-	ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
-	ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error)
+	ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error)
+	ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*Stream, error)
 }
 
 // Compile-time check: *Client implements ChatCompleter.
@@ -41,7 +43,7 @@ var _ ChatCompleter = (*Client)(nil)
 const maxErrorBodySize = 1 << 20
 
 // applyDefaultModel sets the request model to the client default if empty.
-func (c *Client) applyDefaultModel(r *ChatRequest) {
+func (c *Client) applyDefaultModel(r *ais.ChatRequest) {
 	if r.Model == "" {
 		r.Model = c.model
 	}
@@ -49,7 +51,7 @@ func (c *Client) applyDefaultModel(r *ChatRequest) {
 
 // ChatCompletion sends a non-streaming chat completion request, delegating the
 // protocol-specific work to the client's resolved provider.
-func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+func (c *Client) ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error) {
 	r := req.Clone()
 	r.Stream = false
 
@@ -70,7 +72,7 @@ func (c *Client) ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatRes
 
 // ChatCompletionStream sends a streaming chat completion request and returns a
 // Stream backed by the provider's SSE decoder.
-func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error) {
+func (c *Client) ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*Stream, error) {
 	r := req.Clone()
 	r.Stream = true
 
@@ -92,7 +94,7 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req *ChatRequest) (*S
 // send builds the provider request and issues the single HTTP call. On any
 // build or transport failure the caller receives an error and no response body
 // to close.
-func (c *Client) send(ctx context.Context, r *ChatRequest) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, r *ais.ChatRequest) (*http.Response, error) {
 	httpReq, err := c.provider.NewChatRequest(ctx, r)
 	if err != nil {
 		return nil, err
@@ -111,7 +113,7 @@ func (c *Client) send(ctx context.Context, r *ChatRequest) (*http.Response, erro
 func (c *Client) parseError(resp *http.Response) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
 	if err != nil {
-		return &APIError{
+		return &ais.APIError{
 			StatusCode: resp.StatusCode,
 			Message:    "failed to read error response",
 			Err:        err,

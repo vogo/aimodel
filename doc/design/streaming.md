@@ -2,7 +2,7 @@
 
 The protocol-independent streaming abstraction, delta merging, unmodelled-block preservation, and stream interception.
 
-- **Implementation**: `stream.go`, `intercept.go` (the `Stream` type and interception; both root); per-event decoding lives in each provider's `stream.go` behind `core.StreamDecoder`
+- **Implementation**: `stream.go`, `intercept.go` (the `Stream` type and interception; both root); per-event decoding lives in each provider's `stream.go` behind `ais.StreamDecoder`
 - **Per-protocol SSE parsing**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) §4.1 · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §5
 
 ---
@@ -19,7 +19,7 @@ func (s *Stream) Close() error                 // idempotent, safe alongside Rec
 
 Design points:
 
-- **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps a `core.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
+- **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps an `ais.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
 - **Concurrency safety**: `Recv` serializes on a mutex; `Close` uses `CompareAndSwap` to run exactly once and **closes the underlying reader directly** to unblock an in-flight `Recv` (`http.Response.Body.Close` is safe to call concurrently). After closing, `Recv` returns `ErrStreamClosed`.
 - **Usage capture**: any chunk carrying a `Usage` is recorded into `s.usage`; `Usage()` returns it once the stream ends.
 - **Container ID**: `StreamChunk.Container` (`*ResponseContainer`) is emitted **once**, on the Anthropic path, as soon as `message_start` is read — see §3.

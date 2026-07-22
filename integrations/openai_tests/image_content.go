@@ -23,23 +23,24 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 func testImageContent(client *aimodel.Client) {
 	fmt.Println("=== OpenAI Image Content ===")
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{
 			{
-				Role: aimodel.RoleUser,
-				Content: aimodel.NewPartsContent(
-					aimodel.ContentPart{
+				Role: ais.RoleUser,
+				Content: ais.NewPartsContent(
+					ais.ContentPart{
 						Type: "text",
 						Text: "What is in this image?",
 					},
-					aimodel.ContentPart{
+					ais.ContentPart{
 						Type: "image_url",
-						ImageURL: &aimodel.ImageURL{
+						ImageURL: &ais.ImageURL{
 							URL:    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg",
 							Detail: "low",
 						},

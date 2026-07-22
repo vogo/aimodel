@@ -1,8 +1,8 @@
 # Data Model
 
-The canonical request/response types in `core/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../api.md](../api.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
+The canonical request/response types in `ais/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../api.md](../api.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
 
-- **Canonical types**: `core/schema.go`
+- **Canonical types**: `ais/schema.go`
 - **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md)
 
 Pointer types (`*float64` / `*int` / `*bool`) exist to distinguish "unset" from "explicitly zero": `Temperature=0` differs from omitting temperature, and only an explicit `ParallelToolCalls=false` triggers Anthropic's `disable_parallel_tool_use`.
@@ -71,7 +71,7 @@ Marked `json:"-"`, so they **never** appear on the canonical (OpenAI-shape) body
 
 ### 1.10 `Clone()`
 
-Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `core.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and each tool's `AllowedCallers` / `InputExamples` slices. Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`, `InputExamples` entries) are shared by contract. Providers receive this working copy and may rewrite it freely.
+Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `ais.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and each tool's `AllowedCallers` / `InputExamples` slices. Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`, `InputExamples` entries) are shared by contract. Providers receive this working copy and may rewrite it freely.
 
 ---
 
@@ -93,10 +93,10 @@ type Message struct {
 `Content` is a **polymorphic wrapper**: it privately holds `text string` and `parts []ContentPart`, and its custom `MarshalJSON` / `UnmarshalJSON` switch between the two wire shapes — a bare string, or an array of content blocks.
 
 ```go
-aimodel.NewTextContent("hello")                          // → "hello"
-aimodel.NewPartsContent(                                 // → [{...},{...}]
-    aimodel.ContentPart{Type: "text", Text: "Describe this image"},
-    aimodel.ContentPart{Type: "image_url", ImageURL: &aimodel.ImageURL{URL: dataURI}},
+ais.NewTextContent("hello")                          // → "hello"
+ais.NewPartsContent(                                 // → [{...},{...}]
+    ais.ContentPart{Type: "text", Text: "Describe this image"},
+    ais.ContentPart{Type: "image_url", ImageURL: &ais.ImageURL{URL: dataURI}},
 )
 ```
 
