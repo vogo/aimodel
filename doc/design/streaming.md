@@ -19,7 +19,7 @@ func (s *Stream) Close() error                 // idempotent, safe alongside Rec
 
 Design points:
 
-- **Protocol differences are absorbed by the `recv` closure.** The `Stream` struct itself is protocol-agnostic: OpenAI builds it from `openaiRecvFunc` (line-by-line `data:` parsing, `[DONE]` → `io.EOF`), Anthropic from `anthropicRecvFunc` (paired `event:` + `data:` parsing, `message_stop` → `io.EOF`).
+- **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps a `core.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
 - **Concurrency safety**: `Recv` serializes on a mutex; `Close` uses `CompareAndSwap` to run exactly once and **closes the underlying reader directly** to unblock an in-flight `Recv` (`http.Response.Body.Close` is safe to call concurrently). After closing, `Recv` returns `ErrStreamClosed`.
 - **Usage capture**: any chunk carrying a `Usage` is recorded into `s.usage`; `Usage()` returns it once the stream ends.
 - **Container ID**: `StreamChunk.Container` (`*ResponseContainer`) is emitted **once**, on the Anthropic path, as soon as `message_start` is read — see §3.

@@ -34,28 +34,30 @@ Authorization: Bearer {apiKey}
 - `baseURL` already had its trailing `/` stripped by `WithBaseURL` / the environment reader, so joining never produces `//`.
 - The endpoint path is fixed at `/chat/completions`, so the caller's `baseURL` is expected to include the version segment (e.g. `https://api.openai.com/v1`).
 
-## 3. Non-streaming (`openaiChatCompletion`)
+## 3. Non-streaming
 
-1. `req.clone()`, forcing `Stream = false`;
-2. fill in the default model;
-3. send the request;
-4. **non-200 status** → `parseErrorResponse` (§6);
-5. decode into `ChatResponse`;
-6. **200 but the body contains `error`** → still build an `APIError`;
+The shared pipeline (`chat.go`) drives every call; the OpenAI provider supplies the vendor steps:
+
+1. `req.Clone()`, forcing `Stream = false` (pipeline);
+2. fill in the default model (pipeline);
+3. `provider.NewChatRequest` builds the request; the pipeline sends it;
+4. **non-2xx status** → `provider.ParseErrorResponse` (§6);
+5. `provider.ParseChatResponse` decodes into `ChatResponse`;
+6. **2xx but the body contains `error`** → still build an `APIError`;
 7. empty `Choices` → `ErrEmptyResponse`.
 
 Step 6 is a necessary defence: OpenAI-compatible implementations are not consistent about how they report errors.
 
-## 4. Streaming (`openaiChatCompletionStream`)
+## 4. Streaming
 
 Same flow as non-streaming, with two differences:
 
-1. `Stream = true` is forced;
-2. **when `StreamOptions` is `nil`, `{IncludeUsage: true}` is added automatically** — otherwise the terminal chunk carries no usage and `Stream.Usage()` returns nothing. An explicit caller setting is respected.
+1. `Stream = true` is forced by the pipeline;
+2. **when `StreamOptions` is `nil`, `provider.NewChatRequest` adds `{IncludeUsage: true}` automatically** — otherwise the terminal chunk carries no usage and `Stream.Usage()` returns nothing. An explicit caller setting is respected.
 
-On success it returns `newStream(resp.Body)`; on failure it closes the body before returning the error.
+On success the pipeline wraps the body in a `Stream` backed by `provider.NewStreamDecoder`; on failure it closes the body before returning the error.
 
-### 4.1 SSE parsing (`openaiRecvFunc`)
+### 4.1 SSE parsing (`streamDecoder.Next`)
 
 OpenAI's SSE is a **stateless line-by-line `data:` stream**:
 
@@ -98,17 +100,16 @@ OpenAI has no notion of cache-write billing, so the `CacheWrite*` fields are alw
 
 OpenAI caches prefixes over ~1024 tokens **automatically**, with no request-side marker. That is why the Anthropic-only switches (`Message.CacheBreakpoint`, `Tool.CacheBreakpoint`, `ChatRequest.AutoCache`) are all `json:"-"` and never appear in an OpenAI request body. To improve hit rates, use `PromptCacheKey`. See [../design/prompt-caching.md](../design/prompt-caching.md).
 
-## 6. Error handling (`parseErrorResponse`)
+## 6. Error handling (`provider.ParseErrorResponse`)
 
-1. Read the response body, capped at `maxErrorBodySize = 1 MB` (`io.LimitReader`);
-2. read failure → `APIError{StatusCode, Message:"failed to read error response", Err}`;
-3. decode as `{"error":{code,message,param,type}}`;
-4. **decode failure or missing `error` → put the raw body into `Message`**, so diagnostics are never lost;
-5. success → `APIError{StatusCode, Code, Message, Type}`.
+1. The pipeline reads the response body, capped at `maxErrorBodySize = 1 MB` (`io.LimitReader`), and hands the bytes to the provider (a read failure yields `APIError{StatusCode, Message:"failed to read error response", Err}` before the provider is called);
+2. the provider decodes as `{"error":{code,message,param,type}}`;
+3. **decode failure or missing `error` → put the raw body into `Message`**, so diagnostics are never lost;
+4. success → `APIError{StatusCode, Code, Message, Type}`.
 
 ## 7. Fields with no Anthropic counterpart
 
-These canonical fields are silently ignored when the client switches to `ProtocolAnthropic`: `N`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `Verbosity`, `Logprobs` / `TopLogprobs` / `LogitBias`, `ServiceTier` (request side only — the response's `usage.service_tier` *is* mapped), `Store`, `Metadata`, `PromptCacheKey`, `Modalities` / `Audio`, `StreamOptions`.
+These canonical fields are silently ignored when the client uses the Anthropic provider (`WithProvider(anthropic.Name)`): `N`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `Verbosity`, `Logprobs` / `TopLogprobs` / `LogitBias`, `ServiceTier` (request side only — the response's `usage.service_tier` *is* mapped), `Store`, `Metadata`, `PromptCacheKey`, `Modalities` / `Audio`, `StreamOptions`.
 
 `ResponseFormat` is mapped only in its JSON-schema shape (to Anthropic's `output_config.format`); other shapes are ignored like the rest.
 
