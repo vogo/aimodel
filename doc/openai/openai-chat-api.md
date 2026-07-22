@@ -2,7 +2,7 @@
 
 - **Official protocol**: OpenAI Chat Completions API (`POST {baseURL}/chat/completions`)
 - **Official docs**: https://platform.openai.com/docs/api-reference/chat
-- **Implementation**: `provider/openai/openai.go` (wire request building and error parsing), `provider/openai/stream.go` (SSE parsing), `ais/schema.go` (shared canonical types)
+- **Implementation**: `provider/openai/wire.go` (native wire types), `provider/openai/native.go` (native client), `provider/openai/translate.go` (canonical translation), `provider/openai/openai.go` and `stream.go` (provider boundary)
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
 
 Canonical type semantics live in [../design/data-model.md](../design/data-model.md); this document covers what is specific to the OpenAI path.
@@ -11,14 +11,18 @@ Canonical type semantics live in [../design/data-model.md](../design/data-model.
 
 ## 1. Provider mapping
 
-The OpenAI provider serializes shared canonical fields into the Chat Completions body and owns any OpenAI-only wire additions:
+The OpenAI provider explicitly translates shared canonical fields into its independent Chat Completions wire model:
 
 ```
-ChatRequest ──json.Marshal──▶ POST {baseURL}/chat/completions
-ChatResponse ◀──json.Decode── response body
+ChatRequest ──toOpenAIRequest──▶ ChatCompletionRequest ──▶ POST {baseURL}/chat/completions
+ChatResponse ◀─fromOpenAIResponse─ ChatCompletionResponse ◀── response body
 ```
 
 New OpenAI-only parameters must be added to the provider's native surface, not `ais.ChatRequest`. Canonical admission still requires a verified mapping in at least two providers.
+
+### 1.1 Native client
+
+`openai.NewClient(apiKey, ...ClientOption)` returns a native `Client`. `WithBaseURL` and `WithHTTPClient` configure it; the default base URL is `https://api.openai.com/v1`. `ChatCompletions` returns `*ChatCompletionResponse`, while `ChatCompletionsStream` returns a stream whose `Recv` exposes every `*ChatCompletionChunk` in wire order and whose `Close` is idempotent. Both methods copy the request before forcing the appropriate `stream` value, so caller state is unchanged. These calls bypass canonical translation and are the entry point for logprobs, audio, file input, metadata, storage, prompt-cache routing and other OpenAI-only features.
 
 ## 2. Sending the request (`doRequest`)
 
@@ -40,7 +44,7 @@ The shared pipeline (`chat.go`) drives every call; the OpenAI provider supplies 
 2. fill in the default model (pipeline);
 3. `provider.NewChatRequest` builds the request; the pipeline sends it;
 4. **non-2xx status** → `provider.ParseErrorResponse` (§6);
-5. `provider.ParseChatResponse` decodes into `ChatResponse`;
+5. `provider.ParseChatResponse` decodes `ChatCompletionResponse` and translates it into `ChatResponse`;
 6. **2xx but the body contains `error`** → still build an `APIError`;
 7. empty `Choices` → `ErrEmptyResponse`.
 
@@ -67,7 +71,7 @@ OpenAI's SSE is a **stateless line-by-line `data:` stream**:
 | `data: [DONE]` | Return `io.EOF` |
 | `data: {json}` | Parse and emit a chunk |
 
-Each chunk is decoded **once** via `streamChunkOrError` (an embedded `StreamChunk` plus an optional `Error`): if it carries an `error` field, an `*APIError` is returned directly (with no HTTP status code); otherwise the chunk is returned. A JSON failure returns a wrapped `decode stream chunk` error.
+Each chunk is decoded into `ChatCompletionChunk`, checked for a body-level error, and translated by `fromOpenAIChunk`. An error becomes `*APIError` (with no HTTP status code); a JSON failure returns a wrapped `decode stream chunk` error.
 
 After the scan ends: return the `Scanner`'s error if it has one, otherwise `io.EOF` — which tolerates compatible backends that never send `[DONE]`.
 

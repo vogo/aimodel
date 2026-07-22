@@ -63,24 +63,9 @@ type provider struct {
 	baseURL string
 }
 
-// NewChatRequest serializes the shared request fields as the OpenAI wire body.
-// Streaming calls request the final usage chunk through a provider-owned wire
-// field that is intentionally absent from the canonical schema.
+// NewChatRequest translates shared fields into the OpenAI wire body.
 func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
-	type streamOptions struct {
-		IncludeUsage bool `json:"include_usage"`
-	}
-	type openAIRequest struct {
-		*ais.ChatRequest
-		StreamOptions *streamOptions `json:"stream_options,omitempty"`
-	}
-
-	wireReq := openAIRequest{ChatRequest: req}
-	if req.Stream {
-		wireReq.StreamOptions = &streamOptions{IncludeUsage: true}
-	}
-
-	body, err := json.Marshal(wireReq)
+	body, err := json.Marshal(toOpenAIRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("aimodel: marshal request: %w", err)
 	}
@@ -99,7 +84,7 @@ func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*h
 // ParseChatResponse decodes an OpenAI-shape completion. A body-level error
 // object becomes an APIError; a response with no choices is ErrEmptyResponse.
 func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
-	var result ais.ChatResponse
+	var result ChatCompletionResponse
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("aimodel: decode response: %w", err)
 	}
@@ -116,14 +101,14 @@ func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) 
 		return nil, ais.ErrEmptyResponse
 	}
 
-	return &result, nil
+	return fromOpenAIResponse(&result), nil
 }
 
 // ParseErrorResponse maps a non-2xx OpenAI response body to an APIError,
 // falling back to the raw body when it carries no recognizable error object.
 func (p *provider) ParseErrorResponse(statusCode int, body []byte) error {
 	var errResp struct {
-		Error *ais.Error `json:"error"`
+		Error *Error `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == nil {

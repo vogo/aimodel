@@ -29,8 +29,7 @@ import (
 
 // streamChunkOrError combines StreamChunk and Error for single-pass unmarshal.
 type streamChunkOrError struct {
-	ais.StreamChunk
-	Error *ais.Error `json:"error,omitempty"`
+	ChatCompletionChunk
 }
 
 // NewStreamDecoder returns a decoder for the OpenAI SSE event stream.
@@ -73,15 +72,10 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 
 		if parsed.Error != nil {
 			return nil, &ais.APIError{
-				Code:    parsed.Error.Code,
-				Message: parsed.Error.Message,
-				Type:    parsed.Error.Type,
+				Code: parsed.Error.Code, Message: parsed.Error.Message, Type: parsed.Error.Type,
 			}
 		}
-
-		chunk := parsed.StreamChunk
-
-		return &chunk, nil
+		return fromOpenAIChunk(&parsed.ChatCompletionChunk), nil
 	}
 
 	if err := sc.Err(); err != nil {

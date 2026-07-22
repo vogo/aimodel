@@ -40,6 +40,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
+| 2026-07-22 | Public native Chat Completions client and explicit canonical translation layer; native non-streaming and streaming integration examples added |
 | 2026-06-02 | [Multimodal input/output (`input_audio` / `file` parts, `modalities` / `audio`)](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Extend `ChatRequest` with common request fields (+ response `logprobs`)](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Sync `reasoning_effort` values, add `verbosity`](./doc/openai/openai-api-changes.md) |
