@@ -1,6 +1,6 @@
 # Error Model
 
-- **Implementation**: `errors.go`
+- **Implementation**: `core/errors.go` (re-exported by root `errors.go`)
 - **Per-protocol parsing**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) §6 · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §6
 
 ---

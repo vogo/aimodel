@@ -15,12 +15,14 @@
  * limitations under the License.
  */
 
-package aimodel
+package anthropic
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/vogo/aimodel/core"
 )
 
 // Anthropic Messages API reference: https://platform.claude.com/docs/en/api/messages
@@ -44,7 +46,7 @@ type anthropicRequest struct {
 	Stream        bool                 `json:"stream,omitempty"`
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
-	Thinking      *Thinking            `json:"thinking,omitempty"`
+	Thinking      *core.Thinking       `json:"thinking,omitempty"`
 	// Effort is Anthropic's former top-level reasoning-depth control.
 	//
 	// Deprecated: superseded by OutputConfig.Effort — reasoning depth now
@@ -53,18 +55,18 @@ type anthropicRequest struct {
 	// alongside output_config.effort.
 	Effort string `json:"effort,omitempty"`
 	// OutputConfig carries Anthropic's output configuration: the reasoning
-	// effort (mapped from ChatRequest.ReasoningEffort) and the structured
-	// output format (mapped from ChatRequest.ResponseFormat). Omitted when
+	// effort (mapped from core.ChatRequest.ReasoningEffort) and the structured
+	// output format (mapped from core.ChatRequest.ResponseFormat). Omitted when
 	// both are absent.
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	// Container reuses a server-side execution container across requests,
-	// mapped straight through from ChatRequest.Container.
+	// mapped straight through from core.ChatRequest.Container.
 	Container string `json:"container,omitempty"`
 	// InferenceGeo pins the inference geography for data residency, mapped
-	// straight through from ChatRequest.InferenceGeo.
+	// straight through from core.ChatRequest.InferenceGeo.
 	InferenceGeo string `json:"inference_geo,omitempty"`
 	// CacheControl, when set, is the request-root automatic-caching marker
-	// (mapped from ChatRequest.AutoCache). The server caches the last
+	// (mapped from core.ChatRequest.AutoCache). The server caches the last
 	// cacheable block and advances the breakpoint as the conversation grows.
 	// It coexists with per-block cache_control markers.
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
@@ -170,15 +172,15 @@ type anthropicResponse struct {
 	Content      []anthropicResponseBlock `json:"content"`
 	StopReason   string                   `json:"stop_reason"`
 	StopSequence *string                  `json:"stop_sequence"`
-	// StopDetails carries the structured stop classification (e.g. the refusal
+	// core.StopDetails carries the structured stop classification (e.g. the refusal
 	// category) returned alongside stop_reason "refusal". Its fields match the
-	// canonical StopDetails exactly, so it deserializes straight into it.
-	StopDetails *StopDetails   `json:"stop_details"`
-	Usage       anthropicUsage `json:"usage"`
+	// canonical core.StopDetails exactly, so it deserializes straight into it.
+	StopDetails *core.StopDetails `json:"stop_details"`
+	Usage       anthropicUsage    `json:"usage"`
 	// Container is the server-side execution container the response used. Its
-	// fields match the canonical ResponseContainer exactly, so it deserializes
+	// fields match the canonical core.ResponseContainer exactly, so it deserializes
 	// straight into it; nil when absent or null.
-	Container *ResponseContainer `json:"container"`
+	Container *core.ResponseContainer `json:"container"`
 }
 
 // anthropicResponseBlock is a response-side content block: the known fields
@@ -328,15 +330,15 @@ type anthropicMessageDelta struct {
 }
 
 type anthropicMessageDeltaData struct {
-	StopReason   string       `json:"stop_reason,omitempty"`
-	StopSequence *string      `json:"stop_sequence,omitempty"`
-	StopDetails  *StopDetails `json:"stop_details,omitempty"`
+	StopReason   string            `json:"stop_reason,omitempty"`
+	StopSequence *string           `json:"stop_sequence,omitempty"`
+	StopDetails  *core.StopDetails `json:"stop_details,omitempty"`
 }
 
 // --- Translation functions ---
 
-// toAnthropicRequest converts a ChatRequest to an Anthropic API request.
-func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
+// toAnthropicRequest converts a core.ChatRequest to an Anthropic API request.
+func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	ar := &anthropicRequest{
 		Model:        req.Model,
 		Temperature:  req.Temperature,
@@ -350,11 +352,13 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 	// MaxTokens: Anthropic always uses max_tokens. Prefer the newer
 	// MaxCompletionTokens (OpenAI's reasoning-model field) over the deprecated
 	// MaxTokens, falling back to the default when neither is set.
+	// Reading the deprecated canonical MaxTokens is the intended
+	// backward-compat fallback for older / non-reasoning models.
 	switch {
 	case req.MaxCompletionTokens != nil:
 		ar.MaxTokens = *req.MaxCompletionTokens
-	case req.MaxTokens != nil:
-		ar.MaxTokens = *req.MaxTokens
+	case req.MaxTokens != nil: //nolint:staticcheck // deprecated field read on purpose
+		ar.MaxTokens = *req.MaxTokens //nolint:staticcheck // deprecated field read on purpose
 	default:
 		ar.MaxTokens = anthropicDefaultMaxTokens
 	}
@@ -386,7 +390,7 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 
 	for i := 0; i < len(req.Messages); i++ {
 		m := req.Messages[i]
-		if m.Role == RoleSystem && !seenNonSystem {
+		if m.Role == core.RoleSystem && !seenNonSystem {
 			if m.CacheBreakpoint {
 				anyCacheableSystem = true
 				useBlocks = true
@@ -417,19 +421,19 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 		// Any non-system message ends the leading system run; subsequent
 		// system messages fall through to toAnthropicMessage and stay
 		// inline as role:"system".
-		if m.Role != RoleSystem {
+		if m.Role != core.RoleSystem {
 			seenNonSystem = true
 		}
 
-		// Consecutive RoleTool messages represent the parallel tool_result
+		// Consecutive core.RoleTool messages represent the parallel tool_result
 		// blocks for one assistant turn. Anthropic requires all of them to
 		// arrive inside a single role:"user" message immediately after the
 		// assistant turn — emitting one user message per result (the naive
 		// 1:1 mapping) makes the endpoint reject the rest as missing
 		// tool_result blocks. Collect the whole run and serialize it once.
-		if m.Role == RoleTool {
+		if m.Role == core.RoleTool {
 			runStart := i
-			for i+1 < len(req.Messages) && req.Messages[i+1].Role == RoleTool {
+			for i+1 < len(req.Messages) && req.Messages[i+1].Role == core.RoleTool {
 				i++
 			}
 
@@ -543,7 +547,7 @@ func toAnthropicRequest(req *ChatRequest) (*anthropicRequest, error) {
 // toAnthropicOutputConfig builds the output_config object from the canonical
 // reasoning effort and response format. Either half may be absent; when both
 // are, it returns nil so the field is omitted entirely.
-func toAnthropicOutputConfig(req *ChatRequest) *anthropicOutputConfig {
+func toAnthropicOutputConfig(req *core.ChatRequest) *anthropicOutputConfig {
 	format := toAnthropicOutputFormat(req.ResponseFormat)
 	if req.ReasoningEffort == "" && format == nil {
 		return nil
@@ -587,7 +591,7 @@ func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
 // tool-result message. It is shared by the consecutive-run merge path and the
 // single-message fallback so the wire shape stays identical. A missing
 // ToolCallID is rejected up front.
-func toolResultBlock(m Message) (anthropicContentBlock, error) {
+func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
 	if m.ToolCallID == "" {
 		return anthropicContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
 	}
@@ -609,7 +613,7 @@ func toolResultBlock(m Message) (anthropicContentBlock, error) {
 // whose content array holds all the tool_result blocks in order. Anthropic
 // requires the parallel results of one assistant turn to share one user
 // message; merging here keeps the request valid for parallel tool use.
-func toAnthropicToolResultMessage(msgs []Message) (anthropicMessage, error) {
+func toAnthropicToolResultMessage(msgs []core.Message) (anthropicMessage, error) {
 	blocks := make([]anthropicContentBlock, 0, len(msgs))
 	for _, m := range msgs {
 		block, err := toolResultBlock(m)
@@ -628,18 +632,18 @@ func toAnthropicToolResultMessage(msgs []Message) (anthropicMessage, error) {
 	return anthropicMessage{Role: "user", Content: data}, nil
 }
 
-func toAnthropicMessage(m Message) (anthropicMessage, error) {
+func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 	am := anthropicMessage{
 		Role: string(m.Role),
 	}
 
 	// Tool result messages become user messages with tool_result content blocks.
-	if m.Role == RoleTool {
-		return toAnthropicToolResultMessage([]Message{m})
+	if m.Role == core.RoleTool {
+		return toAnthropicToolResultMessage([]core.Message{m})
 	}
 
 	// Assistant messages with thinking, tool calls, or both require content-block format.
-	if m.Role == RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
+	if m.Role == core.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
 		var blocks []anthropicContentBlock
 
 		if m.Thinking != "" {
@@ -779,10 +783,10 @@ func convertToolChoice(tc any) *anthropicToolChoice {
 	return nil
 }
 
-// fromAnthropicResponse converts an Anthropic API response to a ChatResponse.
-func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
-	msg := Message{
-		Role: RoleAssistant,
+// fromAnthropicResponse converts an Anthropic API response to a core.ChatResponse.
+func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
+	msg := core.Message{
+		Role: core.RoleAssistant,
 	}
 
 	var textParts []string
@@ -804,11 +808,11 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 				msg.ExtraBlocks = append(msg.ExtraBlocks, block.raw)
 			}
 		case "tool_use":
-			msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+			msg.ToolCalls = append(msg.ToolCalls, core.ToolCall{
 				Index: len(msg.ToolCalls),
 				ID:    block.ID,
 				Type:  "function",
-				Function: FunctionCall{
+				Function: core.FunctionCall{
 					Name:      block.Name,
 					Arguments: string(block.Input),
 				},
@@ -827,14 +831,14 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 	}
 
 	if len(textParts) > 0 {
-		msg.Content = NewTextContent(strings.Join(textParts, "\n"))
+		msg.Content = core.NewTextContent(strings.Join(textParts, "\n"))
 	}
 
-	return &ChatResponse{
+	return &core.ChatResponse{
 		ID:     ar.ID,
 		Object: "chat.completion",
 		Model:  ar.Model,
-		Choices: []Choice{
+		Choices: []core.Choice{
 			{
 				Index:        0,
 				Message:      msg,
@@ -850,8 +854,8 @@ func fromAnthropicResponse(ar *anthropicResponse) *ChatResponse {
 // anthropicCanonicalUsage builds a canonical Usage from an Anthropic usage
 // object, folding cached/created tokens into PromptTokens (as before) while
 // surfacing the cache read/write counts and the per-TTL write breakdown.
-func anthropicCanonicalUsage(u *anthropicUsage) Usage {
-	cu := Usage{
+func anthropicCanonicalUsage(u *anthropicUsage) core.Usage {
+	cu := core.Usage{
 		PromptTokens:     u.totalInputTokens(),
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.totalInputTokens() + u.OutputTokens,
@@ -871,7 +875,7 @@ func anthropicCanonicalUsage(u *anthropicUsage) Usage {
 	}
 
 	if u.ServerToolUse != nil {
-		cu.ServerToolUse = &ServerToolUse{
+		cu.ServerToolUse = &core.ServerToolUse{
 			WebSearchRequests: u.ServerToolUse.WebSearchRequests,
 			WebFetchRequests:  u.ServerToolUse.WebFetchRequests,
 		}
@@ -952,21 +956,21 @@ func parseDataURI(uri string) (mediaType, data string, ok bool) {
 	return mediaType, data, true
 }
 
-func mapAnthropicStopReason(reason string) FinishReason {
+func mapAnthropicStopReason(reason string) core.FinishReason {
 	switch reason {
 	case "end_turn", "stop_sequence":
-		return FinishReasonStop
+		return core.FinishReasonStop
 	case "max_tokens":
-		return FinishReasonLength
+		return core.FinishReasonLength
 	case "tool_use":
-		return FinishReasonToolCalls
+		return core.FinishReasonToolCalls
 	case "model_context_window_exceeded":
-		return FinishReasonModelContextWindowExceeded
+		return core.FinishReasonModelContextWindowExceeded
 	case "refusal":
-		return FinishReasonRefusal
+		return core.FinishReasonRefusal
 	case "pause_turn":
-		return FinishReasonPauseTurn
+		return core.FinishReasonPauseTurn
 	default:
-		return FinishReason(reason)
+		return core.FinishReason(reason)
 	}
 }

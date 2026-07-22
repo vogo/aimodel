@@ -2,7 +2,7 @@
 
 - **Official protocol**: Anthropic Messages API (`POST /v1/messages`)
 - **Official docs**: https://platform.claude.com/docs/en/api/messages
-- **Implementation**: `anthropic.go` (types and bidirectional translation), `anthropic_chat.go` (HTTP and auth), `anthropic_stream.go` (SSE parsing)
+- **Implementation** (all under `provider/anthropic/`): `anthropic.go` (native wire types and bidirectional translation), `provider.go` (request building, auth headers, response/error parsing, `Options`), `stream.go` (SSE parsing)
 - **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
 The core premise is in [../api.md](../api.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
@@ -31,16 +31,18 @@ const (
 )
 ```
 
-- **Base URL**: `Client.baseURL` when non-empty, otherwise the default — which is why construction allows the Anthropic protocol without a base URL.
-- **Headers** (`setAnthropicHeaders`):
+- **Base URL**: the configured base URL when non-empty, otherwise the default — which is why the Anthropic factory allows construction without a base URL.
+- **Headers** (`provider.setHeaders`):
 
 | Header | Value |
 |---|---|
 | `Content-Type` | `application/json` |
-| `x-api-key` | `Client.apiKey` (note: **not** `Authorization: Bearer`) |
-| `anthropic-version` | `WithAnthropicVersion` value, else `2023-06-01` |
-| `anthropic-beta` | `WithAnthropicBeta` values comma-joined; **header omitted entirely when empty** |
-| `anthropic-user-profile-id` | `WithAnthropicUserProfileID` value; **header omitted entirely when empty** |
+| `x-api-key` | the configured API key (note: **not** `Authorization: Bearer`) |
+| `anthropic-version` | `Options.Version`, else `2023-06-01` |
+| `anthropic-beta` | `Options.Beta` values comma-joined (empty strings dropped); **header omitted entirely when empty** |
+| `anthropic-user-profile-id` | `Options.UserProfileID`; **header omitted entirely when empty** |
+
+The Anthropic-specific configuration is passed as an `anthropic.Options` value through `aimodel.WithProviderOptions` at client construction.
 
 `anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context-editing, structured-outputs, fast-mode, advisor, …). The SDK only emits the header; it models no specific beta capability's fields.
 
@@ -185,9 +187,9 @@ ServiceTier        = service_tier
 
 Note that `PromptTokens` is the **total input including the cached portion** (`totalInputTokens()`); the cache read/write counts are subsets of it, surfaced separately purely for observability. `Usage.Add` accumulates every count including `ServerToolUse`, but leaves `InferenceGeo` / `ServiceTier` alone — they describe one request, so neither concatenation nor summation is meaningful.
 
-## 5. Streaming (`anthropic_stream.go`)
+## 5. Streaming (`provider/anthropic/stream.go`)
 
-Anthropic's SSE differs structurally from OpenAI's in two ways, both absorbed by `anthropicRecvFunc`:
+Anthropic's SSE differs structurally from OpenAI's in two ways, both absorbed by `streamDecoder.Next`:
 
 1. **Events come in pairs**: an `event: <type>` line followed by a `data: <json>` line. After reading `event:` the parser keeps scanning downward, skipping blank lines and `:` comments, until it finds the `data:`.
 2. **It is stateful**: `message_start` provides `id` / `model` / input-side usage that later chunks must carry.
@@ -229,7 +231,7 @@ See [../design/streaming.md](../design/streaming.md) §3.
 
 ## 6. Error handling
 
-`parseAnthropicErrorResponse`: read the body (capped at 1 MB) → decode `{"type":"error","error":{"type":…,"message":…}}` → fill in `APIError{StatusCode, Type, Message}`. When the JSON fails to decode or `message` is empty, the **raw body goes into `Message` verbatim**, so diagnostics are never lost.
+`provider.ParseErrorResponse`: the pipeline reads the body (capped at 1 MB) and hands the bytes to the provider, which decodes `{"type":"error","error":{"type":…,"message":…}}` → fill in `APIError{StatusCode, Type, Message}`. When the JSON fails to decode or `message` is empty, the **raw body goes into `Message` verbatim**, so diagnostics are never lost.
 
 An `error` event on the streaming path likewise produces an `*APIError`, but without an HTTP status code (`StatusCode` is 0).
 
