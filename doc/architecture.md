@@ -41,14 +41,14 @@ The canonical types in `ais` are a provider-neutral shared semantic layer. A fie
 ```
                      ┌──────────────────────────────┐
    ChatRequest ─────▶│ provider "openai"            │──▶ POST {baseURL}/chat/completions
-  (shared shape)     │ provider wire construction   │
+  (shared shape)     │ toOpenAIRequest()            │
         │            └──────────────────────────────┘
         │            ┌──────────────────────────────┐
         └───────────▶│ provider "anthropic"         │──▶ POST {baseURL}/v1/messages
                      │ toAnthropicRequest()          │
                      └──────────────────────────────┘
                                   │
-   ChatResponse ◀── fromAnthropicResponse() ◀────────┘
+   ChatResponse ◀── provider response translations ─┘
   (shared shape)
 ```
 
@@ -179,7 +179,7 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 |---|---|
 | `ais/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
 | Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types come from the `ais` package |
-| `provider/openai/` | OpenAI-compatible provider: request building, response/error parsing, SSE decoder. Registers `openai.Name` on import |
+| `provider/openai/` | OpenAI-compatible provider: public native wire types/client, bidirectional canonical translation, error parsing and SSE decoder. Registers `openai.Name` on import |
 | `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`, and the public extension surface (`extension.go`). Registers `anthropic.Name` on import |
 | `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |
 | `examples/` / `integrations/` | Usage examples and integration tests |
