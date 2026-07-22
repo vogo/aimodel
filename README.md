@@ -27,10 +27,10 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 
 Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
-| Protocol | Official docs | Wrapper code |
+| Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
+| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
 
 ## Usage
 
@@ -153,12 +153,14 @@ Accumulate a full message with `Message.AppendDelta`, and read the final token c
 
 ### Anthropic Protocol
 
-Use `WithProtocol` to select the Anthropic Messages API:
+Select the Anthropic provider by name with `WithProvider(anthropic.Name)`:
 
 ```go
+import "github.com/vogo/aimodel/provider/anthropic"
+
 client, _ := aimodel.NewClient(
     aimodel.WithAPIKey("sk-ant-xxx"),
-    aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+    aimodel.WithProvider(anthropic.Name),
 )
 
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
@@ -169,7 +171,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
-The same `ChatCompletion` / `ChatCompletionStream` methods work for all protocols — routing is handled internally, and the canonical types stay OpenAI-shaped either way.
+The same `ChatCompletion` / `ChatCompletionStream` methods work for every provider — the client delegates to the resolved provider internally, and the canonical types stay OpenAI-shaped either way.
 
 Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md).
 
@@ -179,29 +181,33 @@ Translation behavior worth knowing about when you switch protocols — system-me
 client, _ := aimodel.NewClient(
     aimodel.WithAPIKey("your-key"),
     aimodel.WithBaseURL("https://api.example.com/v1"),
-    aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+    aimodel.WithProvider(anthropic.Name),
     aimodel.WithTimeout(30 * time.Second),
 )
 ```
 
-**Anthropic header options** (no effect under the OpenAI protocol):
+**Anthropic header options** travel through the unified `WithProviderOptions` channel as an `anthropic.Options` value (only the Anthropic provider reads it):
 
 ```go
+import "github.com/vogo/aimodel/provider/anthropic"
+
 client, _ := aimodel.NewClient(
     aimodel.WithAPIKey("sk-ant-xxx"),
-    aimodel.WithProtocol(aimodel.ProtocolAnthropic),
-    // Opt into beta capabilities via the "anthropic-beta" header.
-    // Values append across calls and are comma-joined on the wire.
-    aimodel.WithAnthropicBeta("context-1m-2025-08-07"),
-    // Override the "anthropic-version" header (default "2023-06-01").
-    aimodel.WithAnthropicVersion("2023-06-01"),
-    // Associate requests with an end-user profile via
-    // the "anthropic-user-profile-id" header.
-    aimodel.WithAnthropicUserProfileID("user_abc123"),
+    aimodel.WithProvider(anthropic.Name),
+    aimodel.WithProviderOptions(anthropic.Options{
+        // Opt into beta capabilities via the "anthropic-beta" header.
+        // Empty strings are ignored; values are comma-joined on the wire.
+        Beta: []string{"context-1m-2025-08-07"},
+        // Override the "anthropic-version" header (default "2023-06-01").
+        Version: "2023-06-01",
+        // Associate requests with an end-user profile via
+        // the "anthropic-user-profile-id" header.
+        UserProfileID: "user_abc123",
+    }),
 )
 ```
 
-Each ignores an empty value and omits its header entirely when unset. The full option table is in [doc/api.md](./doc/api.md) §3.1.
+Each field ignores an empty value and omits its header entirely when unset. The full option table is in [doc/api.md](./doc/api.md) §3.1.
 
 ### Multi-Model Compose
 
@@ -210,15 +216,15 @@ The `composes` package dispatches requests across multiple backends with failove
 ```go
 import "github.com/vogo/aimodel/composes"
 
-openai, _ := aimodel.NewClient(aimodel.WithAPIKey("sk-openai"), aimodel.WithBaseURL("https://api.openai.com/v1"))
-anthropic, _ := aimodel.NewClient(
+openaiClient, _ := aimodel.NewClient(aimodel.WithAPIKey("sk-openai"), aimodel.WithBaseURL("https://api.openai.com/v1"))
+anthropicClient, _ := aimodel.NewClient(
     aimodel.WithAPIKey("sk-ant"),
-    aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+    aimodel.WithProvider(anthropic.Name),
 )
 
 cc, _ := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
-    {Name: "gpt-4o", Client: openai},
-    {Name: "claude-sonnet", Client: anthropic},
+    {Name: "gpt-4o", Client: openaiClient},
+    {Name: "claude-sonnet", Client: anthropicClient},
 })
 
 resp, _ := cc.ChatCompletion(ctx, req)

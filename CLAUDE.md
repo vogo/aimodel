@@ -49,30 +49,32 @@ go tool cover -func=coverage.out
 
 | If you are touching… | Read | Code |
 |---|---|---|
-| Anything cross-cutting: canonical representation, protocol dispatch, client options, env fallback | [doc/api.md](./doc/api.md) | `client.go`, `chat.go`, `chat_client.go` |
-| Request/response types, `Usage`, `Content`, `clone()` | [doc/design/data-model.md](./doc/design/data-model.md) | `schema.go` |
-| `Stream`, SSE, `AppendDelta`, `ExtraBlocks`, interception | [doc/design/streaming.md](./doc/design/streaming.md) | `stream.go`, `intercept.go`, `*_stream.go` |
-| Tool definitions, `tool_choice`, parallel tool results | [doc/design/tool-use.md](./doc/design/tool-use.md) | `schema.go`, `anthropic.go` |
-| Prompt caching (breakpoints, auto-cache, cache accounting) | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) | `schema.go`, `anthropic.go` |
-| Errors | [doc/design/errors.md](./doc/design/errors.md) | `errors.go` |
+| Anything cross-cutting: canonical representation, registry dispatch, client options, env fallback | [doc/api.md](./doc/api.md) | `client.go`, `chat.go`, `core/provider.go`, `core/registry.go` |
+| Request/response types, `Usage`, `Content`, `Clone()` | [doc/design/data-model.md](./doc/design/data-model.md) | `core/schema.go` (re-exported by root `schema.go`) |
+| `Stream`, SSE, `AppendDelta`, `ExtraBlocks`, interception | [doc/design/streaming.md](./doc/design/streaming.md) | `stream.go`, `intercept.go`, `provider/*/stream.go` |
+| Tool definitions, `tool_choice`, parallel tool results | [doc/design/tool-use.md](./doc/design/tool-use.md) | `core/schema.go`, `provider/anthropic/anthropic.go` |
+| Prompt caching (breakpoints, auto-cache, cache accounting) | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) | `core/schema.go`, `provider/anthropic/anthropic.go` |
+| Errors | [doc/design/errors.md](./doc/design/errors.md) | `core/errors.go` (re-exported by root `errors.go`) |
 | Multi-model dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
-| Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `anthropic*.go` |
-| OpenAI path (zero-translation), SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `openai*.go` |
+| Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/` |
+| OpenAI path (zero-translation), SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/` |
 
 ## Architecture at a glance
 
-`Client` implements `ChatCompleter` and routes on `Protocol`:
+`Client` implements the `ChatCompleter` capability and delegates to a **provider** resolved by name from a registry at construction time. The default provider (`openai.Name`) is OpenAI-compatible; `anthropic.Name` selects Anthropic. Both built-ins register themselves on import.
 
-- **ProtocolOpenAI** (default) — the canonical types *are* the OpenAI wire shape, so this path serializes directly with no translation layer.
-- **ProtocolAnthropic** — bidirectional translation; all Anthropic types are package-private and never exposed.
+- **openai** (default) — the canonical types *are* the OpenAI wire shape, so this path serializes directly with no translation layer.
+- **anthropic** — bidirectional translation; all Anthropic wire types are private to `provider/anthropic` and never exposed.
 
-Dispatch happens in `chat.go`; protocol-specific logic is isolated in `openai_*.go` and `anthropic_*.go`.
+`chat.go` runs one shared pipeline (clone → default model → build → single HTTP call → parse/stream); the vendor boundary is the `core.ChatProvider` contract, implemented per subpackage. Adding a protocol = new subpackage that calls `core.Register` in `init`, with **zero root-package change**. New interaction forms are added as new capability interfaces, never by widening `ChatCompleter`.
 
 Packages:
 
-- Root package `aimodel` — client, schema, protocol implementations, streaming
-- `composes/` — multi-model dispatch strategies and health tracking
-- `examples/` — usage examples for openai, anthropic, and compose patterns
+- `core/` — vendor-neutral canonical schema, error model, `ChatProvider` contract, and registry (no vendor deps)
+- Root package `aimodel` — `Client` facade, shared pipeline, capability interface, `Stream`; re-exports `core` canonical types/errors as aliases
+- `provider/openai/`, `provider/anthropic/` — the two built-in providers (each self-registers on import)
+- `composes/` — multi-model dispatch strategies and health tracking (depends only on the root capability interface)
+- `integrations/` — integration tests and usage examples for openai, anthropic, and compose patterns
 
 ## Official API References
 

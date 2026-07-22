@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package aimodel
+package anthropic
 
 import (
 	"encoding/json"
@@ -822,8 +822,8 @@ func TestToAnthropicRequestThinking(t *testing.T) {
 		t.Errorf("thinking.type = %q, want enabled", ar.Thinking.Type)
 	}
 
-	if ar.Thinking.BudgetTokens != 10000 {
-		t.Errorf("thinking.budget_tokens = %d, want 10000", ar.Thinking.BudgetTokens)
+	if ar.Thinking.BudgetTokens != 10000 { //nolint:staticcheck // asserting the deprecated field maps through
+		t.Errorf("thinking.budget_tokens = %d, want 10000", ar.Thinking.BudgetTokens) //nolint:staticcheck // deprecated field
 	}
 }
 
@@ -939,8 +939,8 @@ func TestToAnthropicRequestThinkingAdaptive(t *testing.T) {
 	}
 
 	// adaptive type carries no budget_tokens; effort drives the depth.
-	if ar.Thinking.BudgetTokens != 0 {
-		t.Errorf("budget_tokens = %d, want 0 for adaptive", ar.Thinking.BudgetTokens)
+	if ar.Thinking.BudgetTokens != 0 { //nolint:staticcheck // asserting the deprecated field maps through
+		t.Errorf("budget_tokens = %d, want 0 for adaptive", ar.Thinking.BudgetTokens) //nolint:staticcheck // deprecated field
 	}
 
 	if ar.OutputConfig == nil || ar.OutputConfig.Effort != ReasoningEffortMedium {
