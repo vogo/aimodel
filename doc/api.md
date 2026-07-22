@@ -74,7 +74,7 @@ Default (OpenAI-compatible) client:
 client, err := aimodel.NewClient(
     aimodel.WithAPIKey("sk-..."),
     aimodel.WithBaseURL("https://api.openai.com/v1"),
-    aimodel.WithDefaultModel(aimodel.ModelOpenaiGPT4o),
+    aimodel.WithDefaultModel(ais.ModelOpenaiGPT41),
     aimodel.WithTimeout(90*time.Second),
 )
 ```

@@ -70,10 +70,9 @@ const (
 	ReasoningEffortXHigh  = ais.ReasoningEffortXHigh
 
 	// Model constants used by the wire tests. The canonical model-name
-	// constants live in the root package (protocol-agnostic); these mirror
-	// the two the migrated tests reference.
-	ModelAnthropicClaude4Opus   = "claude-opus-4"
-	ModelAnthropicClaude4Sonnet = "claude-sonnet-4"
+	// constants live in ais; these mirror the two the tests reference.
+	ModelAnthropicClaude4Opus   = "claude-opus-4-8"
+	ModelAnthropicClaude4Sonnet = "claude-sonnet-5"
 )
 
 var (
