@@ -588,7 +588,7 @@ func TestAnthropicChatCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ChatCompletion with ProtocolAnthropic should route via the Anthropic protocol.
+	// ChatCompletion with the Anthropic provider should route via the Anthropic protocol.
 	resp, err := cc.ChatCompletion(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
