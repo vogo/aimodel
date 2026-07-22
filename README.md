@@ -35,7 +35,10 @@ Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 ## Usage
 
 ```go
-import "github.com/vogo/aimodel"
+import (
+    "github.com/vogo/aimodel"
+    "github.com/vogo/aimodel/ais"
+)
 ```
 
 Set env vars `AI_API_KEY` and `AI_BASE_URL` (or `OPENAI_API_KEY` / `OPENAI_BASE_URL`).
@@ -46,7 +49,7 @@ Set env vars `AI_API_KEY` and `AI_BASE_URL` (or `OPENAI_API_KEY` / `OPENAI_BASE_
 client, _ := aimodel.NewClient()
 
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelOpenaiGPT4o,
+    Model: ais.ModelOpenaiGPT41,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
@@ -60,7 +63,7 @@ Use `MaxCompletionTokens` rather than the deprecated `MaxTokens` — it is the o
 ```go
 maxCompletionTokens := 1024
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:               aimodel.ModelOpenaiO3, // reasoning model
+    Model:               ais.ModelOpenaiO3, // reasoning model
     MaxCompletionTokens: &maxCompletionTokens,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
@@ -72,7 +75,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:           aimodel.ModelOpenaiGPT4o,
+    Model:           ais.ModelOpenaiGPT41,
     ReasoningEffort: aimodel.ReasoningEffortHigh, // none/minimal/low/medium/high/xhigh
     Verbosity:       aimodel.VerbosityLow,        // low/medium/high
     Messages: []aimodel.Message{
@@ -89,7 +92,7 @@ Both stay plain `string`, so any value a custom OpenAI-compatible backend accept
 logprobs := true
 topLogprobs := 5
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:          aimodel.ModelOpenaiGPT4o,
+    Model:          ais.ModelOpenaiGPT41,
     Logprobs:       &logprobs,
     TopLogprobs:    &topLogprobs,
     ServiceTier:    "priority",
@@ -111,7 +114,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:      aimodel.ModelOpenaiGPT4o,
+    Model:      ais.ModelOpenaiGPT41,
     Modalities: []string{"text", "audio"},
     Audio:      &aimodel.AudioConfig{Voice: "alloy", Format: "wav"},
     Messages: []aimodel.Message{
@@ -133,7 +136,7 @@ if a := resp.Choices[0].Message.Audio; a != nil {
 
 ```go
 stream, _ := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelOpenaiGPT4o,
+    Model: ais.ModelOpenaiGPT41,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
@@ -164,7 +167,7 @@ client, _ := aimodel.NewClient(
 )
 
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelAnthropicClaude4Sonnet,
+    Model: ais.ModelAnthropicClaudeSonnet5,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },

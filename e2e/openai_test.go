@@ -37,7 +37,7 @@ func TestChatCompletion(t *testing.T) {
 		ID:      "chatcmpl-test",
 		Object:  "chat.completion",
 		Created: 1700000000,
-		Model:   aimodel.ModelOpenaiGPT4o,
+		Model:   ais.ModelOpenaiGPT4o,
 		Choices: []ais.Choice{
 			{
 				Index:        0,
@@ -66,7 +66,7 @@ func TestChatCompletion(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != aimodel.ModelOpenaiGPT4o {
+		if req.Model != ais.ModelOpenaiGPT4o {
 			t.Errorf("request model = %q", req.Model)
 		}
 		if req.Stream {
@@ -84,7 +84,7 @@ func TestChatCompletion(t *testing.T) {
 	}
 
 	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model: aimodel.ModelOpenaiGPT4o,
+		Model: ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{
 			{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")},
 		},
@@ -127,7 +127,7 @@ func TestChatCompletionAPIError(t *testing.T) {
 	}
 
 	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
@@ -162,7 +162,7 @@ func TestChatCompletionEmptyChoices(t *testing.T) {
 	}
 
 	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if !errors.Is(err, ais.ErrEmptyResponse) {
@@ -185,7 +185,7 @@ func TestChatCompletionCancelledContext(t *testing.T) {
 	cancel()
 
 	_, err = c.ChatCompletion(ctx, &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
@@ -229,7 +229,7 @@ func TestChatCompletionStream(t *testing.T) {
 	}
 
 	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
@@ -279,7 +279,7 @@ func TestChatCompletionStreamAPIError(t *testing.T) {
 	}
 
 	_, err = c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
@@ -322,7 +322,7 @@ func TestChatCompletionStreamAutoInjectsStreamOptions(t *testing.T) {
 
 	// Caller does NOT set ais.StreamOptions.
 	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
@@ -369,7 +369,7 @@ func TestChatCompletionStreamPreservesExplicitStreamOptions(t *testing.T) {
 
 	// Caller explicitly sets IncludeUsage: false.
 	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:         aimodel.ModelOpenaiGPT4o,
+		Model:         ais.ModelOpenaiGPT4o,
 		Messages:      []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		StreamOptions: &ais.StreamOptions{IncludeUsage: false},
 	})
@@ -415,7 +415,7 @@ func TestChatCompletionStreamUsage(t *testing.T) {
 	}
 
 	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
@@ -474,7 +474,7 @@ func TestChatCompletionStreamUsageCacheReadTokens(t *testing.T) {
 	}
 
 	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
@@ -532,7 +532,7 @@ func TestChatCompletionWithCacheReadTokens(t *testing.T) {
 	}
 
 	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
@@ -560,7 +560,7 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 		{
 			name: "only MaxCompletionTokens",
 			req: ais.ChatRequest{
-				Model:               aimodel.ModelOpenaiGPT4o,
+				Model:               ais.ModelOpenaiGPT4o,
 				MaxCompletionTokens: &maxCompletion,
 			},
 			wantContains:    []string{`"max_completion_tokens":256`},
@@ -569,7 +569,7 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 		{
 			name: "only MaxTokens",
 			req: ais.ChatRequest{
-				Model:     aimodel.ModelOpenaiGPT4o,
+				Model:     ais.ModelOpenaiGPT4o,
 				MaxTokens: &maxTokens,
 			},
 			wantContains:    []string{`"max_tokens":512`},
@@ -578,7 +578,7 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 		{
 			name: "neither set",
 			req: ais.ChatRequest{
-				Model: aimodel.ModelOpenaiGPT4o,
+				Model: ais.ModelOpenaiGPT4o,
 			},
 			wantNotContains: []string{"max_tokens", "max_completion_tokens"},
 		},
@@ -652,7 +652,7 @@ func TestChatCompletionWithTools(t *testing.T) {
 	}
 
 	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("weather?")}},
 		Tools: []ais.Tool{
 			{
@@ -725,7 +725,7 @@ func TestOpenAIChatRequestVerbosity(t *testing.T) {
 
 	// Verbosity set: serialized as "verbosity".
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:     aimodel.ModelOpenaiGPT4o,
+		Model:     ais.ModelOpenaiGPT4o,
 		Messages:  []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		Verbosity: ais.VerbosityHigh,
 	}); err != nil {
@@ -742,7 +742,7 @@ func TestOpenAIChatRequestVerbosity(t *testing.T) {
 
 	// Verbosity empty: omitempty drops the field.
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -774,7 +774,7 @@ func TestOpenAIChatRequestReasoningEffortValues(t *testing.T) {
 	for _, effort := range efforts {
 		t.Run(effort, func(t *testing.T) {
 			if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-				Model:           aimodel.ModelOpenaiGPT4o,
+				Model:           ais.ModelOpenaiGPT4o,
 				Messages:        []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 				ReasoningEffort: effort,
 			}); err != nil {
@@ -815,7 +815,7 @@ func TestOpenAIChatRequestCommonFields(t *testing.T) {
 	store := true
 
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:             aimodel.ModelOpenaiGPT4o,
+		Model:             ais.ModelOpenaiGPT4o,
 		Messages:          []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		Logprobs:          &logprobs,
 		TopLogprobs:       &topLogprobs,
@@ -863,7 +863,7 @@ func TestOpenAIChatRequestCommonFieldsOmitEmpty(t *testing.T) {
 
 	// No optional fields set: all of them must be omitted.
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    aimodel.ModelOpenaiGPT4o,
+		Model:    ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -890,7 +890,7 @@ func TestOpenAIChatRequestModalitiesAudio(t *testing.T) {
 	}
 
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:      aimodel.ModelOpenaiGPT4o,
+		Model:      ais.ModelOpenaiGPT4o,
 		Messages:   []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		Modalities: []string{"text", "audio"},
 		Audio:      &ais.AudioConfig{Voice: "alloy", Format: "wav"},
@@ -925,7 +925,7 @@ func TestOpenAIChatRequestInputAudioContent(t *testing.T) {
 	}
 
 	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model: aimodel.ModelOpenaiGPT4o,
+		Model: ais.ModelOpenaiGPT4o,
 		Messages: []ais.Message{{
 			Role: ais.RoleUser,
 			Content: ais.NewPartsContent(
