@@ -7,7 +7,7 @@ A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero
 
 This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
-The SDK is layered. The **canonical layer** exposes one stable, OpenAI-shaped interface — the greatest common denominator across vendors — so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete, continuously-synced fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Use the canonical interface for cross-vendor portability; full official-API coverage is the native layer's responsibility. Architecture details: [doc/architecture.md](./doc/architecture.md).
+The SDK is layered. The **canonical layer** exposes only semantics with verified mappings in at least two providers, so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Architecture details: [doc/architecture.md](./doc/architecture.md).
 
 ## Documentation
 
@@ -71,40 +71,21 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
-### Reasoning effort & verbosity
+### Reasoning effort
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
     Model:           ais.ModelOpenaiGPT41,
     ReasoningEffort: aimodel.ReasoningEffortHigh, // none/minimal/low/medium/high/xhigh
-    Verbosity:       aimodel.VerbosityLow,        // low/medium/high
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
 })
 ```
 
-Both stay plain `string`, so any value a custom OpenAI-compatible backend accepts passes through. For Anthropic extended thinking, set `Thinking` (`Type` is `enabled` / `disabled` / `adaptive`; `Display: "omitted"` suppresses thinking content). See [doc/design/data-model.md](./doc/design/data-model.md) §1.3.
+The value stays a plain `string`. For Anthropic extended thinking, set `Thinking` (`Type` is `enabled` / `disabled` / `adaptive`; `Display: "omitted"` suppresses thinking content). See [doc/design/data-model.md](./doc/design/data-model.md) §1.3.
 
-### Observability & routing fields
-
-```go
-logprobs := true
-topLogprobs := 5
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:          ais.ModelOpenaiGPT41,
-    Logprobs:       &logprobs,
-    TopLogprobs:    &topLogprobs,
-    ServiceTier:    "priority",
-    PromptCacheKey: "tenant-42",
-    Metadata:       map[string]string{"env": "prod"},
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
-    },
-})
-```
-
-`resp.Choices[i].LogProbs` then carries the per-token log probabilities. The full field reference — including `TopK`, `LogitBias`, `ParallelToolCalls`, `Store` — is in [doc/design/data-model.md](./doc/design/data-model.md) §1. Provider-only parameters (e.g. Anthropic prompt-cache breakpoints, automatic caching, `container` / `inference_geo`) go through the unified extension channel — set them with the provider package's helpers, e.g.:
+Provider-only parameters use the provider's native API or an established extension surface. For example, Anthropic prompt-cache breakpoints and automatic caching use helpers:
 
 ```go
 import "github.com/vogo/aimodel/provider/anthropic"
@@ -117,28 +98,20 @@ See [doc/architecture.md](./doc/architecture.md) §2 for the extension-channel c
 
 `resp.Usage` normalizes token counts across protocols (cache read/write, reasoning tokens, server-tool counts, inference geography, service tier); see [doc/design/data-model.md](./doc/design/data-model.md) §4.
 
-### Multimodal input & audio output
+### Multimodal input
 
-`Content` is polymorphic — `NewTextContent` for plain text, `NewPartsContent` for a multimodal array (`text` / `image_url` / `input_audio` / `file`).
+`Content` is polymorphic — `NewTextContent` for plain text, `NewPartsContent` for a shared multimodal array (`text` / `image_url`).
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:      ais.ModelOpenaiGPT41,
-    Modalities: []string{"text", "audio"},
-    Audio:      &aimodel.AudioConfig{Voice: "alloy", Format: "wav"},
+    Model: ais.ModelOpenaiGPT41,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewPartsContent(
-            aimodel.ContentPart{Type: "text", Text: "What is said in this clip?"},
-            aimodel.ContentPart{Type: "input_audio", InputAudio: &aimodel.InputAudio{
-                Data: base64Audio, Format: "wav",
-            }},
+            aimodel.ContentPart{Type: "text", Text: "Describe this image"},
+            aimodel.ContentPart{Type: "image_url", ImageURL: &aimodel.ImageURL{URL: imageURL}},
         )},
     },
 })
-
-if a := resp.Choices[0].Message.Audio; a != nil {
-    fmt.Println(a.Transcript) // generated audio's text transcript
-}
 ```
 
 ### Streaming
@@ -183,7 +156,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
-The same `ChatCompletion` / `ChatCompletionStream` methods work for every provider — the client delegates to the resolved provider internally, and the canonical types stay OpenAI-shaped either way.
+The same `ChatCompletion` / `ChatCompletionStream` methods work for every provider — the client delegates to the resolved provider while the canonical types remain provider-neutral.
 
 Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md).
 

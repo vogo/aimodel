@@ -103,6 +103,24 @@ func TestNewChatRequestStreamDefaultsIncludeUsage(t *testing.T) {
 	}
 }
 
+func TestNewChatRequestNonStreamOmitsStreamOptions(t *testing.T) {
+	p := newProvider(t)
+
+	req, err := p.NewChatRequest(context.Background(), &ais.ChatRequest{Model: "gpt-4o"})
+	if err != nil {
+		t.Fatalf("NewChatRequest: %v", err)
+	}
+
+	body, _ := io.ReadAll(req.Body)
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decoded["stream_options"]; ok {
+		t.Error("non-stream request must omit stream_options")
+	}
+}
+
 func TestParseChatResponseEmptyChoices(t *testing.T) {
 	p := newProvider(t)
 

@@ -13,10 +13,10 @@ How prompt-cache intent is expressed across protocols, and how cache accounting 
 | | OpenAI-compatible | Anthropic |
 |---|---|---|
 | How caching is triggered | **Automatic** — prefixes over ~1024 tokens are cached with no request-side marker | **Explicit** — the request marks where the cacheable prefix ends |
-| Caller controls | `PromptCacheKey` (canonical; routes requests sharing a prefix to the same cache) | Per-block breakpoints and/or request-root automatic caching, via the `anthropic` extension API |
+| Caller controls | No canonical request field; use the OpenAI native API for provider-specific controls | Per-block breakpoints and/or request-root automatic caching, via the `anthropic` extension API |
 | Accounting | canonical `CacheReadTokens` only | canonical `CacheReadTokens` + `anthropic.UsageExtension` cache-write counts |
 
-Because only Anthropic needs request-side markers, no caching switch lives on the canonical types. All Anthropic cache intent travels through the node's `Extensions` map (`json:"-"`), set with the `anthropic` package helpers — it can never leak into the OpenAI-shape request body, and adding another provider's cache semantics later needs no canonical change.
+No request-side caching control has a verified common semantic across two providers, so none lives on canonical types. Anthropic cache intent travels through its established `Extensions` helpers; OpenAI-specific controls belong to its native API.
 
 ---
 

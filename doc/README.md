@@ -8,7 +8,7 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 | Document | Contents |
 |---|---|
-| [architecture.md](./architecture.md) | **Start here** — design scope, the OpenAI-shaped canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
+| [architecture.md](./architecture.md) | **Start here** — design scope, the shared canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
 | [adr.md](./adr.md) | Architecture Decision Record index — accepted decisions and their rationale |
 
 ## Design topics (cross-protocol)
@@ -28,7 +28,7 @@ This directory holds the design documentation. The root [README.md](../README.md
 |---|---|
 | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: bidirectional translation, headers, SSE events |
 | [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
-| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: the zero-translation path, field alignment, SSE |
+| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: provider mapping, field alignment, SSE |
 | [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI change log |
 
 ## Root documents

@@ -30,18 +30,18 @@ It **deliberately excludes** retry, rate limiting, request validation, caching /
 
 **Consequences (design constraints):**
 
-- Parameters are not validated and unknown values pass through verbatim (`ReasoningEffort` / `Verbosity` / `ServiceTier` stay `string` rather than enums), so each OpenAI-compatible backend's private extensions keep working.
+- Canonical open-string parameters such as `ReasoningEffort` are not enum-validated; provider-only parameters belong to that provider's native API or established extension surface.
 - Request structures carry no side-effecting state — a `ChatRequest` is safe to reuse.
 - One call = one HTTP request, the multi-model failover path being the sole exception ([design/compose.md](./design/compose.md)).
 
-## 2. Canonical representation: OpenAI-shaped
+## 2. Canonical representation: shared provider semantics
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `ais` package; callers, provider subpackages, and `composes` all use them directly (`ais.ChatRequest`, `ais.Message`, etc.) with the root `aimodel` package as the client facade. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
+The canonical types in `ais` are a provider-neutral shared semantic layer. A field is admitted only when **at least two providers have a real, verifiable mapping for it**. Similar spelling, popularity in OpenAI-compatible APIs, direct-serialization convenience, or a backend ignoring unknown JSON is not evidence of shared semantics. Callers, provider subpackages, and `composes` use this deliberately small contract through the root `aimodel` facade:
 
 ```
                      ┌──────────────────────────────┐
    ChatRequest ─────▶│ provider "openai"            │──▶ POST {baseURL}/chat/completions
-  (OpenAI shape)     │ (direct serialization)       │
+  (shared shape)     │ provider wire construction   │
         │            └──────────────────────────────┘
         │            ┌──────────────────────────────┐
         └───────────▶│ provider "anthropic"         │──▶ POST {baseURL}/v1/messages
@@ -49,30 +49,29 @@ The SDK uses the **OpenAI Chat Completions format as its canonical representatio
                      └──────────────────────────────┘
                                   │
    ChatResponse ◀── fromAnthropicResponse() ◀────────┘
-  (OpenAI shape)
+  (shared shape)
 ```
 
-The reasoning: the OpenAI format is the de-facto standard and the overwhelming majority of backends (DeepSeek, Kimi, GLM, Qwen, Doubao, MiniMax, …) speak it natively. Choosing it as the canonical representation makes the OpenAI path **zero-translation**, leaving only the Anthropic path to translate in both directions. Each provider's translation lives entirely in its own subpackage (`provider/openai`, `provider/anthropic`), so the root package holds no vendor wire types.
+Each provider owns its wire construction and response normalization. Provider-only capabilities belong to its native API. Existing provider-specific extension scenarios continue through the unified extension channel, but extensions are not a loophole for reintroducing removed canonical request fields.
 
-**Field attribution — the "≥ 2 providers" test.** A semantic enters the canonical types only when at least two providers share a mappable common semantic. Everything else lives in the owning provider's package and reaches the canonical nodes through the **unified extension channel**:
+**Field attribution — the “≥ 2 providers” test.** This is the sole admission rule:
 
 | Situation | Approach | Example |
 |---|---|---|
-| Both protocols have it | Canonical field + bidirectional mapping | `TopP`, `Stop` ↔ `stop_sequences`, `ReasoningEffort`, `CacheReadTokens`, `ServiceTier` |
-| OpenAI-compatible protocol surface | Canonical field (the canonical shape *is* this wire protocol, spoken by many vendors); the Anthropic translator ignores it | `LogitBias`, `Store`, `Metadata`, `Modalities` / `Audio`, `Logprobs` |
+| At least two providers map the same semantic | Canonical field + provider mappings | `TopP`, `Stop` ↔ `stop_sequences`, `ReasoningEffort`, `CacheReadTokens`; response-side `Usage.ServiceTier` |
 | Vendor extension adopted by ≥ 2 vendors | Canonical field, pass-through where native | `TopK` (Anthropic native; several OpenAI-compatible backends accept it), `Thinking` (Anthropic + Qwen/GLM/DeepSeek-style backends) |
 | Single-provider semantics | **Provider extension value** under the node's `Extensions` namespace, defined and read only by that provider's package | `anthropic.RequestExtension` (`AutoCache` / `AutoCacheTTL` / `Container` / `InferenceGeo`), `anthropic.MessageExtension` (`CacheBreakpoint`, `ExtraBlocks`), `anthropic.ToolExtension`, `anthropic.ChoiceExtension` (`StopDetails`), `anthropic.ResponseExtension` (`Container`), `anthropic.UsageExtension` (cache writes, server-tool counts, geography) |
 | Single-provider convenience constants | Named in the provider package; the open canonical string passes the value through verbatim | `anthropic.FinishReasonRefusal` / `PauseTurn` / `ModelContextWindowExceeded` |
 
-Attribution evidence for retained fields that are not obviously two-sided: `ServiceTier` maps OpenAI's request/response `service_tier` and Anthropic's request `service_tier` + `usage.service_tier`; `Strict` on `Tool` maps OpenAI's `function.strict` and Anthropic's tool-level `strict`; `Stop` maps `stop` ↔ `stop_sequences`. OpenAI-platform fields with no confirmed second implementation (`Store`, `Metadata`, `PromptCacheKey`) stay canonical **as part of the OpenAI-compatible protocol surface** — the canonical shape is that protocol, and OpenAI-compatible backends ignore unknown fields; they are not evidence for promoting new single-vendor semantics.
+Attribution evidence for retained fields that are not obviously two-sided: response-side `Usage.ServiceTier` maps OpenAI and Anthropic usage responses; `Strict` on `Tool` maps OpenAI's `function.strict` and Anthropic's tool-level `strict`; `Stop` maps `stop` ↔ `stop_sequences`. Request-side service tier and OpenAI-only log probabilities, storage/metadata, prompt-cache routing, audio/file and generation-count controls are not canonical.
 
 **The extension channel (`ais.Extensions`).** Every extendable node — `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk`, `StreamChunkChoice` — carries an `Extensions map[string]any` tagged `json:"-"`, keyed by registered provider name. The contract:
 
-- Canonical JSON is **never** affected: the map is not serialized, so the OpenAI-shape body is byte-for-byte identical with or without extensions, and the OpenAI provider ignores every foreign namespace.
+- Canonical JSON is **never** affected: the map is not serialized, and providers ignore every foreign namespace.
 - Each provider package defines one strongly-typed value per node and public set/read helpers (e.g. `anthropic.ExtendRequest` / `anthropic.RequestExtensionOf`); wire types stay private. A value of the wrong type fails request translation with a `*ais.ExtensionTypeError` naming the node — before any network I/O.
 - The core layer owns only the container lifecycle: `Clone()` copies the maps at every node, and `Message.AppendDelta` merges same-name namespaces through the minimal `ais.ExtensionMerger` interface (copy-on-write; a value that does not implement it is replaced). Values are read-only once attached.
 - Extensions are an **in-process translation contract**, not a cross-process JSON contract. Callers needing the full vendor payload persist it from the provider's native surface, not by marshalling canonical types.
-- A third-party provider adds proprietary parameters by defining its own extension value and reading `Extensions[itsName]` — with **zero changes** to `ais/schema.go`, the root package, or any other provider (enforced by the source-constraint tests in `ais/schema_vendor_test.go`).
+- A third-party provider adds proprietary parameters by defining its own extension value and reading `Extensions[itsName]`, without changing `ais/schema.go`, the root package, or any other provider.
 
 ## 3. Client (`client.go` / `chat.go`)
 
@@ -153,7 +152,7 @@ type ChatCompleter interface {
 
 1. `req.Clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
 2. set the `Stream` flag and `applyDefaultModel` fills an empty `Model`;
-3. `provider.NewChatRequest` builds the URL, body, and headers (the OpenAI provider auto-adds `{include_usage:true}` on a stream request when `StreamOptions` is unset);
+3. `provider.NewChatRequest` builds the URL, body, and headers (the OpenAI provider adds wire-only `stream_options.include_usage=true` on stream requests);
 4. the core layer sends the single HTTP request;
 5. a non-2xx response is read (under the shared size limit) and handed to `provider.ParseErrorResponse`; a success is normalized by `provider.ParseChatResponse`, or wrapped in a `Stream` driven by `provider.NewStreamDecoder`.
 
