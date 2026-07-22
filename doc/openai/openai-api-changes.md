@@ -7,7 +7,7 @@ This file records **how aimodel's OpenAI wrapper tracks the official Chat Comple
 - **Implementation notes**: [openai-chat-api.md](./openai-chat-api.md)
 - **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
-**Maintenance convention**: see [../api.md](../api.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
+**Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 
 Because the OpenAI format *is* the SDK's canonical representation, the vast majority of OpenAI-side changes show up as **field additions on `schema.go`** and touch no protocol code.
 

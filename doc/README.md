@@ -8,7 +8,8 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 | Document | Contents |
 |---|---|
-| [api.md](./api.md) | **Start here** — design scope, the OpenAI-shaped canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
+| [architecture.md](./architecture.md) | **Start here** — design scope, the OpenAI-shaped canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
+| [adr.md](./adr.md) | Architecture Decision Record index — accepted decisions and their rationale |
 
 ## Design topics (cross-protocol)
 

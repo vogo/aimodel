@@ -1,6 +1,6 @@
 # Data Model
 
-The canonical request/response types in `ais/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../api.md](../api.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
+The canonical request/response types in `ais/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../architecture.md](../architecture.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
 
 - **Canonical types**: `ais/schema.go`
 - **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md)

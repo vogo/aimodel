@@ -1,8 +1,10 @@
-# Architecture Overview
+# Architecture
 
 `github.com/vogo/aimodel` — a unified Go SDK for AI model APIs across multiple protocols (OpenAI-compatible, Anthropic), with zero external dependencies.
 
 This document covers the **cross-cutting architecture**: design scope, the canonical representation, the client and its protocol dispatch, and the repository layout. Everything below the architecture level lives in its own document:
+
+The decisions behind this architecture are recorded in the [ADR index](./adr.md).
 
 | Topic | Document |
 |---|---|
@@ -183,3 +185,5 @@ When an official API changes, update these in sync:
 2. the relevant `doc/` document — a `doc/design/` topic and/or the protocol's `*-chat-api.md`;
 3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md);
 4. the root `README.md` / `CLAUDE.md` **only if** the public usage surface or the agent-facing guidance changed — they link here rather than restating design.
+
+When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md).
