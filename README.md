@@ -101,7 +101,16 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 })
 ```
 
-`resp.Choices[i].LogProbs` then carries the per-token log probabilities. The full field reference — including `TopK`, `LogitBias`, `ParallelToolCalls`, `Store`, and the Anthropic-only `Container` / `InferenceGeo` / `AutoCache` — is in [doc/design/data-model.md](./doc/design/data-model.md) §1.
+`resp.Choices[i].LogProbs` then carries the per-token log probabilities. The full field reference — including `TopK`, `LogitBias`, `ParallelToolCalls`, `Store` — is in [doc/design/data-model.md](./doc/design/data-model.md) §1. Provider-only parameters (e.g. Anthropic prompt-cache breakpoints, automatic caching, `container` / `inference_geo`) go through the unified extension channel — set them with the provider package's helpers, e.g.:
+
+```go
+import "github.com/vogo/aimodel/provider/anthropic"
+
+anthropic.ExtendRequest(req, &anthropic.RequestExtension{AutoCache: true})
+anthropic.ExtendMessage(&req.Messages[0], &anthropic.MessageExtension{CacheBreakpoint: true})
+```
+
+See [doc/api.md](./doc/api.md) §2 for the extension-channel contract and [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) for the caching API.
 
 `resp.Usage` normalizes token counts across protocols (cache read/write, reasoning tokens, server-tool counts, inference geography, service tier); see [doc/design/data-model.md](./doc/design/data-model.md) §4.
 

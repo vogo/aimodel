@@ -52,17 +52,25 @@ The SDK uses the **OpenAI Chat Completions format as its canonical representatio
 
 The reasoning: the OpenAI format is the de-facto standard and the overwhelming majority of backends (DeepSeek, Kimi, GLM, Qwen, Doubao, MiniMax, …) speak it natively. Choosing it as the canonical representation makes the OpenAI path **zero-translation**, leaving only the Anthropic path to translate in both directions. Each provider's translation lives entirely in its own subpackage (`provider/openai`, `provider/anthropic`), so the root package holds no vendor wire types.
 
-**How protocol-specific fields are handled:**
+**Field attribution — the "≥ 2 providers" test.** A semantic enters the canonical types only when at least two providers share a mappable common semantic. Everything else lives in the owning provider's package and reaches the canonical nodes through the **unified extension channel**:
 
 | Situation | Approach | Example |
 |---|---|---|
-| Both protocols have it | Canonical field + bidirectional mapping | `TopP`, `Stop` ↔ `stop_sequences` |
-| Anthropic-only, and not part of the wire body | **Struct-local** field marked `json:"-"`, read only by the Anthropic translator | `Message.CacheBreakpoint`, `Tool.CacheBreakpoint`, `ChatRequest.AutoCache` / `AutoCacheTTL`, `Message.ExtraBlocks` |
-| Anthropic-only, but semantically normalizable | Canonical field + mapping at translation time | `TopK` (OpenAI has no `top_k`; omitted when unset), `Container`, `InferenceGeo` |
-| Anthropic-only semantics with no OpenAI value | Pass through verbatim as a named constant | `FinishReasonRefusal` / `PauseTurn` / `ModelContextWindowExceeded`, `StopDetails` |
-| OpenAI-only | Canonical field, ignored by the Anthropic translator | `LogitBias`, `Store`, `Metadata`, `Modalities` / `Audio` |
+| Both protocols have it | Canonical field + bidirectional mapping | `TopP`, `Stop` ↔ `stop_sequences`, `ReasoningEffort`, `CacheReadTokens`, `ServiceTier` |
+| OpenAI-compatible protocol surface | Canonical field (the canonical shape *is* this wire protocol, spoken by many vendors); the Anthropic translator ignores it | `LogitBias`, `Store`, `Metadata`, `Modalities` / `Audio`, `Logprobs` |
+| Vendor extension adopted by ≥ 2 vendors | Canonical field, pass-through where native | `TopK` (Anthropic native; several OpenAI-compatible backends accept it), `Thinking` (Anthropic + Qwen/GLM/DeepSeek-style backends) |
+| Single-provider semantics | **Provider extension value** under the node's `Extensions` namespace, defined and read only by that provider's package | `anthropic.RequestExtension` (`AutoCache` / `AutoCacheTTL` / `Container` / `InferenceGeo`), `anthropic.MessageExtension` (`CacheBreakpoint`, `ExtraBlocks`), `anthropic.ToolExtension`, `anthropic.ChoiceExtension` (`StopDetails`), `anthropic.ResponseExtension` (`Container`), `anthropic.UsageExtension` (cache writes, server-tool counts, geography) |
+| Single-provider convenience constants | Named in the provider package; the open canonical string passes the value through verbatim | `anthropic.FinishReasonRefusal` / `PauseTurn` / `ModelContextWindowExceeded` |
 
-The `json:"-"` struct-local convention matters: it guarantees a switch **can never leak into the OpenAI-shape request body**, while avoiding a second public request type just for Anthropic.
+Attribution evidence for retained fields that are not obviously two-sided: `ServiceTier` maps OpenAI's request/response `service_tier` and Anthropic's request `service_tier` + `usage.service_tier`; `Strict` on `Tool` maps OpenAI's `function.strict` and Anthropic's tool-level `strict`; `Stop` maps `stop` ↔ `stop_sequences`. OpenAI-platform fields with no confirmed second implementation (`Store`, `Metadata`, `PromptCacheKey`) stay canonical **as part of the OpenAI-compatible protocol surface** — the canonical shape is that protocol, and OpenAI-compatible backends ignore unknown fields; they are not evidence for promoting new single-vendor semantics.
+
+**The extension channel (`core.Extensions`).** Every extendable node — `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk`, `StreamChunkChoice` — carries an `Extensions map[string]any` tagged `json:"-"`, keyed by registered provider name. The contract:
+
+- Canonical JSON is **never** affected: the map is not serialized, so the OpenAI-shape body is byte-for-byte identical with or without extensions, and the OpenAI provider ignores every foreign namespace.
+- Each provider package defines one strongly-typed value per node and public set/read helpers (e.g. `anthropic.ExtendRequest` / `anthropic.RequestExtensionOf`); wire types stay private. A value of the wrong type fails request translation with a `*core.ExtensionTypeError` naming the node — before any network I/O.
+- The core layer owns only the container lifecycle: `Clone()` copies the maps at every node, and `Message.AppendDelta` merges same-name namespaces through the minimal `core.ExtensionMerger` interface (copy-on-write; a value that does not implement it is replaced). Values are read-only once attached.
+- Extensions are an **in-process translation contract**, not a cross-process JSON contract. Callers needing the full vendor payload persist it from the provider's native surface, not by marshalling canonical types.
+- A third-party provider adds proprietary parameters by defining its own extension value and reading `Extensions[itsName]` — with **zero changes** to `core/schema.go`, the root aliases, or any other provider (enforced by the source-constraint tests in `core/schema_vendor_test.go`).
 
 ## 3. Client (`client.go` / `chat.go`)
 
@@ -171,7 +179,7 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 | `core/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
 | Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types and errors are re-exported here as aliases (`schema.go` / `errors.go`) |
 | `provider/openai/` | OpenAI-compatible provider: request building, response/error parsing, SSE decoder. Registers `openai.Name` on import |
-| `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`. Registers `anthropic.Name` on import |
+| `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`, and the public extension surface (`extension.go`). Registers `anthropic.Name` on import |
 | `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |
 | `examples/` / `integrations/` | Usage examples and integration tests |
 

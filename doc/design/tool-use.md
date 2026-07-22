@@ -13,11 +13,14 @@ The canonical tool definition, tool choice, and the cross-protocol rules for par
 type Tool struct {
     Type     string             // see §1.1
     Function FunctionDefinition // {Name, Description, Parameters any}
+    Strict   *bool              // exact input-schema validation (OpenAI + Anthropic)
 
-    CacheBreakpoint bool `json:"-"`   // Anthropic prompt-cache marker
+    Extensions core.Extensions `json:"-"`  // provider extension channel
+}
 
-    // Anthropic tool-definition extensions, all omitempty
-    Strict              *bool
+// Anthropic-only tool controls, attached via anthropic.ExtendTool:
+type ToolExtension struct {  // package anthropic
+    CacheBreakpoint     bool
     DeferLoading        *bool
     AllowedCallers      []string
     EagerInputStreaming *bool
@@ -41,17 +44,18 @@ Built-in type names are neither enumerated nor validated — they are opaque str
 
 ### 1.2 Extension fields
 
-All `omitempty` and copied verbatim into the Anthropic tool object:
+`Strict` is canonical (OpenAI carries it inside `function`, Anthropic at the tool level). The Anthropic-only controls live on `anthropic.ToolExtension` and are copied verbatim into the Anthropic tool object:
 
 | Field | Wire | Meaning |
 |---|---|---|
-| `Strict *bool` | `strict` | Guarantee the tool input validates exactly against the declared schema. |
-| `DeferLoading *bool` | `defer_loading` | Keep this tool's schema out of the initial context for on-demand discovery by tool search. At least one tool must stay loaded. |
-| `AllowedCallers []string` | `allowed_callers` | Restrict who may invoke the tool, e.g. `["code_execution_20260120"]` for programmatic tool calling. |
-| `EagerInputStreaming *bool` | `eager_input_streaming` | Stream this tool's input as partial JSON instead of buffering it. |
-| `InputExamples []any` | `input_examples` | Sample inputs demonstrating a complex schema. |
+| `Strict *bool` (canonical) | `strict` | Guarantee the tool input validates exactly against the declared schema. |
+| `ToolExtension.CacheBreakpoint` | `cache_control` | Prompt-cache marker — see [prompt-caching.md](./prompt-caching.md). |
+| `ToolExtension.DeferLoading` | `defer_loading` | Keep this tool's schema out of the initial context for on-demand discovery by tool search. At least one tool must stay loaded. |
+| `ToolExtension.AllowedCallers` | `allowed_callers` | Restrict who may invoke the tool, e.g. `["code_execution_20260120"]` for programmatic tool calling. |
+| `ToolExtension.EagerInputStreaming` | `eager_input_streaming` | Stream this tool's input as partial JSON instead of buffering it. |
+| `ToolExtension.InputExamples` | `input_examples` | Sample inputs demonstrating a complex schema. |
 
-Because `AllowedCallers` and `InputExamples` are slices, `ChatRequest.Clone()` duplicates them per tool so a copy's appends or element rewrites cannot reach back into the original request. Their elements stay shallow, matching the existing `any` contract for `Function.Parameters`.
+`ChatRequest.Clone()` duplicates each tool's extension map; the extension value itself is shared read-only configuration ([data-model.md](./data-model.md) §1.9).
 
 ---
 
@@ -88,12 +92,12 @@ Anthropic requires **all** `tool_result` blocks for one assistant turn's paralle
 
 The translator therefore detects a run of **consecutive** `RoleTool` messages and serializes it once, into one `role:"user"` message whose content array holds every `tool_result` block in the original order. A lone or non-consecutive tool result (separated by a user/assistant/system turn) keeps its own one-element user message.
 
-The merge is driven purely by **adjacency in the input array** — no `tool_use` ID pairing or sorting is attempted, which keeps the rule predictable and order-preserving. Per-block `CacheBreakpoint` survives the merge, so a cache boundary still lands on exactly the flagged block.
+The merge is driven purely by **adjacency in the input array** — no `tool_use` ID pairing or sorting is attempted, which keeps the rule predictable and order-preserving. A per-message cache breakpoint (`anthropic.MessageExtension`) survives the merge, so a cache boundary still lands on exactly the flagged block.
 
 ---
 
 ## 4. Server-side tools
 
-Anthropic's server-executed tools (web search, web fetch, code execution) return content blocks this wrapper does not model — `server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, and so on. They are preserved verbatim on `Message.ExtraBlocks` rather than dropped; see [streaming.md](./streaming.md) §4.
+Anthropic's server-executed tools (web search, web fetch, code execution) return content blocks this wrapper does not model — `server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, and so on. They are preserved verbatim on the message's Anthropic extension (`anthropic.MessageExtensionOf(&msg).ExtraBlocks`) rather than dropped; see [streaming.md](./streaming.md) §4.
 
-Their billed invocation counts arrive on `Usage.ServerToolUse` (`{WebSearchRequests, WebFetchRequests}`); see [data-model.md](./data-model.md) §4.
+Their billed invocation counts arrive on `anthropic.UsageExtensionOf(&usage).ServerToolUse` (`{WebSearchRequests, WebFetchRequests}`); see [data-model.md](./data-model.md) §4.

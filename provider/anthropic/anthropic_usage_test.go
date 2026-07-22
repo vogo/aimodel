@@ -52,16 +52,17 @@ func TestFromAnthropicResponse_UsageExtensions(t *testing.T) {
 		t.Errorf("reasoning_tokens = %d, want 25", u.ReasoningTokens)
 	}
 
-	if u.ServerToolUse == nil {
+	uext := UsageExtensionOf(&u)
+	if uext == nil || uext.ServerToolUse == nil {
 		t.Fatal("server_tool_use = nil, want counts")
 	}
 
-	if u.ServerToolUse.WebSearchRequests != 3 || u.ServerToolUse.WebFetchRequests != 2 {
-		t.Errorf("server_tool_use = %+v, want {3 2}", u.ServerToolUse)
+	if uext.ServerToolUse.WebSearchRequests != 3 || uext.ServerToolUse.WebFetchRequests != 2 {
+		t.Errorf("server_tool_use = %+v, want {3 2}", uext.ServerToolUse)
 	}
 
-	if u.InferenceGeo != "us" {
-		t.Errorf("inference_geo = %q, want us", u.InferenceGeo)
+	if uext.InferenceGeo != "us" {
+		t.Errorf("inference_geo = %q, want us", uext.InferenceGeo)
 	}
 
 	if u.ServiceTier != "priority" {
@@ -88,8 +89,12 @@ func TestFromAnthropicResponse_UsageExtensionsAbsent(t *testing.T) {
 
 	u := fromAnthropicResponse(&ar).Usage
 
-	if u.ServerToolUse != nil || u.InferenceGeo != "" || u.ServiceTier != "" || u.ReasoningTokens != 0 {
-		t.Errorf("usage = %+v, want new fields unset", u)
+	if u.ServiceTier != "" || u.ReasoningTokens != 0 {
+		t.Errorf("usage = %+v, want vendor-neutral fields unset", u)
+	}
+
+	if ext := UsageExtensionOf(&u); ext != nil && (ext.ServerToolUse != nil || ext.InferenceGeo != "") {
+		t.Errorf("usage extension = %+v, want absent or empty", ext)
 	}
 
 	data, err := json.Marshal(u)
@@ -104,36 +109,25 @@ func TestFromAnthropicResponse_UsageExtensionsAbsent(t *testing.T) {
 	}
 }
 
-// TestUsage_ServerToolUseJSONRoundTrip checks the canonical Usage serializes
-// the counts, omits the zero ones, and reads them back.
-func TestUsage_ServerToolUseJSONRoundTrip(t *testing.T) {
-	u := Usage{
-		PromptTokens:  10,
-		ServerToolUse: &ServerToolUse{WebSearchRequests: 4},
-		InferenceGeo:  "eu",
-		ServiceTier:   "standard",
-	}
+// TestUsage_ExtensionNotSerialized checks the Anthropic usage accounting
+// stays an in-process extension: canonical Usage JSON carries none of it.
+func TestUsage_ExtensionNotSerialized(t *testing.T) {
+	u := Usage{PromptTokens: 10, ServiceTier: "standard"}
+	u.Extensions.Set(Name, &UsageExtension{
+		CacheWriteTokens: 8,
+		ServerToolUse:    &ServerToolUse{WebSearchRequests: 4},
+		InferenceGeo:     "eu",
+	})
 
 	data, err := json.Marshal(u)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	if !strings.Contains(string(data), `"server_tool_use":{"web_search_requests":4}`) {
-		t.Errorf("marshalled usage = %s, want zero web_fetch_requests omitted", data)
-	}
-
-	var got Usage
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if got.ServerToolUse == nil || got.ServerToolUse.WebSearchRequests != 4 || got.ServerToolUse.WebFetchRequests != 0 {
-		t.Errorf("round-tripped server_tool_use = %+v", got.ServerToolUse)
-	}
-
-	if got.InferenceGeo != "eu" || got.ServiceTier != "standard" {
-		t.Errorf("round-tripped geo/tier = %q/%q", got.InferenceGeo, got.ServiceTier)
+	for _, unwanted := range []string{"server_tool_use", "inference_geo", "cache_write", "Extensions"} {
+		if strings.Contains(string(data), unwanted) {
+			t.Errorf("usage JSON leaked %s: %s", unwanted, data)
+		}
 	}
 }
 
@@ -160,40 +154,28 @@ func TestUsage_ReasoningTokensPrecedence(t *testing.T) {
 	}
 }
 
-// TestUsageAdd_ServerToolUse verifies the counts accumulate while the
-// single-request geography and tier are left alone.
-func TestUsageAdd_ServerToolUse(t *testing.T) {
-	total := Usage{
-		ServerToolUse: &ServerToolUse{WebSearchRequests: 1, WebFetchRequests: 1},
-		InferenceGeo:  "us",
-		ServiceTier:   "standard",
-	}
+// TestUsageAdd_LeavesExtensionsAlone verifies Add sums only the canonical
+// counts: the per-request tier and the provider extension stay untouched.
+func TestUsageAdd_LeavesExtensionsAlone(t *testing.T) {
+	total := Usage{ServiceTier: "standard"}
+	total.Extensions.Set(Name, &UsageExtension{ServerToolUse: &ServerToolUse{WebSearchRequests: 1}})
 
-	total.Add(&Usage{
-		ReasoningTokens: 7,
-		ServerToolUse:   &ServerToolUse{WebSearchRequests: 2, WebFetchRequests: 3},
-		InferenceGeo:    "eu",
-		ServiceTier:     "priority",
-	})
+	other := Usage{ReasoningTokens: 7, ServiceTier: "priority"}
+	other.Extensions.Set(Name, &UsageExtension{ServerToolUse: &ServerToolUse{WebSearchRequests: 2}})
 
-	if total.ServerToolUse.WebSearchRequests != 3 || total.ServerToolUse.WebFetchRequests != 4 {
-		t.Errorf("accumulated server_tool_use = %+v, want {3 4}", total.ServerToolUse)
-	}
+	total.Add(&other)
 
 	if total.ReasoningTokens != 7 {
 		t.Errorf("reasoning_tokens = %d, want 7", total.ReasoningTokens)
 	}
 
-	if total.InferenceGeo != "us" || total.ServiceTier != "standard" {
-		t.Errorf("geo/tier = %q/%q, want them untouched by Add", total.InferenceGeo, total.ServiceTier)
+	if total.ServiceTier != "standard" {
+		t.Errorf("service_tier = %q, want it untouched by Add", total.ServiceTier)
 	}
 
-	// Adding into an empty Usage must allocate the counter object.
-	var fresh Usage
-	fresh.Add(&Usage{ServerToolUse: &ServerToolUse{WebFetchRequests: 5}})
-
-	if fresh.ServerToolUse == nil || fresh.ServerToolUse.WebFetchRequests != 5 {
-		t.Errorf("fresh server_tool_use = %+v, want {0 5}", fresh.ServerToolUse)
+	ext := UsageExtensionOf(&total)
+	if ext == nil || ext.ServerToolUse == nil || ext.ServerToolUse.WebSearchRequests != 1 {
+		t.Errorf("usage extension = %+v, want it untouched by Add", ext)
 	}
 }
 
@@ -293,7 +275,12 @@ func TestFromAnthropicResponse_Container(t *testing.T) {
 				t.Fatalf("decode: %v", err)
 			}
 
-			got := fromAnthropicResponse(&ar).Container
+			cr := fromAnthropicResponse(&ar)
+
+			var got *ResponseContainer
+			if ext := ResponseExtensionOf(cr); ext != nil {
+				got = ext.Container
+			}
 
 			if tt.wantID == "" {
 				if got != nil {

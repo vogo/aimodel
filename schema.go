@@ -39,15 +39,13 @@ type (
 	Choice = core.Choice
 	// Usage tracks token usage for a request.
 	Usage = core.Usage
-	// ServerToolUse counts server-side tool invocations reported on Usage.
-	ServerToolUse = core.ServerToolUse
 	// Error represents an error in the API response body.
 	Error = core.Error
-	// ResponseContainer is the server-side execution container returned
-	// alongside a response.
-	ResponseContainer = core.ResponseContainer
-	// StopDetails carries a structured stop classification.
-	StopDetails = core.StopDetails
+	// Extensions is the unified provider extension channel: per-provider
+	// values keyed by registered provider name, attached to canonical nodes
+	// and never serialized. Provider packages define the value types and
+	// typed accessors (e.g. provider/anthropic).
+	Extensions = core.Extensions
 	// LogProbs holds the token log-probability payload for a Choice.
 	LogProbs = core.LogProbs
 	// TokenLogprob is the log probability of a single output token.
@@ -109,15 +107,14 @@ const (
 )
 
 // FinishReason constants. See their documentation in the core package.
+// Vendor-specific pass-through values are named by the provider packages
+// (e.g. anthropic.FinishReasonRefusal).
 const (
-	FinishReasonStop                       = core.FinishReasonStop
-	FinishReasonLength                     = core.FinishReasonLength
-	FinishReasonToolCalls                  = core.FinishReasonToolCalls
-	FinishReasonContentFilter              = core.FinishReasonContentFilter
-	FinishReasonFunctionCall               = core.FinishReasonFunctionCall
-	FinishReasonModelContextWindowExceeded = core.FinishReasonModelContextWindowExceeded
-	FinishReasonRefusal                    = core.FinishReasonRefusal
-	FinishReasonPauseTurn                  = core.FinishReasonPauseTurn
+	FinishReasonStop          = core.FinishReasonStop
+	FinishReasonLength        = core.FinishReasonLength
+	FinishReasonToolCalls     = core.FinishReasonToolCalls
+	FinishReasonContentFilter = core.FinishReasonContentFilter
+	FinishReasonFunctionCall  = core.FinishReasonFunctionCall
 )
 
 // ReasoningEffort constants. See their documentation in the core package.

@@ -30,11 +30,10 @@ func TestToAnthropicRequest_SystemCacheBreakpoint(t *testing.T) {
 	req := &ChatRequest{
 		Model: "claude-sonnet-4",
 		Messages: []Message{
-			{
-				Role:            RoleSystem,
-				Content:         NewTextContent("You are a helpful coder."),
-				CacheBreakpoint: true,
-			},
+			cacheMsg(Message{
+				Role:    RoleSystem,
+				Content: NewTextContent("You are a helpful coder."),
+			}),
 			{Role: RoleUser, Content: NewTextContent("hi")},
 		},
 	}
@@ -65,7 +64,7 @@ func TestToAnthropicRequest_ToolCacheBreakpoint(t *testing.T) {
 		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
 		Tools: []Tool{
 			{Type: "function", Function: FunctionDefinition{Name: "t1", Description: "first"}},
-			{Type: "function", Function: FunctionDefinition{Name: "t2", Description: "second"}, CacheBreakpoint: true},
+			cacheTool(Tool{Type: "function", Function: FunctionDefinition{Name: "t2", Description: "second"}}),
 		},
 	}
 	ar, err := toAnthropicRequest(req)
@@ -117,12 +116,12 @@ func TestToAnthropicRequest_BothBreakpoints(t *testing.T) {
 	req := &ChatRequest{
 		Model: "claude-sonnet-4",
 		Messages: []Message{
-			{Role: RoleSystem, Content: NewTextContent("sys"), CacheBreakpoint: true},
+			cacheMsg(Message{Role: RoleSystem, Content: NewTextContent("sys")}),
 			{Role: RoleUser, Content: NewTextContent("hi")},
 		},
 		Tools: []Tool{
 			{Type: "function", Function: FunctionDefinition{Name: "t1"}},
-			{Type: "function", Function: FunctionDefinition{Name: "t2"}, CacheBreakpoint: true},
+			cacheTool(Tool{Type: "function", Function: FunctionDefinition{Name: "t2"}}),
 		},
 	}
 	ar, err := toAnthropicRequest(req)
@@ -146,14 +145,13 @@ func TestToAnthropicRequest_SystemWithPartsAndCache(t *testing.T) {
 	req := &ChatRequest{
 		Model: "claude-sonnet-4",
 		Messages: []Message{
-			{
+			cacheMsg(Message{
 				Role: RoleSystem,
 				Content: NewPartsContent(
 					ContentPart{Type: "text", Text: "first"},
 					ContentPart{Type: "text", Text: "second"},
 				),
-				CacheBreakpoint: true,
-			},
+			}),
 			{Role: RoleUser, Content: NewTextContent("hi")},
 		},
 	}
@@ -184,11 +182,11 @@ func TestChatRequest_OpenAIShape_NoCacheControl(t *testing.T) {
 	req := &ChatRequest{
 		Model: "gpt-4",
 		Messages: []Message{
-			{Role: RoleSystem, Content: NewTextContent("sys"), CacheBreakpoint: true},
-			{Role: RoleUser, Content: NewTextContent("hi"), CacheBreakpoint: true},
+			cacheMsg(Message{Role: RoleSystem, Content: NewTextContent("sys")}),
+			cacheMsg(Message{Role: RoleUser, Content: NewTextContent("hi")}),
 		},
 		Tools: []Tool{
-			{Type: "function", Function: FunctionDefinition{Name: "t1"}, CacheBreakpoint: true},
+			cacheTool(Tool{Type: "function", Function: FunctionDefinition{Name: "t1"}}),
 		},
 	}
 	body, err := json.Marshal(req)
@@ -207,10 +205,10 @@ func TestChatRequest_OpenAIShape_NoCacheControl(t *testing.T) {
 // emits a request-root cache_control of type ephemeral with no ttl.
 func TestToAnthropicRequest_AutoCacheDefault(t *testing.T) {
 	req := &ChatRequest{
-		Model:     "claude-sonnet-4",
-		Messages:  []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
-		AutoCache: true,
+		Model:    "claude-sonnet-4",
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
 	}
+	autoCache(req, "")
 	ar, err := toAnthropicRequest(req)
 	if err != nil {
 		t.Fatalf("toAnthropicRequest: %v", err)
@@ -237,11 +235,10 @@ func TestToAnthropicRequest_AutoCacheDefault(t *testing.T) {
 // ttl through onto the request-root cache_control.
 func TestToAnthropicRequest_AutoCache1h(t *testing.T) {
 	req := &ChatRequest{
-		Model:        "claude-sonnet-4",
-		Messages:     []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
-		AutoCache:    true,
-		AutoCacheTTL: "1h",
+		Model:    "claude-sonnet-4",
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
 	}
+	autoCache(req, "1h")
 	ar, err := toAnthropicRequest(req)
 	if err != nil {
 		t.Fatalf("toAnthropicRequest: %v", err)
@@ -265,7 +262,7 @@ func TestToAnthropicRequest_AutoCacheOff(t *testing.T) {
 	req := &ChatRequest{
 		Model: "claude-sonnet-4",
 		Messages: []Message{
-			{Role: RoleSystem, Content: NewTextContent("sys"), CacheBreakpoint: true},
+			cacheMsg(Message{Role: RoleSystem, Content: NewTextContent("sys")}),
 			{Role: RoleUser, Content: NewTextContent("hi")},
 		},
 	}
@@ -290,11 +287,10 @@ func TestToAnthropicRequest_AutoCacheOff(t *testing.T) {
 // never leaks into the canonical (OpenAI-shape) request body.
 func TestChatRequest_OpenAIShape_NoAutoCacheLeak(t *testing.T) {
 	req := &ChatRequest{
-		Model:        "gpt-4",
-		Messages:     []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
-		AutoCache:    true,
-		AutoCacheTTL: "1h",
+		Model:    "gpt-4",
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
 	}
+	autoCache(req, "1h")
 	body, err := json.Marshal(req)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -328,14 +324,19 @@ func TestFromAnthropicResponse_CacheCreationBreakdown(t *testing.T) {
 
 	cr := fromAnthropicResponse(&ar)
 	u := cr.Usage
-	if u.CacheWriteTokens != 248 {
-		t.Errorf("CacheWriteTokens = %d, want 248", u.CacheWriteTokens)
+
+	ext := UsageExtensionOf(&u)
+	if ext == nil {
+		t.Fatal("usage extension missing")
 	}
-	if u.CacheWrite5mTokens != 148 {
-		t.Errorf("CacheWrite5mTokens = %d, want 148", u.CacheWrite5mTokens)
+	if ext.CacheWriteTokens != 248 {
+		t.Errorf("CacheWriteTokens = %d, want 248", ext.CacheWriteTokens)
 	}
-	if u.CacheWrite1hTokens != 100 {
-		t.Errorf("CacheWrite1hTokens = %d, want 100", u.CacheWrite1hTokens)
+	if ext.CacheWrite5mTokens != 148 {
+		t.Errorf("CacheWrite5mTokens = %d, want 148", ext.CacheWrite5mTokens)
+	}
+	if ext.CacheWrite1hTokens != 100 {
+		t.Errorf("CacheWrite1hTokens = %d, want 100", ext.CacheWrite1hTokens)
 	}
 	if u.CacheReadTokens != 1800 {
 		t.Errorf("CacheReadTokens = %d, want 1800", u.CacheReadTokens)
@@ -355,10 +356,15 @@ func TestFromAnthropicResponse_NoCacheCreation(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7},
 	}
 	u := fromAnthropicResponse(&ar).Usage
-	if u.CacheWriteTokens != 7 {
-		t.Errorf("CacheWriteTokens = %d, want 7", u.CacheWriteTokens)
+
+	ext := UsageExtensionOf(&u)
+	if ext == nil {
+		t.Fatal("usage extension missing")
 	}
-	if u.CacheWrite5mTokens != 0 || u.CacheWrite1hTokens != 0 {
-		t.Errorf("breakdown should be zero without cache_creation, got 5m=%d 1h=%d", u.CacheWrite5mTokens, u.CacheWrite1hTokens)
+	if ext.CacheWriteTokens != 7 {
+		t.Errorf("CacheWriteTokens = %d, want 7", ext.CacheWriteTokens)
+	}
+	if ext.CacheWrite5mTokens != 0 || ext.CacheWrite1hTokens != 0 {
+		t.Errorf("breakdown should be zero without cache_creation, got 5m=%d 1h=%d", ext.CacheWrite5mTokens, ext.CacheWrite1hTokens)
 	}
 }

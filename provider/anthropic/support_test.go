@@ -18,6 +18,7 @@
 package anthropic
 
 import (
+	"encoding/json"
 	"io"
 
 	"github.com/vogo/aimodel/core"
@@ -43,9 +44,6 @@ type (
 	Choice             = core.Choice
 	StreamChunk        = core.StreamChunk
 	Thinking           = core.Thinking
-	StopDetails        = core.StopDetails
-	ServerToolUse      = core.ServerToolUse
-	ResponseContainer  = core.ResponseContainer
 	Error              = core.Error
 	APIError           = core.APIError
 	FinishReason       = core.FinishReason
@@ -57,12 +55,9 @@ const (
 	RoleAssistant = core.RoleAssistant
 	RoleTool      = core.RoleTool
 
-	FinishReasonStop                       = core.FinishReasonStop
-	FinishReasonLength                     = core.FinishReasonLength
-	FinishReasonToolCalls                  = core.FinishReasonToolCalls
-	FinishReasonModelContextWindowExceeded = core.FinishReasonModelContextWindowExceeded
-	FinishReasonRefusal                    = core.FinishReasonRefusal
-	FinishReasonPauseTurn                  = core.FinishReasonPauseTurn
+	FinishReasonStop      = core.FinishReasonStop
+	FinishReasonLength    = core.FinishReasonLength
+	FinishReasonToolCalls = core.FinishReasonToolCalls
 
 	ReasoningEffortLow    = core.ReasoningEffortLow
 	ReasoningEffortMedium = core.ReasoningEffortMedium
@@ -75,6 +70,46 @@ const (
 	ModelAnthropicClaude4Opus   = "claude-opus-4"
 	ModelAnthropicClaude4Sonnet = "claude-sonnet-4"
 )
+
+// cacheMsg returns m with the Anthropic cache-breakpoint extension attached,
+// keeping the migrated wire tests close to their pre-extension baseline.
+func cacheMsg(m Message) Message {
+	ExtendMessage(&m, &MessageExtension{CacheBreakpoint: true})
+
+	return m
+}
+
+// cacheTool returns t with the Anthropic cache-breakpoint extension attached.
+func cacheTool(t Tool) Tool {
+	ExtendTool(&t, &ToolExtension{CacheBreakpoint: true})
+
+	return t
+}
+
+// autoCache attaches the automatic-caching request extension to req.
+func autoCache(req *ChatRequest, ttl string) {
+	ExtendRequest(req, &RequestExtension{AutoCache: true, AutoCacheTTL: ttl})
+}
+
+// extraBlocksOf returns the unmodelled blocks preserved on a message's
+// Anthropic extension, or nil when it carries none.
+func extraBlocksOf(m *Message) []json.RawMessage {
+	if ext := MessageExtensionOf(m); ext != nil {
+		return ext.ExtraBlocks
+	}
+
+	return nil
+}
+
+// chunkContainer returns the execution container reported on a stream chunk's
+// Anthropic extension, or nil.
+func chunkContainer(c *StreamChunk) *ResponseContainer {
+	if ext := ChunkExtensionOf(c); ext != nil {
+		return ext.Container
+	}
+
+	return nil
+}
 
 var (
 	ErrEmptyResponse = core.ErrEmptyResponse

@@ -56,22 +56,13 @@ Both are `omitempty`. Anthropic always requires `max_tokens`, so its translator 
 
 `Modalities []string` (e.g. `["text","audio"]`) and `Audio *AudioConfig{Voice, Format}`. Requesting audio output requires `"audio"` in `Modalities`; the generated audio comes back on `Message.Audio`.
 
-### 1.8 Anthropic pass-through
+### 1.8 Provider extensions (`Extensions`)
 
-Optional and `omitempty`, so a zero-value request's wire JSON is unchanged:
+`Extensions core.Extensions` (`json:"-"`) is the unified provider extension channel: a map keyed by registered provider name holding one provider-defined value per namespace. It exists on `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk` and `StreamChunkChoice`, and never appears in canonical JSON. See [../api.md](../api.md) §2 for the contract, and `provider/anthropic/extension.go` for the built-in Anthropic surface (`RequestExtension` with `AutoCache` / `AutoCacheTTL` / `Container` / `InferenceGeo`, plus the message / tool / response extensions).
 
-- `Container string` → `container`: reuse a server-side execution container across requests, keeping its code-execution state alive. Feed back the ID from a previous `ChatResponse.Container` / `StreamChunk.Container`.
-- `InferenceGeo string` → `inference_geo`: pin the inference geography for data residency (e.g. `"us"` / `"eu"`); plain `string` for pass-through.
+### 1.9 `Clone()`
 
-### 1.9 Anthropic struct-local switches
-
-Marked `json:"-"`, so they **never** appear on the canonical (OpenAI-shape) body — only the Anthropic translator reads them:
-
-- `AutoCache bool` + `AutoCacheTTL string` — see [prompt-caching.md](./prompt-caching.md).
-
-### 1.10 `Clone()`
-
-Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `core.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and each tool's `AllowedCallers` / `InputExamples` slices. Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`, `InputExamples` entries) are shared by contract. Providers receive this working copy and may rewrite it freely.
+Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `core.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and the `Extensions` map at every node (request, each message, each tool). Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`) and extension values are shared by contract; extension values are read-only configuration and must not be mutated after being attached. Providers receive this working copy and may rewrite it freely.
 
 ---
 
@@ -85,8 +76,7 @@ type Message struct {
     ToolCallID string
     ToolCalls  []ToolCall
     Audio      *MessageAudio
-    CacheBreakpoint bool          `json:"-"`
-    ExtraBlocks []json.RawMessage `json:"-"`
+    Extensions core.Extensions `json:"-"`  // provider extension channel
 }
 ```
 
@@ -113,7 +103,7 @@ aimodel.NewPartsContent(                                 // → [{...},{...}]
 | `input_audio` | `InputAudio{Data (base64), Format ("wav"/"mp3")}` |
 | `file` | `FilePart{FileID}`, or `{Filename, FileData}` for inline base64 contents |
 
-`ExtraBlocks` is the verbatim escape hatch for protocol content blocks this wrapper does not model — see [streaming.md](./streaming.md) §4.
+On the Anthropic path, native content blocks the canonical layer does not model are preserved verbatim on the message's extension (`anthropic.MessageExtensionOf(&msg).ExtraBlocks`) — see [streaming.md](./streaming.md) §4.
 
 ---
 
@@ -126,40 +116,33 @@ type ChatResponse struct {
     Choices []Choice
     Usage   Usage
     Error   *Error
-    Container *ResponseContainer  // Anthropic server-side execution container
-}
-
-// ExpiresAt stays the server-supplied string: no expiry parsing,
-// no auto-renewal, no retry.
-type ResponseContainer struct {
-    ID        string
-    ExpiresAt string
+    Extensions core.Extensions `json:"-"`  // provider response metadata
 }
 
 type Choice struct {
     Index        int
     Message      Message
     FinishReason FinishReason
-    LogProbs     *LogProbs     // present when the request set Logprobs
-    StopDetails  *StopDetails  // Anthropic structured stop classification
+    LogProbs     *LogProbs  // present when the request set Logprobs
+    Extensions core.Extensions `json:"-"`  // provider per-choice metadata
 }
 ```
 
 ### 3.1 `FinishReason`
 
-Mirrors OpenAI's `finish_reason`: `stop` / `length` / `tool_calls` / `content_filter`, plus the legacy `function_call`. Anthropic stop reasons with no OpenAI equivalent **pass through verbatim** as named constants rather than being folded into an existing value:
+Mirrors OpenAI's `finish_reason`: `stop` / `length` / `tool_calls` / `content_filter`, plus the legacy `function_call`. `FinishReason` stays an open string: providers pass values with no canonical equivalent through **verbatim** rather than folding them into an existing value, and name their own convenience constants — e.g. `anthropic.FinishReasonRefusal` / `FinishReasonPauseTurn` / `FinishReasonModelContextWindowExceeded` for Anthropic's pass-through stop reasons. Folding those into `content_filter` / `length` would destroy exactly the information a caller decides on (replay? switch model? change the prompt?). Treat any non-canonical `FinishReason` as an opaque string.
 
-| Constant | Meaning |
+### 3.2 Provider response metadata
+
+Response information with no cross-provider consensus rides the `Extensions` channel and is read through the owning provider's typed accessors. For the built-in Anthropic provider:
+
+| Information | Accessor |
 |---|---|
-| `FinishReasonModelContextWindowExceeded` | Input + output exceeded the model's context window — distinct from hitting the requested `max_tokens` (`length`). |
-| `FinishReasonRefusal` | Streaming classifiers intervened on a potential policy violation. |
-| `FinishReasonPauseTurn` | A long-running / server-tool turn was paused; the client may replay it to continue. |
+| Structured stop classification (`stop_details`, e.g. the refusal category) | `anthropic.ChoiceExtensionOf(&resp.Choices[0]).StopDetails` (unary) / `anthropic.ChunkChoiceExtensionOf(&chunk.Choices[0])` (terminal stream chunk) |
+| Server-side execution container | `anthropic.ResponseExtensionOf(resp).Container` (unary) / `anthropic.ChunkExtensionOf(chunk)` (the chunk carrying `message_start`); feed the ID back via `anthropic.RequestExtension.Container` |
+| Cache writes, server-tool counts, inference geography | `anthropic.UsageExtensionOf(&resp.Usage)` — see §4 |
 
-Folding these into `content_filter` / `length` would destroy exactly the information a caller decides on (replay? switch model? change the prompt?). Treat any non-canonical `FinishReason` as an opaque string.
-
-### 3.2 `StopDetails`
-
-`{Type, Category, Explanation}`, all `omitempty`, returned alongside `stop_reason:"refusal"` — e.g. `{type:"refusal", category:"cyber", explanation:…}`. It surfaces on `Choice.StopDetails` (non-streaming) and `StreamChunkChoice.StopDetails` (the terminal `message_delta`), and is `nil` when absent. `Explanation` is best-effort and not guaranteed stable across model versions.
+Each accessor returns `nil` when the response carries no such metadata.
 
 ### 3.3 `LogProbs`
 
@@ -176,19 +159,22 @@ When `Logprobs` is true, `Choice.LogProbs` carries the parsed `content` / `refus
 ```go
 type Usage struct {
     PromptTokens, CompletionTokens, TotalTokens int
-    CacheReadTokens    int  // cache-hit prompt tokens
-    CacheWriteTokens   int  // total prompt-cache writes (Anthropic)
+    CacheReadTokens int     // cache-hit prompt tokens (OpenAI + Anthropic)
+    ReasoningTokens int     // reasoning model's internal thinking (OpenAI + Anthropic)
+    ServiceTier     string  // tier that served the request (OpenAI + Anthropic)
+    Extensions core.Extensions `json:"-"`  // provider usage accounting
+}
+```
+
+The canonical fields are exactly the counts with a cross-provider mapping. Anthropic-only accounting comes back on `anthropic.UsageExtensionOf(&u)`:
+
+```go
+type UsageExtension struct {  // package anthropic
+    CacheWriteTokens   int  // total prompt-cache writes
     CacheWrite5mTokens int  // split by TTL
     CacheWrite1hTokens int
-    ReasoningTokens    int  // reasoning model's internal thinking
-    ServerToolUse *ServerToolUse  // server-side tool invocations (Anthropic)
-    InferenceGeo  string          // where inference ran (Anthropic)
-    ServiceTier   string          // tier that served the request (Anthropic)
-}
-
-type ServerToolUse struct {
-    WebSearchRequests int
-    WebFetchRequests  int
+    ServerToolUse *ServerToolUse  // server-side tool invocations
+    InferenceGeo  string          // where inference ran
 }
 ```
 
@@ -196,7 +182,5 @@ Key points:
 
 - **Cache read/write tokens are subsets of `PromptTokens`**, and `ReasoningTokens` a subset of `CompletionTokens`. They are surfaced separately for observability — do not add them again when computing cost.
 - `UnmarshalJSON` promotes nested protocol details to the top-level canonical fields: `prompt_tokens_details.cached_tokens` → `CacheReadTokens`; `completion_tokens_details.reasoning_tokens` (OpenAI) / `output_tokens_details.thinking_tokens` (Anthropic) → `ReasoningTokens`. **An explicit top-level field wins** — the nested value is only used when the top-level one is 0.
-- `CacheWrite5mTokens + CacheWrite1hTokens == CacheWriteTokens` whenever Anthropic returns the breakdown.
-- Both `ServerToolUse` counts are individually `omitempty` (omitted from JSON at 0); the whole object is `nil` when no server tool ran.
-- `Add(other)` accumulates every count, including `ServerToolUse`, which makes multi-turn / multi-model aggregation straightforward. `InferenceGeo` and `ServiceTier` describe **one** request, so `Add` leaves them untouched.
-- OpenAI has no cache-write accounting, so the `CacheWrite*` fields stay 0 on that path.
+- `CacheWrite5mTokens + CacheWrite1hTokens == CacheWriteTokens` whenever Anthropic returns the breakdown; the extension is absent when the response carries no Anthropic-only accounting (OpenAI path always).
+- `Add(other)` accumulates the canonical counts, which makes multi-turn / multi-model aggregation straightforward. `ServiceTier` and `Extensions` describe **one** request, so `Add` leaves them untouched — aggregate provider-specific accounting by reading each response's extension.

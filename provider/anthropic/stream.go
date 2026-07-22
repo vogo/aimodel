@@ -40,6 +40,17 @@ func (p *provider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
 	}
 }
 
+// extraBlockDelta wraps one verbatim unmodelled sub-object as a delta message
+// whose Anthropic extension carries it. Message.AppendDelta accumulates these
+// through MessageExtension.MergeExtension, preserving arrival order.
+func extraBlockDelta(raw json.RawMessage) core.Message {
+	var m core.Message
+
+	m.Extensions.Set(Name, &MessageExtension{ExtraBlocks: []json.RawMessage{raw}})
+
+	return m
+}
+
 type streamDecoder struct {
 	sc *bufio.Scanner
 
@@ -118,11 +129,13 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			// produce tool events or end immediately, and the caller needs
 			// the ID to reuse the container on the next turn.
 			if ms.Message.Container != nil {
-				return &core.StreamChunk{
-					ID:        d.msgID,
-					Model:     d.model,
-					Container: ms.Message.Container,
-				}, nil
+				chunk := &core.StreamChunk{
+					ID:    d.msgID,
+					Model: d.model,
+				}
+				chunk.Extensions.Set(Name, &ResponseExtension{Container: ms.Message.Container})
+
+				return chunk, nil
 			}
 
 			continue
@@ -175,9 +188,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 					Choices: []core.StreamChunkChoice{
 						{
 							Index: 0,
-							Delta: core.Message{
-								ExtraBlocks: []json.RawMessage{cbs.ContentBlock.raw},
-							},
+							Delta: extraBlockDelta(cbs.ContentBlock.raw),
 						},
 					},
 				}, nil
@@ -201,9 +212,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				chunk.Choices = []core.StreamChunkChoice{
 					{
 						Index: 0,
-						Delta: core.Message{
-							ExtraBlocks: []json.RawMessage{cbd.Delta.raw},
-						},
+						Delta: extraBlockDelta(cbd.Delta.raw),
 					},
 				}
 
@@ -258,9 +267,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				chunk.Choices = []core.StreamChunkChoice{
 					{
 						Index: 0,
-						Delta: core.Message{
-							ExtraBlocks: []json.RawMessage{cbd.Delta.raw},
-						},
+						Delta: extraBlockDelta(cbd.Delta.raw),
 					},
 				}
 			}
@@ -275,16 +282,19 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 
 			reason := string(mapAnthropicStopReason(md.Delta.StopReason))
 
+			terminal := core.StreamChunkChoice{
+				Index:        0,
+				FinishReason: &reason,
+			}
+
+			if md.Delta.StopDetails != nil {
+				terminal.Extensions.Set(Name, &ChoiceExtension{StopDetails: md.Delta.StopDetails})
+			}
+
 			chunk := &core.StreamChunk{
-				ID:    d.msgID,
-				Model: d.model,
-				Choices: []core.StreamChunkChoice{
-					{
-						Index:        0,
-						FinishReason: &reason,
-						StopDetails:  md.Delta.StopDetails,
-					},
-				},
+				ID:      d.msgID,
+				Model:   d.model,
+				Choices: []core.StreamChunkChoice{terminal},
 			}
 
 			if md.Usage != nil {

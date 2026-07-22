@@ -509,14 +509,19 @@ func TestAnthropicStreamCacheCreationBreakdown(t *testing.T) {
 		t.Fatal("expected a chunk with usage")
 	}
 	u := usageChunk.Usage
-	if u.CacheWriteTokens != 248 {
-		t.Errorf("cache_write_tokens = %d, want 248", u.CacheWriteTokens)
+
+	uext := UsageExtensionOf(u)
+	if uext == nil {
+		t.Fatal("usage extension missing")
 	}
-	if u.CacheWrite5mTokens != 148 {
-		t.Errorf("cache_write_5m_tokens = %d, want 148", u.CacheWrite5mTokens)
+	if uext.CacheWriteTokens != 248 {
+		t.Errorf("cache_write_tokens = %d, want 248", uext.CacheWriteTokens)
 	}
-	if u.CacheWrite1hTokens != 100 {
-		t.Errorf("cache_write_1h_tokens = %d, want 100", u.CacheWrite1hTokens)
+	if uext.CacheWrite5mTokens != 148 {
+		t.Errorf("cache_write_5m_tokens = %d, want 148", uext.CacheWrite5mTokens)
+	}
+	if uext.CacheWrite1hTokens != 100 {
+		t.Errorf("cache_write_1h_tokens = %d, want 100", uext.CacheWrite1hTokens)
 	}
 	if u.CacheReadTokens != 1800 {
 		t.Errorf("cache_read_tokens = %d, want 1800", u.CacheReadTokens)
@@ -608,10 +613,12 @@ func TestAnthropicStreamRefusalStopDetails(t *testing.T) {
 		t.Fatalf("finish_reason = %v, want %q", chunk.Choices[0].FinishReason, FinishReasonRefusal)
 	}
 
-	sd := chunk.Choices[0].StopDetails
-	if sd == nil {
+	cext := ChunkChoiceExtensionOf(&chunk.Choices[0])
+	if cext == nil || cext.StopDetails == nil {
 		t.Fatal("StopDetails = nil, want populated")
 	}
+
+	sd := cext.StopDetails
 
 	if sd.Type != "refusal" || sd.Category != "cyber" || sd.Explanation != "policy" {
 		t.Errorf("StopDetails = %+v, want {refusal cyber policy}", sd)

@@ -60,13 +60,13 @@ type anthropicRequest struct {
 	// both are absent.
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	// Container reuses a server-side execution container across requests,
-	// mapped straight through from core.ChatRequest.Container.
+	// mapped straight through from RequestExtension.Container.
 	Container string `json:"container,omitempty"`
 	// InferenceGeo pins the inference geography for data residency, mapped
-	// straight through from core.ChatRequest.InferenceGeo.
+	// straight through from RequestExtension.InferenceGeo.
 	InferenceGeo string `json:"inference_geo,omitempty"`
 	// CacheControl, when set, is the request-root automatic-caching marker
-	// (mapped from core.ChatRequest.AutoCache). The server caches the last
+	// (mapped from RequestExtension.AutoCache). The server caches the last
 	// cacheable block and advances the breakpoint as the conversation grows.
 	// It coexists with per-block cache_control markers.
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
@@ -172,15 +172,15 @@ type anthropicResponse struct {
 	Content      []anthropicResponseBlock `json:"content"`
 	StopReason   string                   `json:"stop_reason"`
 	StopSequence *string                  `json:"stop_sequence"`
-	// core.StopDetails carries the structured stop classification (e.g. the refusal
-	// category) returned alongside stop_reason "refusal". Its fields match the
-	// canonical core.StopDetails exactly, so it deserializes straight into it.
-	StopDetails *core.StopDetails `json:"stop_details"`
-	Usage       anthropicUsage    `json:"usage"`
-	// Container is the server-side execution container the response used. Its
-	// fields match the canonical core.ResponseContainer exactly, so it deserializes
-	// straight into it; nil when absent or null.
-	Container *core.ResponseContainer `json:"container"`
+	// StopDetails carries the structured stop classification (e.g. the refusal
+	// category) returned alongside stop_reason "refusal". The public extension
+	// type's JSON tags match the wire shape, so it deserializes directly.
+	StopDetails *StopDetails   `json:"stop_details"`
+	Usage       anthropicUsage `json:"usage"`
+	// Container is the server-side execution container the response used. The
+	// public extension type's JSON tags match the wire shape; nil when absent
+	// or null.
+	Container *ResponseContainer `json:"container"`
 }
 
 // anthropicResponseBlock is a response-side content block: the known fields
@@ -330,23 +330,36 @@ type anthropicMessageDelta struct {
 }
 
 type anthropicMessageDeltaData struct {
-	StopReason   string            `json:"stop_reason,omitempty"`
-	StopSequence *string           `json:"stop_sequence,omitempty"`
-	StopDetails  *core.StopDetails `json:"stop_details,omitempty"`
+	StopReason   string       `json:"stop_reason,omitempty"`
+	StopSequence *string      `json:"stop_sequence,omitempty"`
+	StopDetails  *StopDetails `json:"stop_details,omitempty"`
 }
 
 // --- Translation functions ---
 
 // toAnthropicRequest converts a core.ChatRequest to an Anthropic API request.
+// Anthropic-only parameters arrive through the unified extension channel
+// (RequestExtension / MessageExtension / ToolExtension); a mis-typed
+// extension value fails here — before any network I/O — with a
+// *core.ExtensionTypeError.
 func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
+	reqExt, err := extensionOf[RequestExtension](req.Extensions, "ChatRequest")
+	if err != nil {
+		return nil, err
+	}
+
+	if reqExt == nil {
+		reqExt = &RequestExtension{}
+	}
+
 	ar := &anthropicRequest{
 		Model:        req.Model,
 		Temperature:  req.Temperature,
 		TopP:         req.TopP,
 		TopK:         req.TopK,
 		Stream:       req.Stream,
-		Container:    req.Container,
-		InferenceGeo: req.InferenceGeo,
+		Container:    reqExt.Container,
+		InferenceGeo: reqExt.InferenceGeo,
 	}
 
 	// MaxTokens: Anthropic always uses max_tokens. Prefer the newer
@@ -391,7 +404,12 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	for i := 0; i < len(req.Messages); i++ {
 		m := req.Messages[i]
 		if m.Role == core.RoleSystem && !seenNonSystem {
-			if m.CacheBreakpoint {
+			bp, err := messageCacheBreakpoint(&m)
+			if err != nil {
+				return nil, err
+			}
+
+			if bp {
 				anyCacheableSystem = true
 				useBlocks = true
 			}
@@ -477,19 +495,30 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 		ar.System = data
 	}
 
-	// Convert tools. Tools flagged with CacheBreakpoint carry a
-	// cache_control marker; Anthropic caches every tool up to and
-	// including the flagged one.
+	// Convert tools. Anthropic-only tool controls (cache breakpoint, defer
+	// loading, allowed callers, eager input streaming, input examples) arrive
+	// on each tool's ToolExtension; a flagged breakpoint carries a
+	// cache_control marker — Anthropic caches every tool up to and including
+	// the flagged one.
 	for _, t := range req.Tools {
+		tExt, err := extensionOf[ToolExtension](t.Extensions, "Tool")
+		if err != nil {
+			return nil, err
+		}
+
+		if tExt == nil {
+			tExt = &ToolExtension{}
+		}
+
 		at := anthropicTool{
 			Name:                t.Function.Name,
 			Description:         t.Function.Description,
 			InputSchema:         t.Function.Parameters,
 			Strict:              t.Strict,
-			DeferLoading:        t.DeferLoading,
-			AllowedCallers:      t.AllowedCallers,
-			EagerInputStreaming: t.EagerInputStreaming,
-			InputExamples:       t.InputExamples,
+			DeferLoading:        tExt.DeferLoading,
+			AllowedCallers:      tExt.AllowedCallers,
+			EagerInputStreaming: tExt.EagerInputStreaming,
+			InputExamples:       tExt.InputExamples,
 		}
 
 		// "function" is OpenAI's only tool kind and the canonical default, so
@@ -500,7 +529,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 			at.Type = t.Type
 		}
 
-		if t.CacheBreakpoint {
+		if tExt.CacheBreakpoint {
 			at.CacheControl = ephemeralCache()
 		}
 		ar.Tools = append(ar.Tools, at)
@@ -536,12 +565,23 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 
 	// Automatic caching: a single request-root cache_control. The server
 	// caches the last cacheable block and advances the breakpoint as the
-	// conversation grows. Coexists with per-block CacheBreakpoint markers.
-	if req.AutoCache {
-		ar.CacheControl = &anthropicCacheControl{Type: "ephemeral", TTL: req.AutoCacheTTL}
+	// conversation grows. Coexists with per-block breakpoint markers.
+	if reqExt.AutoCache {
+		ar.CacheControl = &anthropicCacheControl{Type: "ephemeral", TTL: reqExt.AutoCacheTTL}
 	}
 
 	return ar, nil
+}
+
+// messageCacheBreakpoint reports whether the message's Anthropic extension
+// asks for a prompt-cache boundary, failing on a mis-typed extension value.
+func messageCacheBreakpoint(m *core.Message) (bool, error) {
+	ext, err := extensionOf[MessageExtension](m.Extensions, "Message")
+	if err != nil {
+		return false, err
+	}
+
+	return ext != nil && ext.CacheBreakpoint, nil
 }
 
 // toAnthropicOutputConfig builds the output_config object from the canonical
@@ -601,7 +641,13 @@ func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
 		ToolUseID:     m.ToolCallID,
 		ResultContent: m.Content.Text(),
 	}
-	if m.CacheBreakpoint {
+
+	bp, err := messageCacheBreakpoint(&m)
+	if err != nil {
+		return anthropicContentBlock{}, err
+	}
+
+	if bp {
 		block.CacheControl = ephemeralCache()
 	}
 
@@ -642,6 +688,11 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 		return toAnthropicToolResultMessage([]core.Message{m})
 	}
 
+	cacheBreakpoint, err := messageCacheBreakpoint(&m)
+	if err != nil {
+		return anthropicMessage{}, err
+	}
+
 	// Assistant messages with thinking, tool calls, or both require content-block format.
 	if m.Role == core.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
 		var blocks []anthropicContentBlock
@@ -670,7 +721,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 			})
 		}
 
-		if m.CacheBreakpoint && len(blocks) > 0 {
+		if cacheBreakpoint && len(blocks) > 0 {
 			blocks[len(blocks)-1].CacheControl = ephemeralCache()
 		}
 
@@ -719,7 +770,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 			}
 		}
 
-		if m.CacheBreakpoint && len(blocks) > 0 {
+		if cacheBreakpoint && len(blocks) > 0 {
 			blocks[len(blocks)-1].CacheControl = ephemeralCache()
 		}
 
@@ -735,7 +786,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 	// Plain text message. Promote to block-array form when the caller
 	// flagged CacheBreakpoint so we can attach cache_control.
-	if m.CacheBreakpoint {
+	if cacheBreakpoint {
 		block := anthropicContentBlock{
 			Type:         "text",
 			Text:         m.Content.Text(),
@@ -784,6 +835,9 @@ func convertToolChoice(tc any) *anthropicToolChoice {
 }
 
 // fromAnthropicResponse converts an Anthropic API response to a core.ChatResponse.
+// Anthropic-only response information — unmodelled content blocks, structured
+// stop details, the execution container, cache-write accounting — is written
+// into this provider's extension namespaces instead of canonical fields.
 func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 	msg := core.Message{
 		Role: core.RoleAssistant,
@@ -792,6 +846,8 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 	var textParts []string
 
 	var thinkingParts []string
+
+	var extraBlocks []json.RawMessage
 
 	for _, block := range ar.Content {
 		switch block.Type {
@@ -805,7 +861,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 			// above; keep the whole original block so the annotations remain
 			// reachable.
 			if len(block.Citations) > 0 {
-				msg.ExtraBlocks = append(msg.ExtraBlocks, block.raw)
+				extraBlocks = append(extraBlocks, block.raw)
 			}
 		case "tool_use":
 			msg.ToolCalls = append(msg.ToolCalls, core.ToolCall{
@@ -822,7 +878,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 			// code_execution_tool_result, …) and any block type added after
 			// this wrapper was written. Preserve the original JSON instead of
 			// dropping it silently.
-			msg.ExtraBlocks = append(msg.ExtraBlocks, block.raw)
+			extraBlocks = append(extraBlocks, block.raw)
 		}
 	}
 
@@ -834,51 +890,73 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 		msg.Content = core.NewTextContent(strings.Join(textParts, "\n"))
 	}
 
-	return &core.ChatResponse{
-		ID:     ar.ID,
-		Object: "chat.completion",
-		Model:  ar.Model,
-		Choices: []core.Choice{
-			{
-				Index:        0,
-				Message:      msg,
-				FinishReason: mapAnthropicStopReason(ar.StopReason),
-				StopDetails:  ar.StopDetails,
-			},
-		},
-		Usage:     anthropicCanonicalUsage(&ar.Usage),
-		Container: ar.Container,
+	if len(extraBlocks) > 0 {
+		msg.Extensions.Set(Name, &MessageExtension{ExtraBlocks: extraBlocks})
 	}
+
+	choice := core.Choice{
+		Index:        0,
+		Message:      msg,
+		FinishReason: mapAnthropicStopReason(ar.StopReason),
+	}
+
+	if ar.StopDetails != nil {
+		choice.Extensions.Set(Name, &ChoiceExtension{StopDetails: ar.StopDetails})
+	}
+
+	cr := &core.ChatResponse{
+		ID:      ar.ID,
+		Object:  "chat.completion",
+		Model:   ar.Model,
+		Choices: []core.Choice{choice},
+		Usage:   anthropicCanonicalUsage(&ar.Usage),
+	}
+
+	if ar.Container != nil {
+		cr.Extensions.Set(Name, &ResponseExtension{Container: ar.Container})
+	}
+
+	return cr
 }
 
 // anthropicCanonicalUsage builds a canonical Usage from an Anthropic usage
-// object, folding cached/created tokens into PromptTokens (as before) while
-// surfacing the cache read/write counts and the per-TTL write breakdown.
+// object, folding cached/created tokens into PromptTokens (as before). The
+// cross-provider counts stay canonical; cache-write totals, the per-TTL
+// breakdown, server-tool counts and the inference geography go into the
+// UsageExtension namespace (attached only when any of them is present).
 func anthropicCanonicalUsage(u *anthropicUsage) core.Usage {
 	cu := core.Usage{
 		PromptTokens:     u.totalInputTokens(),
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.totalInputTokens() + u.OutputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
-		CacheWriteTokens: u.CacheCreationInputTokens,
-		InferenceGeo:     u.InferenceGeo,
 		ServiceTier:      u.ServiceTier,
-	}
-
-	if u.CacheCreation != nil {
-		cu.CacheWrite5mTokens = u.CacheCreation.Ephemeral5mInputTokens
-		cu.CacheWrite1hTokens = u.CacheCreation.Ephemeral1hInputTokens
 	}
 
 	if u.OutputTokensDetails != nil {
 		cu.ReasoningTokens = u.OutputTokensDetails.ThinkingTokens
 	}
 
+	ext := &UsageExtension{
+		CacheWriteTokens: u.CacheCreationInputTokens,
+		InferenceGeo:     u.InferenceGeo,
+	}
+
+	if u.CacheCreation != nil {
+		ext.CacheWrite5mTokens = u.CacheCreation.Ephemeral5mInputTokens
+		ext.CacheWrite1hTokens = u.CacheCreation.Ephemeral1hInputTokens
+	}
+
 	if u.ServerToolUse != nil {
-		cu.ServerToolUse = &core.ServerToolUse{
+		ext.ServerToolUse = &ServerToolUse{
 			WebSearchRequests: u.ServerToolUse.WebSearchRequests,
 			WebFetchRequests:  u.ServerToolUse.WebFetchRequests,
 		}
+	}
+
+	if ext.CacheWriteTokens != 0 || ext.InferenceGeo != "" || ext.ServerToolUse != nil ||
+		ext.CacheWrite5mTokens != 0 || ext.CacheWrite1hTokens != 0 {
+		cu.Extensions.Set(Name, ext)
 	}
 
 	return cu
@@ -965,11 +1043,11 @@ func mapAnthropicStopReason(reason string) core.FinishReason {
 	case "tool_use":
 		return core.FinishReasonToolCalls
 	case "model_context_window_exceeded":
-		return core.FinishReasonModelContextWindowExceeded
+		return FinishReasonModelContextWindowExceeded
 	case "refusal":
-		return core.FinishReasonRefusal
+		return FinishReasonRefusal
 	case "pause_turn":
-		return core.FinishReasonPauseTurn
+		return FinishReasonPauseTurn
 	default:
 		return core.FinishReason(reason)
 	}
