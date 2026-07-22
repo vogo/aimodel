@@ -7,7 +7,7 @@ A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero
 
 This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
-The SDK is layered. The **canonical layer** exposes one stable, OpenAI-shaped interface — the greatest common denominator across vendors — so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete, continuously-synced fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Use the canonical interface for cross-vendor portability; full official-API coverage is the native layer's responsibility. Architecture details: [doc/api.md](./doc/api.md).
+The SDK is layered. The **canonical layer** exposes one stable, OpenAI-shaped interface — the greatest common denominator across vendors — so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete, continuously-synced fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Use the canonical interface for cross-vendor portability; full official-API coverage is the native layer's responsibility. Architecture details: [doc/architecture.md](./doc/architecture.md).
 
 ## Documentation
 
@@ -15,7 +15,7 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 
 | Topic | Document |
 |---|---|
-| Architecture, canonical representation, client & dispatch | [doc/api.md](./doc/api.md) |
+| Architecture, canonical representation, client & dispatch | [doc/architecture.md](./doc/architecture.md) |
 | Request/response types, `Usage` | [doc/design/data-model.md](./doc/design/data-model.md) |
 | Streaming, delta merging, unmodelled blocks | [doc/design/streaming.md](./doc/design/streaming.md) |
 | Tool definitions, `tool_choice`, parallel tool results | [doc/design/tool-use.md](./doc/design/tool-use.md) |
@@ -35,7 +35,10 @@ Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 ## Usage
 
 ```go
-import "github.com/vogo/aimodel"
+import (
+    "github.com/vogo/aimodel"
+    "github.com/vogo/aimodel/ais"
+)
 ```
 
 Set env vars `AI_API_KEY` and `AI_BASE_URL` (or `OPENAI_API_KEY` / `OPENAI_BASE_URL`).
@@ -46,7 +49,7 @@ Set env vars `AI_API_KEY` and `AI_BASE_URL` (or `OPENAI_API_KEY` / `OPENAI_BASE_
 client, _ := aimodel.NewClient()
 
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelOpenaiGPT4o,
+    Model: ais.ModelOpenaiGPT41,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
@@ -60,7 +63,7 @@ Use `MaxCompletionTokens` rather than the deprecated `MaxTokens` — it is the o
 ```go
 maxCompletionTokens := 1024
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:               aimodel.ModelOpenaiO3, // reasoning model
+    Model:               ais.ModelOpenaiO3, // reasoning model
     MaxCompletionTokens: &maxCompletionTokens,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
@@ -72,7 +75,7 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:           aimodel.ModelOpenaiGPT4o,
+    Model:           ais.ModelOpenaiGPT41,
     ReasoningEffort: aimodel.ReasoningEffortHigh, // none/minimal/low/medium/high/xhigh
     Verbosity:       aimodel.VerbosityLow,        // low/medium/high
     Messages: []aimodel.Message{
@@ -89,7 +92,7 @@ Both stay plain `string`, so any value a custom OpenAI-compatible backend accept
 logprobs := true
 topLogprobs := 5
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:          aimodel.ModelOpenaiGPT4o,
+    Model:          ais.ModelOpenaiGPT41,
     Logprobs:       &logprobs,
     TopLogprobs:    &topLogprobs,
     ServiceTier:    "priority",
@@ -110,7 +113,7 @@ anthropic.ExtendRequest(req, &anthropic.RequestExtension{AutoCache: true})
 anthropic.ExtendMessage(&req.Messages[0], &anthropic.MessageExtension{CacheBreakpoint: true})
 ```
 
-See [doc/api.md](./doc/api.md) §2 for the extension-channel contract and [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) for the caching API.
+See [doc/architecture.md](./doc/architecture.md) §2 for the extension-channel contract and [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) for the caching API.
 
 `resp.Usage` normalizes token counts across protocols (cache read/write, reasoning tokens, server-tool counts, inference geography, service tier); see [doc/design/data-model.md](./doc/design/data-model.md) §4.
 
@@ -120,7 +123,7 @@ See [doc/api.md](./doc/api.md) §2 for the extension-channel contract and [doc/d
 
 ```go
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:      aimodel.ModelOpenaiGPT4o,
+    Model:      ais.ModelOpenaiGPT41,
     Modalities: []string{"text", "audio"},
     Audio:      &aimodel.AudioConfig{Voice: "alloy", Format: "wav"},
     Messages: []aimodel.Message{
@@ -142,7 +145,7 @@ if a := resp.Choices[0].Message.Audio; a != nil {
 
 ```go
 stream, _ := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelOpenaiGPT4o,
+    Model: ais.ModelOpenaiGPT41,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
@@ -173,7 +176,7 @@ client, _ := aimodel.NewClient(
 )
 
 resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: aimodel.ModelAnthropicClaude4Sonnet,
+    Model: ais.ModelAnthropicClaudeSonnet5,
     Messages: []aimodel.Message{
         {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
     },
@@ -216,7 +219,7 @@ client, _ := aimodel.NewClient(
 )
 ```
 
-Each field ignores an empty value and omits its header entirely when unset. The full option table is in [doc/api.md](./doc/api.md) §3.1.
+Each field ignores an empty value and omits its header entirely when unset. The full option table is in [doc/architecture.md](./doc/architecture.md) §3.1.
 
 ### Multi-Model Compose
 

@@ -88,7 +88,7 @@ func TestProvidersAreIndependent(t *testing.T) {
 }
 
 // TestProvidersDoNotDependOnRoot verifies providers depend only on the shared
-// core foundation, never on the root package (which would create a cycle) or on
+// api foundation, never on the root package (which would create a cycle) or on
 // composes.
 func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	for _, dir := range []string{"provider/openai", "provider/anthropic"} {
@@ -105,7 +105,8 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 }
 
 // TestComposesDependsOnlyOnCapability verifies composes depends on the root
-// capability surface, never on the registry, core, or any vendor provider.
+// capability surface plus the canonical api package, never on the registry or
+// any vendor provider.
 func TestComposesDependsOnlyOnCapability(t *testing.T) {
 	imports := packageImports(t, "composes")
 
@@ -113,14 +114,14 @@ func TestComposesDependsOnlyOnCapability(t *testing.T) {
 		if strings.Contains(path, "/provider/") {
 			t.Errorf("composes must not import a provider subpackage, found %q", path)
 		}
-
-		if path == "github.com/vogo/aimodel/core" {
-			t.Error("composes must not import core directly; it depends only on the root capability interface")
-		}
 	}
 
 	if !imports["github.com/vogo/aimodel"] {
 		t.Error("composes should depend on the root capability interface")
+	}
+
+	if !imports["github.com/vogo/aimodel/ais"] {
+		t.Error("composes should take canonical types directly from the ais package")
 	}
 }
 

@@ -24,12 +24,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // TestToAnthropicRequest_MistypedExtensionFails verifies a wrong-typed value
 // in this provider's namespace fails translation — before any network I/O —
-// with a *core.ExtensionTypeError naming the canonical node, at every
+// with a *ais.ExtensionTypeError naming the canonical node, at every
 // request-side node.
 func TestToAnthropicRequest_MistypedExtensionFails(t *testing.T) {
 	tests := []struct {
@@ -76,9 +76,9 @@ func TestToAnthropicRequest_MistypedExtensionFails(t *testing.T) {
 				t.Fatal("expected an extension type error")
 			}
 
-			var extErr *core.ExtensionTypeError
+			var extErr *ais.ExtensionTypeError
 			if !errors.As(err, &extErr) {
-				t.Fatalf("error type = %T, want *core.ExtensionTypeError", err)
+				t.Fatalf("error type = %T, want *ais.ExtensionTypeError", err)
 			}
 
 			if extErr.Provider != Name || extErr.Node != tt.node {
@@ -92,7 +92,7 @@ func TestToAnthropicRequest_MistypedExtensionFails(t *testing.T) {
 // provider surface rejects a mis-typed extension at request-build time — the
 // caller gets the error without any HTTP request being issued.
 func TestProviderNewChatRequest_MistypedExtensionFailsBeforeIO(t *testing.T) {
-	prov, err := New(core.Config{APIKey: "k"})
+	prov, err := New(ais.Config{APIKey: "k"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

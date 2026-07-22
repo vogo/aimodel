@@ -7,7 +7,7 @@ This file records **how aimodel's Anthropic wrapper tracks the official Messages
 - **Implementation notes**: [anthropic-message-api.md](./anthropic-message-api.md)
 - **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
-**Maintenance convention**: see [../api.md](../api.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
+**Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 
 Newest first.
 
@@ -21,7 +21,7 @@ None — this is a wrapper-side refactor. The wire behavior is unchanged: with n
 
 **Wrapper change (breaking, compile-time)**
 
-All single-vendor canonical surfaces moved out of `core`/root into this package, reachable through the unified extension channel `core.Extensions` (see [../api.md](../api.md) §2). Migration is one-to-one:
+All single-vendor canonical surfaces moved out of the canonical/root packages (now `ais`) into this package, reachable through the unified extension channel `ais.Extensions` (see [../architecture.md](../architecture.md) §2). Migration is one-to-one:
 
 | Before (canonical) | After (`provider/anthropic`) |
 |---|---|
@@ -37,7 +37,7 @@ All single-vendor canonical surfaces moved out of `core`/root into this package,
 
 Client-level configuration is unchanged: `anthropic.Options{Beta, Version, UserProfileID}` via `aimodel.WithProviderOptions` remains the only client extension entry (the old root `WithAnthropic*` options were already removed in the provider-subpackage refactor).
 
-Contract notes: extension values are read-only once attached; `ChatRequest.Clone` copies every node's extension map; `Message.AppendDelta` merges this provider's namespace through `core.ExtensionMerger` (copy-on-write, arrival order preserved); a wrong-typed value in the `anthropic` namespace fails `NewChatRequest` with a `*core.ExtensionTypeError` naming the node, before any network I/O.
+Contract notes: extension values are read-only once attached; `ChatRequest.Clone` copies every node's extension map; `Message.AppendDelta` merges this provider's namespace through `ais.ExtensionMerger` (copy-on-write, arrival order preserved); a wrong-typed value in the `anthropic` namespace fails `NewChatRequest` with a `*ais.ExtensionTypeError` naming the node, before any network I/O.
 
 ## 2026-07-21 — `output_config`, usage extensions, `container`/`inference_geo`, tool fields, unknown-block preservation, profile header
 

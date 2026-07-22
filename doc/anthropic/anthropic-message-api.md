@@ -5,7 +5,7 @@
 - **Implementation** (all under `provider/anthropic/`): `anthropic.go` (native wire types and bidirectional translation), `provider.go` (request building, auth headers, response/error parsing, `Options`), `stream.go` (SSE parsing)
 - **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
-The core premise is in [../api.md](../api.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
+The core premise is in [../architecture.md](../architecture.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
 
 ---
 
@@ -64,7 +64,7 @@ The Anthropic-specific configuration is passed as an `anthropic.Options` value t
 | `anthropic.RequestExtension.Container` | `container` |
 | `anthropic.RequestExtension.InferenceGeo` | `inference_geo` |
 
-Anthropic-only request parameters arrive through the extension channel (`anthropic.ExtendRequest` / `ExtendMessage` / `ExtendTool`); a value of the wrong type in this provider's namespace fails `toAnthropicRequest` with a `*core.ExtensionTypeError` naming the node — before any network I/O.
+Anthropic-only request parameters arrive through the extension channel (`anthropic.ExtendRequest` / `ExtendMessage` / `ExtendTool`); a value of the wrong type in this provider's namespace fails `toAnthropicRequest` with a `*ais.ExtensionTypeError` naming the node — before any network I/O.
 
 ### 3.2 `max_tokens` (required)
 

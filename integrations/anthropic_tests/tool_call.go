@@ -24,15 +24,16 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 func testToolCall(client *aimodel.Client) {
 	fmt.Println("=== Anthropic Tool Call ===")
 
-	tools := []aimodel.Tool{
+	tools := []ais.Tool{
 		{
 			Type: "function",
-			Function: aimodel.FunctionDefinition{
+			Function: ais.FunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get the current weather for a given location",
 				Parameters: map[string]any{
@@ -49,12 +50,12 @@ func testToolCall(client *aimodel.Client) {
 		},
 	}
 
-	messages := []aimodel.Message{
-		{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is the weather in Beijing today?")},
+	messages := []ais.Message{
+		{Role: ais.RoleUser, Content: ais.NewTextContent("What is the weather in Beijing today?")},
 	}
 
 	// Step 1: send the request with tools, the model should trigger a tool call.
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Messages: messages,
 		Tools:    tools,
 	})
@@ -69,7 +70,7 @@ func testToolCall(client *aimodel.Client) {
 	choice := resp.Choices[0]
 
 	// If the model did not request a tool call, print and exit.
-	if choice.FinishReason != aimodel.FinishReasonToolCalls || len(choice.Message.ToolCalls) == 0 {
+	if choice.FinishReason != ais.FinishReasonToolCalls || len(choice.Message.ToolCalls) == 0 {
 		fmt.Println(choice.Message.Content.Text())
 		return
 	}
@@ -93,15 +94,15 @@ func testToolCall(client *aimodel.Client) {
 
 		result := getWeather(args.Location)
 
-		messages = append(messages, aimodel.Message{
-			Role:       aimodel.RoleTool,
-			Content:    aimodel.NewTextContent(result),
+		messages = append(messages, ais.Message{
+			Role:       ais.RoleTool,
+			Content:    ais.NewTextContent(result),
 			ToolCallID: tc.ID,
 		})
 	}
 
 	// Step 3: send the tool results back, the model should produce a final answer.
-	resp, err = client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err = client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Messages: messages,
 		Tools:    tools,
 	})

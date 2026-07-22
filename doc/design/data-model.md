@@ -1,8 +1,8 @@
 # Data Model
 
-The canonical request/response types in `core/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../api.md](../api.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
+The canonical request/response types in `ais/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../architecture.md](../architecture.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
 
-- **Canonical types**: `core/schema.go`
+- **Canonical types**: `ais/schema.go`
 - **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md)
 
 Pointer types (`*float64` / `*int` / `*bool`) exist to distinguish "unset" from "explicitly zero": `Temperature=0` differs from omitting temperature, and only an explicit `ParallelToolCalls=false` triggers Anthropic's `disable_parallel_tool_use`.
@@ -58,11 +58,11 @@ Both are `omitempty`. Anthropic always requires `max_tokens`, so its translator 
 
 ### 1.8 Provider extensions (`Extensions`)
 
-`Extensions core.Extensions` (`json:"-"`) is the unified provider extension channel: a map keyed by registered provider name holding one provider-defined value per namespace. It exists on `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk` and `StreamChunkChoice`, and never appears in canonical JSON. See [../api.md](../api.md) §2 for the contract, and `provider/anthropic/extension.go` for the built-in Anthropic surface (`RequestExtension` with `AutoCache` / `AutoCacheTTL` / `Container` / `InferenceGeo`, plus the message / tool / response extensions).
+`Extensions ais.Extensions` (`json:"-"`) is the unified provider extension channel: a map keyed by registered provider name holding one provider-defined value per namespace. It exists on `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk` and `StreamChunkChoice`, and never appears in canonical JSON. See [../architecture.md](../architecture.md) §2 for the contract, and `provider/anthropic/extension.go` for the built-in Anthropic surface (`RequestExtension` with `AutoCache` / `AutoCacheTTL` / `Container` / `InferenceGeo`, plus the message / tool / response extensions).
 
 ### 1.9 `Clone()`
 
-Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `core.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and the `Extensions` map at every node (request, each message, each tool). Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`) and extension values are shared by contract; extension values are read-only configuration and must not be mutated after being attached. Providers receive this working copy and may rewrite it freely.
+Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `ais.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and the `Extensions` map at every node (request, each message, each tool). Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`) and extension values are shared by contract; extension values are read-only configuration and must not be mutated after being attached. Providers receive this working copy and may rewrite it freely.
 
 ---
 
@@ -76,17 +76,17 @@ type Message struct {
     ToolCallID string
     ToolCalls  []ToolCall
     Audio      *MessageAudio
-    Extensions core.Extensions `json:"-"`  // provider extension channel
+    Extensions ais.Extensions `json:"-"`  // provider extension channel
 }
 ```
 
 `Content` is a **polymorphic wrapper**: it privately holds `text string` and `parts []ContentPart`, and its custom `MarshalJSON` / `UnmarshalJSON` switch between the two wire shapes — a bare string, or an array of content blocks.
 
 ```go
-aimodel.NewTextContent("hello")                          // → "hello"
-aimodel.NewPartsContent(                                 // → [{...},{...}]
-    aimodel.ContentPart{Type: "text", Text: "Describe this image"},
-    aimodel.ContentPart{Type: "image_url", ImageURL: &aimodel.ImageURL{URL: dataURI}},
+ais.NewTextContent("hello")                          // → "hello"
+ais.NewPartsContent(                                 // → [{...},{...}]
+    ais.ContentPart{Type: "text", Text: "Describe this image"},
+    ais.ContentPart{Type: "image_url", ImageURL: &ais.ImageURL{URL: dataURI}},
 )
 ```
 
@@ -116,7 +116,7 @@ type ChatResponse struct {
     Choices []Choice
     Usage   Usage
     Error   *Error
-    Extensions core.Extensions `json:"-"`  // provider response metadata
+    Extensions ais.Extensions `json:"-"`  // provider response metadata
 }
 
 type Choice struct {
@@ -124,7 +124,7 @@ type Choice struct {
     Message      Message
     FinishReason FinishReason
     LogProbs     *LogProbs  // present when the request set Logprobs
-    Extensions core.Extensions `json:"-"`  // provider per-choice metadata
+    Extensions ais.Extensions `json:"-"`  // provider per-choice metadata
 }
 ```
 
@@ -162,7 +162,7 @@ type Usage struct {
     CacheReadTokens int     // cache-hit prompt tokens (OpenAI + Anthropic)
     ReasoningTokens int     // reasoning model's internal thinking (OpenAI + Anthropic)
     ServiceTier     string  // tier that served the request (OpenAI + Anthropic)
-    Extensions core.Extensions `json:"-"`  // provider usage accounting
+    Extensions ais.Extensions `json:"-"`  // provider usage accounting
 }
 ```
 

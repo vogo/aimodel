@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 const defaultRecoveryInterval = 60 * time.Second
@@ -99,16 +100,16 @@ func NewComposeClient(strategy Strategy, entries []ModelEntry, opts ...ComposeOp
 
 // ChatCompletion sends a non-streaming request, routing via the configured strategy.
 // Protocol routing is handled internally by each entry's Client.
-func (c *ComposeClient) ChatCompletion(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.ChatResponse, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *aimodel.ChatRequest) (*aimodel.ChatResponse, error) {
+func (c *ComposeClient) ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error) {
+	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *ais.ChatRequest) (*ais.ChatResponse, error) {
 		return client.ChatCompletion(ctx, r)
 	})
 }
 
 // ChatCompletionStream sends a streaming request, routing via the configured strategy.
 // Protocol routing is handled internally by each entry's Client.
-func (c *ComposeClient) ChatCompletionStream(ctx context.Context, req *aimodel.ChatRequest) (*aimodel.Stream, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *aimodel.ChatRequest) (*aimodel.Stream, error) {
+func (c *ComposeClient) ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*aimodel.Stream, error) {
+	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *ais.ChatRequest) (*aimodel.Stream, error) {
 		return client.ChatCompletionStream(ctx, r)
 	})
 }
@@ -117,8 +118,8 @@ func (c *ComposeClient) ChatCompletionStream(ctx context.Context, req *aimodel.C
 func dispatchUnary[T any](
 	ctx context.Context,
 	c *ComposeClient,
-	req *aimodel.ChatRequest,
-	call func(context.Context, aimodel.ChatCompleter, *aimodel.ChatRequest) (T, error),
+	req *ais.ChatRequest,
+	call func(context.Context, aimodel.ChatCompleter, *ais.ChatRequest) (T, error),
 ) (T, error) {
 	var zero T
 
@@ -128,10 +129,10 @@ func dispatchUnary[T any](
 	candidates = c.prependRecoveryProbes(candidates)
 
 	if len(candidates) == 0 {
-		return zero, aimodel.ErrNoActiveModels
+		return zero, ais.ErrNoActiveModels
 	}
 
-	var errs []aimodel.ModelError
+	var errs []ais.ModelError
 
 	for _, idx := range candidates {
 		// Return immediately if the context is cancelled to avoid
@@ -156,7 +157,7 @@ func dispatchUnary[T any](
 			}
 
 			c.health[idx].markError(err, c.nowFunc())
-			errs = append(errs, aimodel.ModelError{Model: entry.Name, Err: err})
+			errs = append(errs, ais.ModelError{Model: entry.Name, Err: err})
 
 			continue
 		}
@@ -166,7 +167,7 @@ func dispatchUnary[T any](
 		return result, nil
 	}
 
-	return zero, &aimodel.MultiError{Errors: errs}
+	return zero, &ais.MultiError{Errors: errs}
 }
 
 // prependRecoveryProbes prepends errored models that are eligible for recovery probing

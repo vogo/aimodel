@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package aimodel
+package ais
 
 import (
 	"errors"

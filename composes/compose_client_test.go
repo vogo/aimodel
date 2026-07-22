@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 )
 
@@ -48,14 +49,14 @@ func newTestServer(t *testing.T) *httptest.Server {
 			return
 		}
 
-		resp := aimodel.ChatResponse{
+		resp := ais.ChatResponse{
 			ID:    "test-id",
 			Model: fmt.Sprintf("%v", req["model"]),
-			Choices: []aimodel.Choice{
+			Choices: []ais.Choice{
 				{
 					Index:        0,
-					Message:      aimodel.Message{Role: aimodel.RoleAssistant, Content: aimodel.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
-					FinishReason: aimodel.FinishReasonStop,
+					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
+					FinishReason: ais.FinishReasonStop,
 				},
 			},
 		}
@@ -103,15 +104,15 @@ func newStreamServer(t *testing.T) *httptest.Server {
 			return
 		}
 
-		chunk := aimodel.StreamChunk{
+		chunk := ais.StreamChunk{
 			ID:    "chunk-1",
 			Model: modelName,
-			Choices: []aimodel.StreamChunkChoice{
+			Choices: []ais.StreamChunkChoice{
 				{
 					Index: 0,
-					Delta: aimodel.Message{
-						Role:    aimodel.RoleAssistant,
-						Content: aimodel.NewTextContent("hello stream"),
+					Delta: ais.Message{
+						Role:    ais.RoleAssistant,
+						Content: ais.NewTextContent("hello stream"),
 					},
 				},
 			},
@@ -140,11 +141,11 @@ func newClientForServer(t *testing.T, server *httptest.Server) *aimodel.Client {
 	return c
 }
 
-func testRequest() *aimodel.ChatRequest {
-	return &aimodel.ChatRequest{
+func testRequest() *ais.ChatRequest {
+	return &ais.ChatRequest{
 		Model: "placeholder",
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")},
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
 		},
 	}
 }
@@ -175,14 +176,14 @@ func TestNewComposeClient_EmptyName_UsesClientDefault(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := aimodel.ChatResponse{
+		resp := ais.ChatResponse{
 			ID:    "test",
 			Model: receivedModel,
-			Choices: []aimodel.Choice{
+			Choices: []ais.Choice{
 				{
 					Index:        0,
-					Message:      aimodel.Message{Role: aimodel.RoleAssistant, Content: aimodel.NewTextContent("ok")},
-					FinishReason: aimodel.FinishReasonStop,
+					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
+					FinishReason: ais.FinishReasonStop,
 				},
 			},
 		}
@@ -207,9 +208,9 @@ func TestNewComposeClient_EmptyName_UsesClientDefault(t *testing.T) {
 	}
 
 	// Use empty model in request so the client default is applied.
-	_, err = cc.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")},
+	_, err = cc.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
 		},
 	})
 	if err != nil {
@@ -307,7 +308,7 @@ func TestFailover_AllFail(t *testing.T) {
 		t.Fatal("expected error when all models fail")
 	}
 
-	var me *aimodel.MultiError
+	var me *ais.MultiError
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MultiError, got %T: %v", err, err)
 	}
@@ -368,14 +369,14 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := aimodel.ChatResponse{
+		resp := ais.ChatResponse{
 			ID:    "probe-id",
 			Model: "m0",
-			Choices: []aimodel.Choice{
+			Choices: []ais.Choice{
 				{
 					Index:        0,
-					Message:      aimodel.Message{Role: aimodel.RoleAssistant, Content: aimodel.NewTextContent("recovered")},
-					FinishReason: aimodel.FinishReasonStop,
+					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
+					FinishReason: ais.FinishReasonStop,
 				},
 			},
 		}
@@ -436,14 +437,14 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := aimodel.ChatResponse{
+		resp := ais.ChatResponse{
 			ID:    "probe-id",
 			Model: "m0",
-			Choices: []aimodel.Choice{
+			Choices: []ais.Choice{
 				{
 					Index:        0,
-					Message:      aimodel.Message{Role: aimodel.RoleAssistant, Content: aimodel.NewTextContent("recovered")},
-					FinishReason: aimodel.FinishReasonStop,
+					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
+					FinishReason: ais.FinishReasonStop,
 				},
 			},
 		}
@@ -495,14 +496,14 @@ func TestModelOverride(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := aimodel.ChatResponse{
+		resp := ais.ChatResponse{
 			ID:    "test",
 			Model: receivedModel,
-			Choices: []aimodel.Choice{
+			Choices: []ais.Choice{
 				{
 					Index:        0,
-					Message:      aimodel.Message{Role: aimodel.RoleAssistant, Content: aimodel.NewTextContent("ok")},
-					FinishReason: aimodel.FinishReasonStop,
+					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
+					FinishReason: ais.FinishReasonStop,
 				},
 			},
 		}
@@ -517,10 +518,10 @@ func TestModelOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := &aimodel.ChatRequest{
+	req := &ais.ChatRequest{
 		Model: "original-model",
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")},
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
 		},
 	}
 
@@ -678,13 +679,13 @@ func TestMultiError_UnwrapAll(t *testing.T) {
 
 	_, err = cc.ChatCompletion(context.Background(), testRequest())
 
-	var me *aimodel.MultiError
+	var me *ais.MultiError
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MultiError, got %T", err)
 	}
 
 	// errors.As should find APIError from any model's error in the chain.
-	var apiErr *aimodel.APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatal("expected errors.As to find APIError in multi-error chain")
 	}
@@ -706,7 +707,7 @@ func TestNoActiveModels_Error(t *testing.T) {
 
 	// Second call should return ErrNoActiveModels since no active models remain.
 	_, err = cc.ChatCompletion(context.Background(), testRequest())
-	if !errors.Is(err, aimodel.ErrNoActiveModels) {
+	if !errors.Is(err, ais.ErrNoActiveModels) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
 	}
 }

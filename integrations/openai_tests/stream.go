@@ -25,14 +25,15 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 func testStream(client *aimodel.Client) {
 	fmt.Println("=== OpenAI Stream ===")
 
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("What is AGI! Answer in 200 words.")},
+	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("What is AGI! Answer in 200 words.")},
 		},
 	})
 	if err != nil {

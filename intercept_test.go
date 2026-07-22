@@ -23,14 +23,16 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/vogo/aimodel/ais"
 )
 
-func newFakeStream(chunks []*StreamChunk, finalErr error) *Stream {
+func newFakeStream(chunks []*ais.StreamChunk, finalErr error) *Stream {
 	idx := 0
 	s := &Stream{
 		reader: io.NopCloser(strings.NewReader("")),
 	}
-	s.recv = func() (*StreamChunk, error) {
+	s.recv = func() (*ais.StreamChunk, error) {
 		if idx >= len(chunks) {
 			return nil, finalErr
 		}
@@ -42,14 +44,14 @@ func newFakeStream(chunks []*StreamChunk, finalErr error) *Stream {
 }
 
 func TestInterceptStream_NormalEOF(t *testing.T) {
-	chunks := []*StreamChunk{{ID: "1"}, {ID: "2"}, {ID: "3"}}
+	chunks := []*ais.StreamChunk{{ID: "1"}, {ID: "2"}, {ID: "3"}}
 	s := newFakeStream(chunks, io.EOF)
 
 	var got []string
 	var doneCount int32
 	var doneErr error
 
-	InterceptStream(s, func(c *StreamChunk) {
+	InterceptStream(s, func(c *ais.StreamChunk) {
 		got = append(got, c.ID)
 	}, func(err error) {
 		atomic.AddInt32(&doneCount, 1)
@@ -75,7 +77,7 @@ func TestInterceptStream_NormalEOF(t *testing.T) {
 }
 
 func TestInterceptStream_EarlyClose(t *testing.T) {
-	chunks := []*StreamChunk{{ID: "1"}, {ID: "2"}, {ID: "3"}}
+	chunks := []*ais.StreamChunk{{ID: "1"}, {ID: "2"}, {ID: "3"}}
 	s := newFakeStream(chunks, io.EOF)
 
 	var doneCount int32
@@ -94,12 +96,12 @@ func TestInterceptStream_EarlyClose(t *testing.T) {
 
 func TestInterceptStream_MidStreamError(t *testing.T) {
 	myErr := errors.New("boom")
-	chunks := []*StreamChunk{{ID: "1"}, {ID: "2"}}
+	chunks := []*ais.StreamChunk{{ID: "1"}, {ID: "2"}}
 	s := newFakeStream(chunks, myErr)
 
 	var got int
 	var doneErr error
-	InterceptStream(s, func(c *StreamChunk) { got++ }, func(err error) { doneErr = err })
+	InterceptStream(s, func(c *ais.StreamChunk) { got++ }, func(err error) { doneErr = err })
 
 	for {
 		_, err := s.Recv()

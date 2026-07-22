@@ -9,9 +9,9 @@ This file is the **index** of aimodel's sync status against the official API pro
 
 Each protocol's change log is ordered newest-first, and every entry records at least: the date, the official change, and the wrapper change summary.
 
-For the cross-cutting design behind those changes, start at [doc/api.md](./doc/api.md).
+For the cross-cutting design behind those changes, start at [doc/architecture.md](./doc/architecture.md).
 
-**Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/api.md](./doc/api.md) §6.
+**Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/architecture.md](./doc/architecture.md) §6.
 
 ---
 

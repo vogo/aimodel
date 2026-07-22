@@ -2,7 +2,7 @@
 
 How prompt-cache intent is expressed across protocols, and how cache accounting comes back.
 
-- **Canonical mechanism**: the unified provider extension channel `core.Extensions` ([../api.md](../api.md) §2)
+- **Canonical mechanism**: the unified provider extension channel `ais.Extensions` ([../architecture.md](../architecture.md) §2)
 - **Anthropic extension API**: `provider/anthropic/extension.go` (`RequestExtension`, `MessageExtension`, `ToolExtension`, `UsageExtension`)
 - **Anthropic wire mapping**: [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §3.7
 

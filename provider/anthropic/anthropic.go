@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // Anthropic Messages API reference: https://platform.claude.com/docs/en/api/messages
@@ -46,7 +46,7 @@ type anthropicRequest struct {
 	Stream        bool                 `json:"stream,omitempty"`
 	Tools         []anthropicTool      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
-	Thinking      *core.Thinking       `json:"thinking,omitempty"`
+	Thinking      *ais.Thinking        `json:"thinking,omitempty"`
 	// Effort is Anthropic's former top-level reasoning-depth control.
 	//
 	// Deprecated: superseded by OutputConfig.Effort — reasoning depth now
@@ -55,8 +55,8 @@ type anthropicRequest struct {
 	// alongside output_config.effort.
 	Effort string `json:"effort,omitempty"`
 	// OutputConfig carries Anthropic's output configuration: the reasoning
-	// effort (mapped from core.ChatRequest.ReasoningEffort) and the structured
-	// output format (mapped from core.ChatRequest.ResponseFormat). Omitted when
+	// effort (mapped from ais.ChatRequest.ReasoningEffort) and the structured
+	// output format (mapped from ais.ChatRequest.ResponseFormat). Omitted when
 	// both are absent.
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 	// Container reuses a server-side execution container across requests,
@@ -337,12 +337,12 @@ type anthropicMessageDeltaData struct {
 
 // --- Translation functions ---
 
-// toAnthropicRequest converts a core.ChatRequest to an Anthropic API request.
+// toAnthropicRequest converts a ais.ChatRequest to an Anthropic API request.
 // Anthropic-only parameters arrive through the unified extension channel
 // (RequestExtension / MessageExtension / ToolExtension); a mis-typed
 // extension value fails here — before any network I/O — with a
-// *core.ExtensionTypeError.
-func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
+// *ais.ExtensionTypeError.
+func toAnthropicRequest(req *ais.ChatRequest) (*anthropicRequest, error) {
 	reqExt, err := extensionOf[RequestExtension](req.Extensions, "ChatRequest")
 	if err != nil {
 		return nil, err
@@ -403,7 +403,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 
 	for i := 0; i < len(req.Messages); i++ {
 		m := req.Messages[i]
-		if m.Role == core.RoleSystem && !seenNonSystem {
+		if m.Role == ais.RoleSystem && !seenNonSystem {
 			bp, err := messageCacheBreakpoint(&m)
 			if err != nil {
 				return nil, err
@@ -439,19 +439,19 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 		// Any non-system message ends the leading system run; subsequent
 		// system messages fall through to toAnthropicMessage and stay
 		// inline as role:"system".
-		if m.Role != core.RoleSystem {
+		if m.Role != ais.RoleSystem {
 			seenNonSystem = true
 		}
 
-		// Consecutive core.RoleTool messages represent the parallel tool_result
+		// Consecutive ais.RoleTool messages represent the parallel tool_result
 		// blocks for one assistant turn. Anthropic requires all of them to
 		// arrive inside a single role:"user" message immediately after the
 		// assistant turn — emitting one user message per result (the naive
 		// 1:1 mapping) makes the endpoint reject the rest as missing
 		// tool_result blocks. Collect the whole run and serialize it once.
-		if m.Role == core.RoleTool {
+		if m.Role == ais.RoleTool {
 			runStart := i
-			for i+1 < len(req.Messages) && req.Messages[i+1].Role == core.RoleTool {
+			for i+1 < len(req.Messages) && req.Messages[i+1].Role == ais.RoleTool {
 				i++
 			}
 
@@ -575,7 +575,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 
 // messageCacheBreakpoint reports whether the message's Anthropic extension
 // asks for a prompt-cache boundary, failing on a mis-typed extension value.
-func messageCacheBreakpoint(m *core.Message) (bool, error) {
+func messageCacheBreakpoint(m *ais.Message) (bool, error) {
 	ext, err := extensionOf[MessageExtension](m.Extensions, "Message")
 	if err != nil {
 		return false, err
@@ -587,7 +587,7 @@ func messageCacheBreakpoint(m *core.Message) (bool, error) {
 // toAnthropicOutputConfig builds the output_config object from the canonical
 // reasoning effort and response format. Either half may be absent; when both
 // are, it returns nil so the field is omitted entirely.
-func toAnthropicOutputConfig(req *core.ChatRequest) *anthropicOutputConfig {
+func toAnthropicOutputConfig(req *ais.ChatRequest) *anthropicOutputConfig {
 	format := toAnthropicOutputFormat(req.ResponseFormat)
 	if req.ReasoningEffort == "" && format == nil {
 		return nil
@@ -631,7 +631,7 @@ func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
 // tool-result message. It is shared by the consecutive-run merge path and the
 // single-message fallback so the wire shape stays identical. A missing
 // ToolCallID is rejected up front.
-func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
+func toolResultBlock(m ais.Message) (anthropicContentBlock, error) {
 	if m.ToolCallID == "" {
 		return anthropicContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
 	}
@@ -659,7 +659,7 @@ func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
 // whose content array holds all the tool_result blocks in order. Anthropic
 // requires the parallel results of one assistant turn to share one user
 // message; merging here keeps the request valid for parallel tool use.
-func toAnthropicToolResultMessage(msgs []core.Message) (anthropicMessage, error) {
+func toAnthropicToolResultMessage(msgs []ais.Message) (anthropicMessage, error) {
 	blocks := make([]anthropicContentBlock, 0, len(msgs))
 	for _, m := range msgs {
 		block, err := toolResultBlock(m)
@@ -678,14 +678,14 @@ func toAnthropicToolResultMessage(msgs []core.Message) (anthropicMessage, error)
 	return anthropicMessage{Role: "user", Content: data}, nil
 }
 
-func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
+func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 	am := anthropicMessage{
 		Role: string(m.Role),
 	}
 
 	// Tool result messages become user messages with tool_result content blocks.
-	if m.Role == core.RoleTool {
-		return toAnthropicToolResultMessage([]core.Message{m})
+	if m.Role == ais.RoleTool {
+		return toAnthropicToolResultMessage([]ais.Message{m})
 	}
 
 	cacheBreakpoint, err := messageCacheBreakpoint(&m)
@@ -694,7 +694,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 	}
 
 	// Assistant messages with thinking, tool calls, or both require content-block format.
-	if m.Role == core.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
+	if m.Role == ais.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
 		var blocks []anthropicContentBlock
 
 		if m.Thinking != "" {
@@ -834,13 +834,13 @@ func convertToolChoice(tc any) *anthropicToolChoice {
 	return nil
 }
 
-// fromAnthropicResponse converts an Anthropic API response to a core.ChatResponse.
+// fromAnthropicResponse converts an Anthropic API response to a ais.ChatResponse.
 // Anthropic-only response information — unmodelled content blocks, structured
 // stop details, the execution container, cache-write accounting — is written
 // into this provider's extension namespaces instead of canonical fields.
-func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
-	msg := core.Message{
-		Role: core.RoleAssistant,
+func fromAnthropicResponse(ar *anthropicResponse) *ais.ChatResponse {
+	msg := ais.Message{
+		Role: ais.RoleAssistant,
 	}
 
 	var textParts []string
@@ -864,11 +864,11 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 				extraBlocks = append(extraBlocks, block.raw)
 			}
 		case "tool_use":
-			msg.ToolCalls = append(msg.ToolCalls, core.ToolCall{
+			msg.ToolCalls = append(msg.ToolCalls, ais.ToolCall{
 				Index: len(msg.ToolCalls),
 				ID:    block.ID,
 				Type:  "function",
-				Function: core.FunctionCall{
+				Function: ais.FunctionCall{
 					Name:      block.Name,
 					Arguments: string(block.Input),
 				},
@@ -887,14 +887,14 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 	}
 
 	if len(textParts) > 0 {
-		msg.Content = core.NewTextContent(strings.Join(textParts, "\n"))
+		msg.Content = ais.NewTextContent(strings.Join(textParts, "\n"))
 	}
 
 	if len(extraBlocks) > 0 {
 		msg.Extensions.Set(Name, &MessageExtension{ExtraBlocks: extraBlocks})
 	}
 
-	choice := core.Choice{
+	choice := ais.Choice{
 		Index:        0,
 		Message:      msg,
 		FinishReason: mapAnthropicStopReason(ar.StopReason),
@@ -904,11 +904,11 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 		choice.Extensions.Set(Name, &ChoiceExtension{StopDetails: ar.StopDetails})
 	}
 
-	cr := &core.ChatResponse{
+	cr := &ais.ChatResponse{
 		ID:      ar.ID,
 		Object:  "chat.completion",
 		Model:   ar.Model,
-		Choices: []core.Choice{choice},
+		Choices: []ais.Choice{choice},
 		Usage:   anthropicCanonicalUsage(&ar.Usage),
 	}
 
@@ -924,8 +924,8 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 // cross-provider counts stay canonical; cache-write totals, the per-TTL
 // breakdown, server-tool counts and the inference geography go into the
 // UsageExtension namespace (attached only when any of them is present).
-func anthropicCanonicalUsage(u *anthropicUsage) core.Usage {
-	cu := core.Usage{
+func anthropicCanonicalUsage(u *anthropicUsage) ais.Usage {
+	cu := ais.Usage{
 		PromptTokens:     u.totalInputTokens(),
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.totalInputTokens() + u.OutputTokens,
@@ -1034,14 +1034,14 @@ func parseDataURI(uri string) (mediaType, data string, ok bool) {
 	return mediaType, data, true
 }
 
-func mapAnthropicStopReason(reason string) core.FinishReason {
+func mapAnthropicStopReason(reason string) ais.FinishReason {
 	switch reason {
 	case "end_turn", "stop_sequence":
-		return core.FinishReasonStop
+		return ais.FinishReasonStop
 	case "max_tokens":
-		return core.FinishReasonLength
+		return ais.FinishReasonLength
 	case "tool_use":
-		return core.FinishReasonToolCalls
+		return ais.FinishReasonToolCalls
 	case "model_context_window_exceeded":
 		return FinishReasonModelContextWindowExceeded
 	case "refusal":
@@ -1049,6 +1049,6 @@ func mapAnthropicStopReason(reason string) core.FinishReason {
 	case "pause_turn":
 		return FinishReasonPauseTurn
 	default:
-		return core.FinishReason(reason)
+		return ais.FinishReason(reason)
 	}
 }

@@ -2,7 +2,7 @@
 
 - **Official protocol**: OpenAI Chat Completions API (`POST {baseURL}/chat/completions`)
 - **Official docs**: https://platform.openai.com/docs/api-reference/chat
-- **Implementation**: `provider/openai/openai.go` (request building and error parsing), `provider/openai/stream.go` (SSE parsing), `core/schema.go` (the canonical types *are* the OpenAI shape)
+- **Implementation**: `provider/openai/openai.go` (request building and error parsing), `provider/openai/stream.go` (SSE parsing), `ais/schema.go` (the canonical types *are* the OpenAI shape)
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
 
 Canonical type semantics live in [../design/data-model.md](../design/data-model.md); this document covers what is specific to the OpenAI path.
@@ -11,7 +11,7 @@ Canonical type semantics live in [../design/data-model.md](../design/data-model.
 
 ## 1. The zero-translation path
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation** (see [../api.md](../api.md) §2), so the OpenAI path has **no translation layer at all**:
+The SDK uses the **OpenAI Chat Completions format as its canonical representation** (see [../architecture.md](../architecture.md) §2), so the OpenAI path has **no translation layer at all**:
 
 ```
 ChatRequest ──json.Marshal──▶ POST {baseURL}/chat/completions

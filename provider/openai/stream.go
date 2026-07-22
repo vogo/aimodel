@@ -24,19 +24,19 @@ import (
 	"io"
 	"strings"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // streamChunkOrError combines StreamChunk and Error for single-pass unmarshal.
 type streamChunkOrError struct {
-	core.StreamChunk
-	Error *core.Error `json:"error,omitempty"`
+	ais.StreamChunk
+	Error *ais.Error `json:"error,omitempty"`
 }
 
 // NewStreamDecoder returns a decoder for the OpenAI SSE event stream.
-func (p *provider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
+func (p *provider) NewStreamDecoder(body io.Reader) ais.StreamDecoder {
 	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), core.MaxStreamLineSize)
+	sc.Buffer(make([]byte, 0, 64*1024), ais.MaxStreamLineSize)
 
 	return &streamDecoder{sc: sc}
 }
@@ -45,7 +45,7 @@ type streamDecoder struct {
 	sc *bufio.Scanner
 }
 
-func (d *streamDecoder) Next() (*core.StreamChunk, error) {
+func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 	sc := d.sc
 
 	for sc.Scan() {
@@ -72,7 +72,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 		}
 
 		if parsed.Error != nil {
-			return nil, &core.APIError{
+			return nil, &ais.APIError{
 				Code:    parsed.Error.Code,
 				Message: parsed.Error.Message,
 				Type:    parsed.Error.Type,

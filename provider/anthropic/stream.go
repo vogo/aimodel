@@ -24,14 +24,14 @@ import (
 	"io"
 	"strings"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // NewStreamDecoder returns a decoder for the Anthropic SSE event stream.
 // Streaming reference: https://platform.claude.com/docs/en/api/messages
-func (p *provider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
+func (p *provider) NewStreamDecoder(body io.Reader) ais.StreamDecoder {
 	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 0, 64*1024), core.MaxStreamLineSize)
+	sc.Buffer(make([]byte, 0, 64*1024), ais.MaxStreamLineSize)
 
 	return &streamDecoder{
 		sc:            sc,
@@ -43,8 +43,8 @@ func (p *provider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
 // extraBlockDelta wraps one verbatim unmodelled sub-object as a delta message
 // whose Anthropic extension carries it. Message.AppendDelta accumulates these
 // through MessageExtension.MergeExtension, preserving arrival order.
-func extraBlockDelta(raw json.RawMessage) core.Message {
-	var m core.Message
+func extraBlockDelta(raw json.RawMessage) ais.Message {
+	var m ais.Message
 
 	m.Extensions.Set(Name, &MessageExtension{ExtraBlocks: []json.RawMessage{raw}})
 
@@ -73,7 +73,7 @@ type streamDecoder struct {
 }
 
 //nolint:gocyclo // Faithful 1:1 port of the Anthropic SSE event switch.
-func (d *streamDecoder) Next() (*core.StreamChunk, error) {
+func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 	sc := d.sc
 
 	for sc.Scan() {
@@ -129,7 +129,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			// produce tool events or end immediately, and the caller needs
 			// the ID to reuse the container on the next turn.
 			if ms.Message.Container != nil {
-				chunk := &core.StreamChunk{
+				chunk := &ais.StreamChunk{
 					ID:    d.msgID,
 					Model: d.model,
 				}
@@ -152,20 +152,20 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				d.blockToTool[cbs.Index] = toolIdx
 				d.nextToolIdx++
 
-				return &core.StreamChunk{
+				return &ais.StreamChunk{
 					ID:    d.msgID,
 					Model: d.model,
-					Choices: []core.StreamChunkChoice{
+					Choices: []ais.StreamChunkChoice{
 						{
 							Index: 0,
-							Delta: core.Message{
-								Role: core.RoleAssistant,
-								ToolCalls: []core.ToolCall{
+							Delta: ais.Message{
+								Role: ais.RoleAssistant,
+								ToolCalls: []ais.ToolCall{
 									{
 										Index: toolIdx,
 										ID:    cbs.ContentBlock.ID,
 										Type:  "function",
-										Function: core.FunctionCall{
+										Function: ais.FunctionCall{
 											Name: cbs.ContentBlock.Name,
 										},
 									},
@@ -182,10 +182,10 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				// index so its deltas are preserved too.
 				d.unknownBlocks[cbs.Index] = true
 
-				return &core.StreamChunk{
+				return &ais.StreamChunk{
 					ID:    d.msgID,
 					Model: d.model,
-					Choices: []core.StreamChunkChoice{
+					Choices: []ais.StreamChunkChoice{
 						{
 							Index: 0,
 							Delta: extraBlockDelta(cbs.ContentBlock.raw),
@@ -200,7 +200,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				return nil, fmt.Errorf("aimodel: decode content_block_delta: %w", err)
 			}
 
-			chunk := &core.StreamChunk{
+			chunk := &ais.StreamChunk{
 				ID:    d.msgID,
 				Model: d.model,
 			}
@@ -209,7 +209,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			// meaning this wrapper can assign, whatever its own type is —
 			// keep it verbatim alongside the block start.
 			if d.unknownBlocks[cbd.Index] {
-				chunk.Choices = []core.StreamChunkChoice{
+				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
 						Delta: extraBlockDelta(cbd.Delta.raw),
@@ -221,19 +221,19 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 
 			switch cbd.Delta.Type {
 			case "text_delta":
-				chunk.Choices = []core.StreamChunkChoice{
+				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
-						Delta: core.Message{
-							Content: core.NewTextContent(cbd.Delta.Text),
+						Delta: ais.Message{
+							Content: ais.NewTextContent(cbd.Delta.Text),
 						},
 					},
 				}
 			case "thinking_delta":
-				chunk.Choices = []core.StreamChunkChoice{
+				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
-						Delta: core.Message{
+						Delta: ais.Message{
 							Thinking: cbd.Delta.Thinking,
 						},
 					},
@@ -246,14 +246,14 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 					continue
 				}
 
-				chunk.Choices = []core.StreamChunkChoice{
+				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
-						Delta: core.Message{
-							ToolCalls: []core.ToolCall{
+						Delta: ais.Message{
+							ToolCalls: []ais.ToolCall{
 								{
 									Index: toolIdx,
-									Function: core.FunctionCall{
+									Function: ais.FunctionCall{
 										Arguments: cbd.Delta.PartialJSON,
 									},
 								},
@@ -264,7 +264,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			default:
 				// A delta type added after this wrapper was written, on a
 				// block it does know. Preserve it rather than drop it.
-				chunk.Choices = []core.StreamChunkChoice{
+				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
 						Delta: extraBlockDelta(cbd.Delta.raw),
@@ -282,7 +282,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 
 			reason := string(mapAnthropicStopReason(md.Delta.StopReason))
 
-			terminal := core.StreamChunkChoice{
+			terminal := ais.StreamChunkChoice{
 				Index:        0,
 				FinishReason: &reason,
 			}
@@ -291,10 +291,10 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				terminal.Extensions.Set(Name, &ChoiceExtension{StopDetails: md.Delta.StopDetails})
 			}
 
-			chunk := &core.StreamChunk{
+			chunk := &ais.StreamChunk{
 				ID:      d.msgID,
 				Model:   d.model,
-				Choices: []core.StreamChunkChoice{terminal},
+				Choices: []ais.StreamChunkChoice{terminal},
 			}
 
 			if md.Usage != nil {
@@ -318,7 +318,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 				return nil, fmt.Errorf("aimodel: decode stream error: %w", err)
 			}
 
-			return nil, &core.APIError{
+			return nil, &ais.APIError{
 				Type:    errResp.Error.Type,
 				Message: errResp.Error.Message,
 			}

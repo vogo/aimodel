@@ -23,14 +23,15 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 func testCompletion(client *aimodel.Client) {
 	fmt.Println("=== Anthropic Completion ===")
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Say hello!")},
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("Say hello!")},
 		},
 	})
 	if err != nil {

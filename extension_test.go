@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 	"github.com/vogo/aimodel/provider/openai"
 )
@@ -34,10 +34,10 @@ import (
 // extension maps at every node (request, message, tool): re-pointing a
 // clone's namespaces never reaches back into the caller's request.
 func TestChatRequestClone_ExtensionIsolation(t *testing.T) {
-	orig := &ChatRequest{
+	orig := &ais.ChatRequest{
 		Model:    "m",
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
-		Tools:    []Tool{{Type: "function", Function: FunctionDefinition{Name: "f"}}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
+		Tools:    []ais.Tool{{Type: "function", Function: ais.FunctionDefinition{Name: "f"}}},
 	}
 	orig.Extensions.Set("vendor", "request-level")
 	orig.Messages[0].Extensions.Set("vendor", "message-level")
@@ -67,7 +67,7 @@ func TestChatRequestClone_ExtensionIsolation(t *testing.T) {
 	}
 }
 
-// mergeCounter is a test extension value implementing core.ExtensionMerger:
+// mergeCounter is a test extension value implementing ais.ExtensionMerger:
 // it counts merged deltas without mutating either side.
 type mergeCounter struct {
 	total int
@@ -83,16 +83,16 @@ func (m *mergeCounter) MergeExtension(delta any) any {
 }
 
 // TestMessageAppendDeltaExtensionMerge verifies AppendDelta merges same-name
-// namespaces through core.ExtensionMerger, replaces values that do not
+// namespaces through ais.ExtensionMerger, replaces values that do not
 // implement it, and never mutates a previously delivered delta's value.
 func TestMessageAppendDeltaExtensionMerge(t *testing.T) {
-	var acc Message
+	var acc ais.Message
 
-	first := Message{}
+	first := ais.Message{}
 	firstVal := &mergeCounter{total: 1}
 	first.Extensions.Set("vendor", firstVal)
 
-	second := Message{}
+	second := ais.Message{}
 	second.Extensions.Set("vendor", &mergeCounter{total: 2})
 
 	acc.AppendDelta(&first)
@@ -108,11 +108,11 @@ func TestMessageAppendDeltaExtensionMerge(t *testing.T) {
 	}
 
 	// A value that does not implement the merge contract is replaced.
-	var plain Message
+	var plain ais.Message
 
-	d1 := Message{}
+	d1 := ais.Message{}
 	d1.Extensions.Set("vendor", "one")
-	d2 := Message{}
+	d2 := ais.Message{}
 	d2.Extensions.Set("vendor", "two")
 
 	plain.AppendDelta(&d1)
@@ -127,10 +127,10 @@ func TestMessageAppendDeltaExtensionMerge(t *testing.T) {
 // byte-for-byte identical with and without another provider's extensions
 // attached — the extension channel can never leak into canonical JSON.
 func TestOpenAIRequestIgnoresForeignExtensions(t *testing.T) {
-	build := func(req *ChatRequest) string {
+	build := func(req *ais.ChatRequest) string {
 		t.Helper()
 
-		p, err := openai.New(core.Config{APIKey: "k", BaseURL: "https://api.example.com/v1"})
+		p, err := openai.New(ais.Config{APIKey: "k", BaseURL: "https://api.example.com/v1"})
 		if err != nil {
 			t.Fatalf("openai.New: %v", err)
 		}
@@ -148,10 +148,10 @@ func TestOpenAIRequestIgnoresForeignExtensions(t *testing.T) {
 		return string(body)
 	}
 
-	plain := &ChatRequest{
+	plain := &ais.ChatRequest{
 		Model:    "gpt-4o",
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
-		Tools:    []Tool{{Type: "function", Function: FunctionDefinition{Name: "f"}}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
+		Tools:    []ais.Tool{{Type: "function", Function: ais.FunctionDefinition{Name: "f"}}},
 	}
 
 	extended := plain.Clone()
@@ -186,13 +186,13 @@ type fakeRequestExtension struct {
 	Sauce string
 }
 
-func (p *fakeExtProvider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*http.Request, error) {
+func (p *fakeExtProvider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
 	body := map[string]any{"model": req.Model}
 
 	if v := req.Extensions.Value(fakeExtName); v != nil {
 		ext, ok := v.(*fakeRequestExtension)
 		if !ok {
-			return nil, &core.ExtensionTypeError{
+			return nil, &ais.ExtensionTypeError{
 				Provider: fakeExtName, Node: "ChatRequest",
 				Want: "*aimodel.fakeRequestExtension", Value: v,
 			}
@@ -209,22 +209,22 @@ func (p *fakeExtProvider) NewChatRequest(ctx context.Context, req *core.ChatRequ
 	return http.NewRequestWithContext(ctx, http.MethodPost, "https://fake.example.com/chat", strings.NewReader(string(data)))
 }
 
-func (p *fakeExtProvider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error) {
-	return nil, core.ErrEmptyResponse
+func (p *fakeExtProvider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
+	return nil, ais.ErrEmptyResponse
 }
 
 func (p *fakeExtProvider) ParseErrorResponse(statusCode int, body []byte) error {
-	return &core.APIError{StatusCode: statusCode}
+	return &ais.APIError{StatusCode: statusCode}
 }
 
-func (p *fakeExtProvider) NewStreamDecoder(body io.Reader) core.StreamDecoder { return nil }
+func (p *fakeExtProvider) NewStreamDecoder(body io.Reader) ais.StreamDecoder { return nil }
 
 // TestFakeProviderProprietaryParamViaExtensions proves adding a proprietary
 // parameter for a new provider needs no canonical change: the fake provider
 // sets and consumes its own namespace, the canonical JSON never carries it,
 // and a mis-typed value fails with an identifiable error before any I/O.
 func TestFakeProviderProprietaryParamViaExtensions(t *testing.T) {
-	req := &ChatRequest{Model: "fake-model"}
+	req := &ais.ChatRequest{Model: "fake-model"}
 	req.Extensions.Set(fakeExtName, &fakeRequestExtension{Sauce: "extra-spicy"})
 
 	// The canonical body stays clean.
@@ -255,7 +255,7 @@ func TestFakeProviderProprietaryParamViaExtensions(t *testing.T) {
 	}
 
 	// A mis-typed extension fails identifiably before any network I/O.
-	bad := &ChatRequest{Model: "fake-model"}
+	bad := &ais.ChatRequest{Model: "fake-model"}
 	bad.Extensions.Set(fakeExtName, 42)
 
 	if _, err := p.NewChatRequest(context.Background(), bad); err == nil {

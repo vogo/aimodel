@@ -1,8 +1,10 @@
-# Architecture Overview
+# Architecture
 
 `github.com/vogo/aimodel` — a unified Go SDK for AI model APIs across multiple protocols (OpenAI-compatible, Anthropic), with zero external dependencies.
 
 This document covers the **cross-cutting architecture**: design scope, the canonical representation, the client and its protocol dispatch, and the repository layout. Everything below the architecture level lives in its own document:
+
+The decisions behind this architecture are recorded in the [ADR index](./adr.md).
 
 | Topic | Document |
 |---|---|
@@ -34,7 +36,7 @@ It **deliberately excludes** retry, rate limiting, request validation, caching /
 
 ## 2. Canonical representation: OpenAI-shaped
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `core` package; the root `aimodel` package re-exports them as **type aliases** (not copies), so callers, provider subpackages, and `composes` all exchange the identical types with one source of truth. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
+The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `ais` package; callers, provider subpackages, and `composes` all use them directly (`ais.ChatRequest`, `ais.Message`, etc.) with the root `aimodel` package as the client facade. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
 
 ```
                      ┌──────────────────────────────┐
@@ -64,13 +66,13 @@ The reasoning: the OpenAI format is the de-facto standard and the overwhelming m
 
 Attribution evidence for retained fields that are not obviously two-sided: `ServiceTier` maps OpenAI's request/response `service_tier` and Anthropic's request `service_tier` + `usage.service_tier`; `Strict` on `Tool` maps OpenAI's `function.strict` and Anthropic's tool-level `strict`; `Stop` maps `stop` ↔ `stop_sequences`. OpenAI-platform fields with no confirmed second implementation (`Store`, `Metadata`, `PromptCacheKey`) stay canonical **as part of the OpenAI-compatible protocol surface** — the canonical shape is that protocol, and OpenAI-compatible backends ignore unknown fields; they are not evidence for promoting new single-vendor semantics.
 
-**The extension channel (`core.Extensions`).** Every extendable node — `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk`, `StreamChunkChoice` — carries an `Extensions map[string]any` tagged `json:"-"`, keyed by registered provider name. The contract:
+**The extension channel (`ais.Extensions`).** Every extendable node — `ChatRequest`, `Message`, `Tool`, `ChatResponse`, `Choice`, `Usage`, `StreamChunk`, `StreamChunkChoice` — carries an `Extensions map[string]any` tagged `json:"-"`, keyed by registered provider name. The contract:
 
 - Canonical JSON is **never** affected: the map is not serialized, so the OpenAI-shape body is byte-for-byte identical with or without extensions, and the OpenAI provider ignores every foreign namespace.
-- Each provider package defines one strongly-typed value per node and public set/read helpers (e.g. `anthropic.ExtendRequest` / `anthropic.RequestExtensionOf`); wire types stay private. A value of the wrong type fails request translation with a `*core.ExtensionTypeError` naming the node — before any network I/O.
-- The core layer owns only the container lifecycle: `Clone()` copies the maps at every node, and `Message.AppendDelta` merges same-name namespaces through the minimal `core.ExtensionMerger` interface (copy-on-write; a value that does not implement it is replaced). Values are read-only once attached.
+- Each provider package defines one strongly-typed value per node and public set/read helpers (e.g. `anthropic.ExtendRequest` / `anthropic.RequestExtensionOf`); wire types stay private. A value of the wrong type fails request translation with a `*ais.ExtensionTypeError` naming the node — before any network I/O.
+- The core layer owns only the container lifecycle: `Clone()` copies the maps at every node, and `Message.AppendDelta` merges same-name namespaces through the minimal `ais.ExtensionMerger` interface (copy-on-write; a value that does not implement it is replaced). Values are read-only once attached.
 - Extensions are an **in-process translation contract**, not a cross-process JSON contract. Callers needing the full vendor payload persist it from the provider's native surface, not by marshalling canonical types.
-- A third-party provider adds proprietary parameters by defining its own extension value and reading `Extensions[itsName]` — with **zero changes** to `core/schema.go`, the root aliases, or any other provider (enforced by the source-constraint tests in `core/schema_vendor_test.go`).
+- A third-party provider adds proprietary parameters by defining its own extension value and reading `Extensions[itsName]` — with **zero changes** to `ais/schema.go`, the root package, or any other provider (enforced by the source-constraint tests in `ais/schema_vendor_test.go`).
 
 ## 3. Client (`client.go` / `chat.go`)
 
@@ -82,7 +84,7 @@ Default (OpenAI-compatible) client:
 client, err := aimodel.NewClient(
     aimodel.WithAPIKey("sk-..."),
     aimodel.WithBaseURL("https://api.openai.com/v1"),
-    aimodel.WithDefaultModel(aimodel.ModelOpenaiGPT4o),
+    aimodel.WithDefaultModel(ais.ModelOpenaiGPT41),
     aimodel.WithTimeout(90*time.Second),
 )
 ```
@@ -113,7 +115,7 @@ client, err := aimodel.NewClient(
 | `WithTimeout(time.Duration)` | HTTP timeout | Default 60s; **applied after all options**, so option order does not matter |
 | `WithHTTPClient(*http.Client)` | Custom HTTP client | `nil` panics outright (a programming error) |
 
-The built-in `openai` and `anthropic` providers register themselves on import (the root package imports both by default). A third protocol is added by writing a subpackage that implements the provider contract and calls `core.Register` in its `init` — **no root-package change required**. See §3.4.
+The built-in `openai` and `anthropic` providers register themselves on import (the root package imports both by default). A third protocol is added by writing a subpackage that implements the provider contract and calls `ais.Register` in its `init` — **no root-package change required**. See §3.4.
 
 ### 3.2 Environment-variable fallback
 
@@ -147,7 +149,7 @@ type ChatCompleter interface {
 }
 ```
 
-`chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `core.ChatProvider`:
+`chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `ais.ChatProvider`:
 
 1. `req.Clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
 2. set the `Stream` flag and `applyDefaultModel` fills an empty `Model`;
@@ -155,7 +157,7 @@ type ChatCompleter interface {
 4. the core layer sends the single HTTP request;
 5. a non-2xx response is read (under the shared size limit) and handed to `provider.ParseErrorResponse`; a success is normalized by `provider.ParseChatResponse`, or wrapped in a `Stream` driven by `provider.NewStreamDecoder`.
 
-The provider contract (in `core`) is exactly this vendor boundary — request building, response parsing, error parsing, and per-event SSE decoding:
+The provider contract (in `ais`) is exactly this vendor boundary — request building, response parsing, error parsing, and per-event SSE decoding:
 
 ```go
 type ChatProvider interface {
@@ -166,7 +168,7 @@ type ChatProvider interface {
 }
 ```
 
-Providers are addressed by a stable string name through a concurrency-safe registry. `core.Register(name, factory)` is monotonic: an empty name, a nil factory, or a duplicate name panics, so dispatch never depends on import order. The registry only resolves a name to a factory — it never guesses a protocol from the model and takes no part in `composes`' multi-model selection.
+Providers are addressed by a stable string name through a concurrency-safe registry. `ais.Register(name, factory)` is monotonic: an empty name, a nil factory, or a duplicate name panics, so dispatch never depends on import order. The registry only resolves a name to a factory — it never guesses a protocol from the model and takes no part in `composes`' multi-model selection.
 
 ## 4. Model constants (`model.go`)
 
@@ -176,8 +178,8 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 
 | Path | Contents |
 |---|---|
-| `core/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
-| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types and errors are re-exported here as aliases (`schema.go` / `errors.go`) |
+| `ais/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
+| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types come from the `ais` package |
 | `provider/openai/` | OpenAI-compatible provider: request building, response/error parsing, SSE decoder. Registers `openai.Name` on import |
 | `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`, and the public extension surface (`extension.go`). Registers `anthropic.Name` on import |
 | `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |
@@ -191,3 +193,5 @@ When an official API changes, update these in sync:
 2. the relevant `doc/` document — a `doc/design/` topic and/or the protocol's `*-chat-api.md`;
 3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md);
 4. the root `README.md` / `CLAUDE.md` **only if** the public usage surface or the agent-facing guidance changed — they link here rather than restating design.
+
+When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md).

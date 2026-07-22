@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package core
+package ais
 
 import (
 	"go/ast"
@@ -26,8 +26,8 @@ import (
 	"testing"
 )
 
-// parseCorePackage parses the non-test files of this package.
-func parseCorePackage(t *testing.T) map[string]*ast.File {
+// parseAisPackage parses the non-test files of this package.
+func parseAisPackage(t *testing.T) map[string]*ast.File {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -35,15 +35,22 @@ func parseCorePackage(t *testing.T) map[string]*ast.File {
 	//nolint:staticcheck // ParseDir is sufficient for a single-directory scan
 	// and keeps this zero-dependency.
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		// model.go is the explicit multi-vendor model-name catalog (plain
+		// string constants, a writing convenience) — naming vendors there is
+		// its whole purpose, so it is exempt from the vendor-neutrality scan.
+		if fi.Name() == "model.go" {
+			return false
+		}
+
 		return strings.HasSuffix(fi.Name(), ".go") && !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0)
 	if err != nil {
-		t.Fatalf("parse core package: %v", err)
+		t.Fatalf("parse ais package: %v", err)
 	}
 
-	pkg, ok := pkgs["core"]
+	pkg, ok := pkgs["ais"]
 	if !ok {
-		t.Fatal("core package not found")
+		t.Fatal("ais package not found")
 	}
 
 	return pkg.Files
@@ -51,7 +58,7 @@ func parseCorePackage(t *testing.T) map[string]*ast.File {
 
 // TestCanonicalSchemaHasNoVendorIdentifiers enforces the vendor-neutrality
 // invariant of the canonical layer: no declared identifier (type, field,
-// constant, function, method) in the core package names a vendor. Vendor
+// constant, function, method) in the ais package names a vendor. Vendor
 // semantics live in provider subpackages and reach the canonical types only
 // through the unified Extensions channel.
 func TestCanonicalSchemaHasNoVendorIdentifiers(t *testing.T) {
@@ -70,7 +77,7 @@ func TestCanonicalSchemaHasNoVendorIdentifiers(t *testing.T) {
 		}
 	}
 
-	for name, file := range parseCorePackage(t) {
+	for name, file := range parseAisPackage(t) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch d := n.(type) {
 			case *ast.TypeSpec:
@@ -97,7 +104,7 @@ func TestCanonicalSchemaHasNoVendorIdentifiers(t *testing.T) {
 // channel. A vendor-specific json:"-" switch smuggled into a canonical type
 // fails this test.
 func TestCanonicalSchemaJSONDashFieldsAreExtensionsOnly(t *testing.T) {
-	for name, file := range parseCorePackage(t) {
+	for name, file := range parseAisPackage(t) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			st, ok := n.(*ast.StructType)
 			if !ok {

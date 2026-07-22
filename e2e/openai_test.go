@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package aimodel
+package e2e_test
 
 import (
 	"context"
@@ -27,22 +27,25 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 )
 
 func TestChatCompletion(t *testing.T) {
-	resp := ChatResponse{
+	resp := ais.ChatResponse{
 		ID:      "chatcmpl-test",
 		Object:  "chat.completion",
 		Created: 1700000000,
-		Model:   ModelOpenaiGPT4o,
-		Choices: []Choice{
+		Model:   ais.ModelOpenaiGPT4o,
+		Choices: []ais.Choice{
 			{
 				Index:        0,
-				Message:      Message{Role: RoleAssistant, Content: NewTextContent("Hello!")},
-				FinishReason: FinishReasonStop,
+				Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("Hello!")},
+				FinishReason: ais.FinishReasonStop,
 			},
 		},
-		Usage: Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+		Usage: ais.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,11 +62,11 @@ func TestChatCompletion(t *testing.T) {
 			t.Errorf("content-type = %s", r.Header.Get("Content-Type"))
 		}
 
-		var req ChatRequest
+		var req ais.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != ModelOpenaiGPT4o {
+		if req.Model != ais.ModelOpenaiGPT4o {
 			t.Errorf("request model = %q", req.Model)
 		}
 		if req.Stream {
@@ -75,15 +78,15 @@ func TestChatCompletion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	result, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model: ModelOpenaiGPT4o,
-		Messages: []Message{
-			{Role: RoleUser, Content: NewTextContent("Hi")},
+	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model: ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")},
 		},
 	})
 	if err != nil {
@@ -118,22 +121,22 @@ func TestChatCompletionAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	var apiErr *APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *APIError, got %T: %v", err, err)
+		t.Fatalf("expected *ais.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != 429 {
 		t.Errorf("status = %d", apiErr.StatusCode)
@@ -146,24 +149,24 @@ func TestChatCompletionAPIError(t *testing.T) {
 func TestChatCompletionEmptyChoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ais.ChatResponse{
 			ID:      "chatcmpl-empty",
-			Choices: []Choice{},
+			Choices: []ais.Choice{},
 		})
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
-	if !errors.Is(err, ErrEmptyResponse) {
-		t.Errorf("got %v, want ErrEmptyResponse", err)
+	if !errors.Is(err, ais.ErrEmptyResponse) {
+		t.Errorf("got %v, want ais.ErrEmptyResponse", err)
 	}
 }
 
@@ -173,17 +176,17 @@ func TestChatCompletionCancelledContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = c.ChatCompletion(ctx, &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	_, err = c.ChatCompletion(ctx, &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
@@ -192,7 +195,7 @@ func TestChatCompletionCancelledContext(t *testing.T) {
 
 func TestChatCompletionStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
+		var req ais.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -220,14 +223,14 @@ func TestChatCompletionStream(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -270,22 +273,22 @@ func TestChatCompletionStreamAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-bad"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-bad"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	_, err = c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
-	var apiErr *APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *APIError, got %T: %v", err, err)
+		t.Fatalf("expected *ais.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != 401 {
 		t.Errorf("status = %d", apiErr.StatusCode)
@@ -294,7 +297,7 @@ func TestChatCompletionStreamAPIError(t *testing.T) {
 
 func TestChatCompletionStreamAutoInjectsStreamOptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
+		var req ais.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -312,15 +315,15 @@ func TestChatCompletionStreamAutoInjectsStreamOptions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	// Caller does NOT set StreamOptions.
-	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	// Caller does NOT set ais.StreamOptions.
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -341,7 +344,7 @@ func TestChatCompletionStreamAutoInjectsStreamOptions(t *testing.T) {
 
 func TestChatCompletionStreamPreservesExplicitStreamOptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
+		var req ais.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -359,16 +362,16 @@ func TestChatCompletionStreamPreservesExplicitStreamOptions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	// Caller explicitly sets IncludeUsage: false.
-	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:         ModelOpenaiGPT4o,
-		Messages:      []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
-		StreamOptions: &StreamOptions{IncludeUsage: false},
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:         ais.ModelOpenaiGPT4o,
+		Messages:      []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+		StreamOptions: &ais.StreamOptions{IncludeUsage: false},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -406,14 +409,14 @@ func TestChatCompletionStreamUsage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -465,14 +468,14 @@ func TestChatCompletionStreamUsageCacheReadTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	stream, err := c.ChatCompletionStream(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -523,14 +526,14 @@ func TestChatCompletionWithCacheReadTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	result, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -550,14 +553,14 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		req             ChatRequest
+		req             ais.ChatRequest
 		wantContains    []string
 		wantNotContains []string
 	}{
 		{
 			name: "only MaxCompletionTokens",
-			req: ChatRequest{
-				Model:               ModelOpenaiGPT4o,
+			req: ais.ChatRequest{
+				Model:               ais.ModelOpenaiGPT4o,
 				MaxCompletionTokens: &maxCompletion,
 			},
 			wantContains:    []string{`"max_completion_tokens":256`},
@@ -565,8 +568,8 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 		},
 		{
 			name: "only MaxTokens",
-			req: ChatRequest{
-				Model:     ModelOpenaiGPT4o,
+			req: ais.ChatRequest{
+				Model:     ais.ModelOpenaiGPT4o,
 				MaxTokens: &maxTokens,
 			},
 			wantContains:    []string{`"max_tokens":512`},
@@ -574,8 +577,8 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 		},
 		{
 			name: "neither set",
-			req: ChatRequest{
-				Model: ModelOpenaiGPT4o,
+			req: ais.ChatRequest{
+				Model: ais.ModelOpenaiGPT4o,
 			},
 			wantNotContains: []string{"max_tokens", "max_completion_tokens"},
 		},
@@ -605,7 +608,7 @@ func TestChatRequestMaxTokensSerialization(t *testing.T) {
 
 func TestChatCompletionWithTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
+		var req ais.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -618,43 +621,43 @@ func TestChatCompletionWithTools(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ais.ChatResponse{
 			ID: "chatcmpl-tools",
-			Choices: []Choice{
+			Choices: []ais.Choice{
 				{
 					Index: 0,
-					Message: Message{
-						Role: RoleAssistant,
-						ToolCalls: []ToolCall{
+					Message: ais.Message{
+						Role: ais.RoleAssistant,
+						ToolCalls: []ais.ToolCall{
 							{
 								ID:   "call_1",
 								Type: "function",
-								Function: FunctionCall{
+								Function: ais.FunctionCall{
 									Name:      "get_weather",
 									Arguments: `{"city":"NYC"}`,
 								},
 							},
 						},
 					},
-					FinishReason: FinishReasonToolCalls,
+					FinishReason: ais.FinishReasonToolCalls,
 				},
 			},
 		})
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	result, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("weather?")}},
-		Tools: []Tool{
+	result, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("weather?")}},
+		Tools: []ais.Tool{
 			{
 				Type: "function",
-				Function: FunctionDefinition{
+				Function: ais.FunctionDefinition{
 					Name:        "get_weather",
 					Description: "Get current weather",
 					Parameters: map[string]any{
@@ -700,10 +703,10 @@ func captureRequestBody(t *testing.T) (*httptest.Server, *map[string]json.RawMes
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{
+		_ = json.NewEncoder(w).Encode(ais.ChatResponse{
 			ID: "chatcmpl-capture",
-			Choices: []Choice{
-				{Index: 0, Message: Message{Role: RoleAssistant, Content: NewTextContent("ok")}, FinishReason: FinishReasonStop},
+			Choices: []ais.Choice{
+				{Index: 0, Message: ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")}, FinishReason: ais.FinishReasonStop},
 			},
 		})
 	}))
@@ -715,16 +718,16 @@ func TestOpenAIChatRequestVerbosity(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	// Verbosity set: serialized as "verbosity".
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:     ModelOpenaiGPT4o,
-		Messages:  []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
-		Verbosity: VerbosityHigh,
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:     ais.ModelOpenaiGPT4o,
+		Messages:  []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+		Verbosity: ais.VerbosityHigh,
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
 	}
@@ -738,9 +741,9 @@ func TestOpenAIChatRequestVerbosity(t *testing.T) {
 	}
 
 	// Verbosity empty: omitempty drops the field.
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
 	}
@@ -754,25 +757,25 @@ func TestOpenAIChatRequestReasoningEffortValues(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	efforts := []string{
-		ReasoningEffortNone,
-		ReasoningEffortMinimal,
-		ReasoningEffortLow,
-		ReasoningEffortMedium,
-		ReasoningEffortHigh,
-		ReasoningEffortXHigh,
+		ais.ReasoningEffortNone,
+		ais.ReasoningEffortMinimal,
+		ais.ReasoningEffortLow,
+		ais.ReasoningEffortMedium,
+		ais.ReasoningEffortHigh,
+		ais.ReasoningEffortXHigh,
 	}
 
 	for _, effort := range efforts {
 		t.Run(effort, func(t *testing.T) {
-			if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-				Model:           ModelOpenaiGPT4o,
-				Messages:        []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+			if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+				Model:           ais.ModelOpenaiGPT4o,
+				Messages:        []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 				ReasoningEffort: effort,
 			}); err != nil {
 				t.Fatalf("ChatCompletion: %v", err)
@@ -801,9 +804,9 @@ func TestOpenAIChatRequestCommonFields(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	logprobs := true
@@ -811,9 +814,9 @@ func TestOpenAIChatRequestCommonFields(t *testing.T) {
 	parallel := false
 	store := true
 
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:             ModelOpenaiGPT4o,
-		Messages:          []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:             ais.ModelOpenaiGPT4o,
+		Messages:          []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		Logprobs:          &logprobs,
 		TopLogprobs:       &topLogprobs,
 		LogitBias:         map[string]int{"50256": -100},
@@ -853,15 +856,15 @@ func TestOpenAIChatRequestCommonFieldsOmitEmpty(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
 	// No optional fields set: all of them must be omitted.
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:    ModelOpenaiGPT4o,
-		Messages: []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:    ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
 	}
@@ -881,16 +884,16 @@ func TestOpenAIChatRequestModalitiesAudio(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model:      ModelOpenaiGPT4o,
-		Messages:   []Message{{Role: RoleUser, Content: NewTextContent("Hi")}},
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model:      ais.ModelOpenaiGPT4o,
+		Messages:   []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 		Modalities: []string{"text", "audio"},
-		Audio:      &AudioConfig{Voice: "alloy", Format: "wav"},
+		Audio:      &ais.AudioConfig{Voice: "alloy", Format: "wav"},
 	}); err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
 	}
@@ -916,18 +919,18 @@ func TestOpenAIChatRequestInputAudioContent(t *testing.T) {
 	srv, captured := captureRequestBody(t)
 	defer srv.Close()
 
-	c, err := NewClient(WithAPIKey("sk-test"), WithBaseURL(srv.URL))
+	c, err := aimodel.NewClient(aimodel.WithAPIKey("sk-test"), aimodel.WithBaseURL(srv.URL))
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("aimodel.NewClient: %v", err)
 	}
 
-	if _, err := c.ChatCompletion(context.Background(), &ChatRequest{
-		Model: ModelOpenaiGPT4o,
-		Messages: []Message{{
-			Role: RoleUser,
-			Content: NewPartsContent(
-				ContentPart{Type: "text", Text: "what is said?"},
-				ContentPart{Type: "input_audio", InputAudio: &InputAudio{Data: "aGVsbG8=", Format: "wav"}},
+	if _, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Model: ais.ModelOpenaiGPT4o,
+		Messages: []ais.Message{{
+			Role: ais.RoleUser,
+			Content: ais.NewPartsContent(
+				ais.ContentPart{Type: "text", Text: "what is said?"},
+				ais.ContentPart{Type: "input_audio", InputAudio: &ais.InputAudio{Data: "aGVsbG8=", Format: "wav"}},
 			),
 		}},
 	}); err != nil {

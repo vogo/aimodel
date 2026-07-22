@@ -2,7 +2,7 @@
 
 The protocol-independent streaming abstraction, delta merging, unmodelled-block preservation, and stream interception.
 
-- **Implementation**: `stream.go`, `intercept.go` (the `Stream` type and interception; both root); per-event decoding lives in each provider's `stream.go` behind `core.StreamDecoder`
+- **Implementation**: `stream.go`, `intercept.go` (the `Stream` type and interception; both root); per-event decoding lives in each provider's `stream.go` behind `ais.StreamDecoder`
 - **Per-protocol SSE parsing**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) §4.1 · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §5
 
 ---
@@ -19,7 +19,7 @@ func (s *Stream) Close() error                 // idempotent, safe alongside Rec
 
 Design points:
 
-- **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps a `core.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
+- **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps an `ais.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
 - **Concurrency safety**: `Recv` serializes on a mutex; `Close` uses `CompareAndSwap` to run exactly once and **closes the underlying reader directly** to unblock an in-flight `Recv` (`http.Response.Body.Close` is safe to call concurrently). After closing, `Recv` returns `ErrStreamClosed`.
 - **Usage capture**: any chunk carrying a `Usage` is recorded into `s.usage`; `Usage()` returns it once the stream ends.
 - **Container ID**: the Anthropic execution container rides the chunk's extension namespace (`anthropic.ChunkExtensionOf(chunk).Container`) and is emitted **once**, as soon as `message_start` is read — see §3.
@@ -38,7 +38,7 @@ func (tc *ToolCall) Merge(delta *ToolCall)
 
 `AppendDelta` concatenates text and thinking, and merges tool calls in place by `ToolCall.Index` (growing the slice with placeholder elements when needed). `Merge` uses "non-empty overwrite" for ID / Type / Name and **string append** for `Arguments`, because tool-argument JSON is streamed in fragments.
 
-`AppendDelta` also merges each delta's provider extension namespaces through the `core.ExtensionMerger` contract (copy-on-write; a stored value that does not implement it is replaced by the delta's). The canonical layer never interprets the values — for Anthropic that is what keeps unmodelled blocks accumulating in arrival order, see §4.
+`AppendDelta` also merges each delta's provider extension namespaces through the `ais.ExtensionMerger` contract (copy-on-write; a stored value that does not implement it is replaced by the delta's). The canonical layer never interprets the values — for Anthropic that is what keeps unmodelled blocks accumulating in arrival order, see §4.
 
 ---
 

@@ -21,11 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // This file is the public Anthropic extension surface of the unified provider
-// extension channel (core.Extensions). Request-side values configure
+// extension channel (ais.Extensions). Request-side values configure
 // Anthropic-only parameters without touching the canonical schema;
 // response-side values carry Anthropic-only response metadata written by this
 // provider's translators. Every value lives under the Name namespace of the
@@ -44,15 +44,15 @@ const (
 	// "model_context_window_exceeded" (input + output exceeded the model's
 	// context window — distinct from hitting the requested max_tokens /
 	// "length").
-	FinishReasonModelContextWindowExceeded core.FinishReason = "model_context_window_exceeded"
+	FinishReasonModelContextWindowExceeded ais.FinishReason = "model_context_window_exceeded"
 	// FinishReasonRefusal maps Anthropic's "refusal" (streaming classifiers
 	// intervened on a potential policy violation). The classification, when
 	// present, is carried on the choice's ChoiceExtension.StopDetails.
-	FinishReasonRefusal core.FinishReason = "refusal"
+	FinishReasonRefusal ais.FinishReason = "refusal"
 	// FinishReasonPauseTurn maps Anthropic's "pause_turn" (a long-running
 	// turn — e.g. a server-side tool — was paused; the client may replay it
 	// to continue).
-	FinishReasonPauseTurn core.FinishReason = "pause_turn"
+	FinishReasonPauseTurn ais.FinishReason = "pause_turn"
 )
 
 // RequestExtension carries the Anthropic-only request parameters. Attach it
@@ -105,7 +105,7 @@ type MessageExtension struct {
 	ExtraBlocks []json.RawMessage
 }
 
-// MergeExtension implements core.ExtensionMerger so streaming deltas
+// MergeExtension implements ais.ExtensionMerger so streaming deltas
 // accumulate: ExtraBlocks concatenate in arrival order and the breakpoint
 // flag sticks. It returns a fresh value — neither the receiver nor the delta
 // is mutated, so previously delivered chunks stay intact.
@@ -169,8 +169,8 @@ type StopDetails struct {
 }
 
 // ChoiceExtension carries the Anthropic-only per-choice response metadata,
-// written by this provider on core.Choice (unary) and on the terminal
-// core.StreamChunkChoice (streaming).
+// written by this provider on ais.Choice (unary) and on the terminal
+// ais.StreamChunkChoice (streaming).
 type ChoiceExtension struct {
 	// StopDetails is the structured stop classification (e.g. the refusal
 	// category); nil when the response carries none.
@@ -186,8 +186,8 @@ type ResponseContainer struct {
 }
 
 // ResponseExtension carries the Anthropic-only response-level metadata,
-// written by this provider on core.ChatResponse (unary) and on the
-// core.StreamChunk that reports the message_start information (streaming).
+// written by this provider on ais.ChatResponse (unary) and on the
+// ais.StreamChunk that reports the message_start information (streaming).
 type ResponseExtension struct {
 	// Container identifies the server-side execution container this response
 	// used. Pass its ID back via RequestExtension.Container to reuse the
@@ -202,8 +202,8 @@ type ServerToolUse struct {
 }
 
 // UsageExtension carries the Anthropic-only usage accounting, written by this
-// provider on core.Usage. The cross-provider counts (prompt/completion/cache
-// read/reasoning tokens, service tier) stay on core.Usage itself.
+// provider on ais.Usage. The cross-provider counts (prompt/completion/cache
+// read/reasoning tokens, service tier) stay on ais.Usage itself.
 type UsageExtension struct {
 	// CacheWriteTokens reports tokens written to the prompt cache
 	// (cache_creation_input_tokens, the total across TTLs). Like the
@@ -230,25 +230,25 @@ type UsageExtension struct {
 
 // ExtendRequest attaches the Anthropic request extension to a canonical
 // request. Passing nil removes a previously attached extension.
-func ExtendRequest(r *core.ChatRequest, ext *RequestExtension) {
+func ExtendRequest(r *ais.ChatRequest, ext *RequestExtension) {
 	setExtension(&r.Extensions, ext)
 }
 
 // ExtendMessage attaches the Anthropic message extension to a canonical
 // message. Passing nil removes a previously attached extension.
-func ExtendMessage(m *core.Message, ext *MessageExtension) {
+func ExtendMessage(m *ais.Message, ext *MessageExtension) {
 	setExtension(&m.Extensions, ext)
 }
 
 // ExtendTool attaches the Anthropic tool extension to a canonical tool.
 // Passing nil removes a previously attached extension.
-func ExtendTool(t *core.Tool, ext *ToolExtension) {
+func ExtendTool(t *ais.Tool, ext *ToolExtension) {
 	setExtension(&t.Extensions, ext)
 }
 
 // setExtension stores ext under this provider's namespace; a typed nil
 // deletes the entry so the translator sees a genuinely absent extension.
-func setExtension[T any](exts *core.Extensions, ext *T) {
+func setExtension[T any](exts *ais.Extensions, ext *T) {
 	if ext == nil {
 		delete(*exts, Name)
 
@@ -262,9 +262,9 @@ func setExtension[T any](exts *core.Extensions, ext *T) {
 
 // RequestExtensionOf returns the Anthropic request extension attached to r,
 // or nil when absent. A value of any other type also yields nil — the
-// translator rejects such a value with a *core.ExtensionTypeError before any
+// translator rejects such a value with a *ais.ExtensionTypeError before any
 // network I/O, so it cannot silently take effect.
-func RequestExtensionOf(r *core.ChatRequest) *RequestExtension {
+func RequestExtensionOf(r *ais.ChatRequest) *RequestExtension {
 	ext, _ := extensionOf[RequestExtension](r.Extensions, "")
 
 	return ext
@@ -272,7 +272,7 @@ func RequestExtensionOf(r *core.ChatRequest) *RequestExtension {
 
 // MessageExtensionOf returns the Anthropic message extension attached to m,
 // or nil when absent (same type contract as RequestExtensionOf).
-func MessageExtensionOf(m *core.Message) *MessageExtension {
+func MessageExtensionOf(m *ais.Message) *MessageExtension {
 	ext, _ := extensionOf[MessageExtension](m.Extensions, "")
 
 	return ext
@@ -280,7 +280,7 @@ func MessageExtensionOf(m *core.Message) *MessageExtension {
 
 // ToolExtensionOf returns the Anthropic tool extension attached to t, or nil
 // when absent (same type contract as RequestExtensionOf).
-func ToolExtensionOf(t *core.Tool) *ToolExtension {
+func ToolExtensionOf(t *ais.Tool) *ToolExtension {
 	ext, _ := extensionOf[ToolExtension](t.Extensions, "")
 
 	return ext
@@ -288,7 +288,7 @@ func ToolExtensionOf(t *core.Tool) *ToolExtension {
 
 // ChoiceExtensionOf returns the Anthropic per-choice response metadata of a
 // unary choice, or nil when the response carries none.
-func ChoiceExtensionOf(c *core.Choice) *ChoiceExtension {
+func ChoiceExtensionOf(c *ais.Choice) *ChoiceExtension {
 	ext, _ := extensionOf[ChoiceExtension](c.Extensions, "")
 
 	return ext
@@ -296,7 +296,7 @@ func ChoiceExtensionOf(c *core.Choice) *ChoiceExtension {
 
 // ChunkChoiceExtensionOf returns the Anthropic per-choice response metadata
 // of a stream chunk choice (populated on the terminal chunk), or nil.
-func ChunkChoiceExtensionOf(c *core.StreamChunkChoice) *ChoiceExtension {
+func ChunkChoiceExtensionOf(c *ais.StreamChunkChoice) *ChoiceExtension {
 	ext, _ := extensionOf[ChoiceExtension](c.Extensions, "")
 
 	return ext
@@ -304,7 +304,7 @@ func ChunkChoiceExtensionOf(c *core.StreamChunkChoice) *ChoiceExtension {
 
 // ResponseExtensionOf returns the Anthropic response-level metadata of a
 // unary response, or nil when the response carries none.
-func ResponseExtensionOf(r *core.ChatResponse) *ResponseExtension {
+func ResponseExtensionOf(r *ais.ChatResponse) *ResponseExtension {
 	ext, _ := extensionOf[ResponseExtension](r.Extensions, "")
 
 	return ext
@@ -313,7 +313,7 @@ func ResponseExtensionOf(r *core.ChatResponse) *ResponseExtension {
 // ChunkExtensionOf returns the Anthropic chunk-level metadata of a stream
 // chunk (populated on the chunk carrying the message_start information), or
 // nil.
-func ChunkExtensionOf(c *core.StreamChunk) *ResponseExtension {
+func ChunkExtensionOf(c *ais.StreamChunk) *ResponseExtension {
 	ext, _ := extensionOf[ResponseExtension](c.Extensions, "")
 
 	return ext
@@ -321,7 +321,7 @@ func ChunkExtensionOf(c *core.StreamChunk) *ResponseExtension {
 
 // UsageExtensionOf returns the Anthropic usage accounting attached to u, or
 // nil when the response carries none.
-func UsageExtensionOf(u *core.Usage) *UsageExtension {
+func UsageExtensionOf(u *ais.Usage) *UsageExtension {
 	ext, _ := extensionOf[UsageExtension](u.Extensions, "")
 
 	return ext
@@ -329,10 +329,10 @@ func UsageExtensionOf(u *core.Usage) *UsageExtension {
 
 // extensionOf reads this provider's namespace from an extension map. A
 // missing or nil entry is equivalent to a zero value (nil, no error). A value
-// of any other type yields a *core.ExtensionTypeError naming the canonical
+// of any other type yields a *ais.ExtensionTypeError naming the canonical
 // node — the request translator propagates it before any network I/O; the
 // public accessors drop it and report absence.
-func extensionOf[T any](exts core.Extensions, node string) (*T, error) {
+func extensionOf[T any](exts ais.Extensions, node string) (*T, error) {
 	v, ok := exts[Name]
 	if !ok || v == nil {
 		return nil, nil
@@ -340,7 +340,7 @@ func extensionOf[T any](exts core.Extensions, node string) (*T, error) {
 
 	ext, ok := v.(*T)
 	if !ok {
-		return nil, &core.ExtensionTypeError{
+		return nil, &ais.ExtensionTypeError{
 			Provider: Name,
 			Node:     node,
 			Want:     fmt.Sprintf("*%T", *new(T)),

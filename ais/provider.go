@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
-// Package core holds the vendor-neutral foundation of aimodel: the canonical
-// chat types, the provider contract, and the provider registry. It has no
-// vendor dependencies; provider subpackages depend on it, and the root
-// aimodel package re-exports its canonical types as aliases.
-package core
+// Package api holds the vendor-neutral foundation of aimodel: the canonical
+// chat types, the error model, the provider contract, and the provider
+// registry. It has no vendor dependencies; provider subpackages implement
+// against it, and callers use its canonical types directly alongside the
+// root aimodel client facade.
+package ais
 
 import (
 	"context"
@@ -36,7 +37,7 @@ const MaxStreamLineSize = 1 << 20
 // (URL, serialized body, headers), normalizing a successful response,
 // converting a non-2xx response body into an error, and decoding SSE events.
 //
-// The core layer owns everything else: request cloning, default model,
+// The root pipeline owns everything else: request cloning, default model,
 // sending the single HTTP request, closing response bodies on failure paths,
 // and the Stream lifecycle. A provider must not retain or mutate caller
 // state; the *ChatRequest it receives is a per-call working copy that it may
@@ -62,7 +63,7 @@ type ChatProvider interface {
 }
 
 // StreamDecoder decodes one canonical chunk per call from a streaming
-// response body. It returns io.EOF when the stream is complete. The core
+// response body. It returns io.EOF when the stream is complete. The root
 // Stream owns the close state and the underlying reader; a decoder only
 // translates events.
 type StreamDecoder interface {
@@ -73,8 +74,8 @@ type StreamDecoder interface {
 // provider factory. Vendor-specific configuration travels in Options as a
 // value defined by the provider's own package.
 type Config struct {
-	// APIKey is the credential for the vendor API. Never empty: the core
-	// layer rejects key-less clients before resolving a provider.
+	// APIKey is the credential for the vendor API. Never empty: the root
+	// pipeline rejects key-less clients before resolving a provider.
 	APIKey string
 
 	// BaseURL is the API base URL with any trailing "/" trimmed. Empty means
