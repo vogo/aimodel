@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // newProvider builds a *provider from the given options, failing the test on a
@@ -29,7 +29,7 @@ import (
 func newProvider(t *testing.T, opts any) *provider {
 	t.Helper()
 
-	p, err := New(core.Config{APIKey: "sk-ant-test", Options: opts})
+	p, err := New(ais.Config{APIKey: "sk-ant-test", Options: opts})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestEndpointDefault(t *testing.T) {
 		t.Errorf("endpoint() = %q, want %q", got, anthropicDefaultBaseURL+"/v1/messages")
 	}
 
-	withBase, err := New(core.Config{APIKey: "sk-ant-test", BaseURL: "https://custom.example.com"})
+	withBase, err := New(ais.Config{APIKey: "sk-ant-test", BaseURL: "https://custom.example.com"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestEndpointDefault(t *testing.T) {
 // TestNewRejectsUnknownOptions verifies the factory rejects an options value of
 // a type it does not recognize.
 func TestNewRejectsUnknownOptions(t *testing.T) {
-	_, err := New(core.Config{APIKey: "sk-ant-test", Options: "not-anthropic-options"})
+	_, err := New(ais.Config{APIKey: "sk-ant-test", Options: "not-anthropic-options"})
 	if err == nil {
 		t.Fatal("expected error for unknown options type")
 	}

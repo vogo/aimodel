@@ -22,7 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // Stream reads streaming chat completion responses using SSE.
@@ -30,16 +30,16 @@ import (
 type Stream struct {
 	mu      sync.Mutex
 	reader  io.ReadCloser
-	recv    func() (*StreamChunk, error)
+	recv    func() (*ais.StreamChunk, error)
 	closed  atomic.Bool
-	usage   *Usage // captured from the final chunk that includes usage data
-	onClose func(*Usage)
+	usage   *ais.Usage // captured from the final chunk that includes usage data
+	onClose func(*ais.Usage)
 }
 
 // newStream wraps a streaming response body and its provider-supplied SSE
 // decoder into a Stream. The decoder only translates events; the Stream owns
 // the close state and the underlying reader.
-func newStream(body io.ReadCloser, decoder core.StreamDecoder) *Stream {
+func newStream(body io.ReadCloser, decoder ais.StreamDecoder) *Stream {
 	return &Stream{
 		reader: body,
 		recv:   decoder.Next,
@@ -48,16 +48,16 @@ func newStream(body io.ReadCloser, decoder core.StreamDecoder) *Stream {
 
 // Recv reads the next chunk from the stream.
 // Returns io.EOF when the stream is done.
-func (s *Stream) Recv() (*StreamChunk, error) {
+func (s *Stream) Recv() (*ais.StreamChunk, error) {
 	if s.closed.Load() {
-		return nil, ErrStreamClosed
+		return nil, ais.ErrStreamClosed
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.closed.Load() {
-		return nil, ErrStreamClosed
+		return nil, ais.ErrStreamClosed
 	}
 
 	chunk, err := s.recv()
@@ -71,7 +71,7 @@ func (s *Stream) Recv() (*StreamChunk, error) {
 // Usage returns the accumulated usage from the stream, if available.
 // This is typically populated from the final chunk when stream_options.include_usage is set,
 // or from Anthropic's message_delta event.
-func (s *Stream) Usage() *Usage {
+func (s *Stream) Usage() *ais.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -96,7 +96,7 @@ func (s *Stream) Close() error {
 
 // WrapStream wraps an existing stream with a callback that fires on close with usage data.
 // If s is nil, onClose is called immediately with nil usage and nil is returned.
-func WrapStream(s *Stream, onClose func(*Usage)) *Stream {
+func WrapStream(s *Stream, onClose func(*ais.Usage)) *Stream {
 	if s == nil {
 		if onClose != nil {
 			onClose(nil)

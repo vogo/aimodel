@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 )
 
@@ -63,9 +64,9 @@ func TestIntegration_Anthropic_CacheReadTokens_Sync(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -125,9 +126,9 @@ func TestIntegration_Anthropic_CacheReadTokens_Stream(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -202,9 +203,9 @@ func TestIntegration_OpenAI_CacheReadTokens_Sync(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "gpt-4o",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -255,9 +256,9 @@ func TestIntegration_OpenAI_CacheReadTokens_Stream(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
 		Model:    "gpt-4o",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -327,9 +328,9 @@ func TestIntegration_OpenAI_NoCacheTokens_Sync(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "gpt-4o",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -372,9 +373,9 @@ func TestIntegration_Anthropic_ZeroCacheTokens_Sync(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		Model:    "claude-sonnet-4",
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hi")}},
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)

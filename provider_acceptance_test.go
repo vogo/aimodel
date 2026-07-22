@@ -28,7 +28,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 )
 
 // This file proves the extension contract: a provider defined entirely outside
@@ -54,7 +54,7 @@ type fakeProvider struct {
 
 const fakeHeader = "X-Fake-Provider"
 
-func newFakeProvider(cfg core.Config) (core.ChatProvider, error) {
+func newFakeProvider(cfg ais.Config) (ais.ChatProvider, error) {
 	calls, ok := cfg.Options.(*fakeCalls)
 	if !ok {
 		return nil, errors.New("fake provider requires *fakeCalls options")
@@ -63,7 +63,7 @@ func newFakeProvider(cfg core.Config) (core.ChatProvider, error) {
 	return &fakeProvider{baseURL: cfg.BaseURL, calls: calls}, nil
 }
 
-func (p *fakeProvider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*http.Request, error) {
+func (p *fakeProvider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
 	p.calls.newRequest++
 	p.calls.sawStream = req.Stream
 	p.calls.sawStreamSet = true
@@ -83,24 +83,24 @@ func (p *fakeProvider) NewChatRequest(ctx context.Context, req *core.ChatRequest
 	return r, nil
 }
 
-func (p *fakeProvider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error) {
+func (p *fakeProvider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
 	p.calls.parseResponse++
 
 	_, _ = io.Copy(io.Discard, body)
 
-	return &core.ChatResponse{
+	return &ais.ChatResponse{
 		ID:      "fake",
-		Choices: []core.Choice{{Index: 0, Message: core.Message{Role: core.RoleAssistant, Content: core.NewTextContent("fake-ok")}}},
+		Choices: []ais.Choice{{Index: 0, Message: ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("fake-ok")}}},
 	}, nil
 }
 
 func (p *fakeProvider) ParseErrorResponse(statusCode int, body []byte) error {
 	p.calls.parseError++
 
-	return &core.APIError{StatusCode: statusCode, Message: "fake-error", Type: "fake"}
+	return &ais.APIError{StatusCode: statusCode, Message: "fake-error", Type: "fake"}
 }
 
-func (p *fakeProvider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
+func (p *fakeProvider) NewStreamDecoder(body io.Reader) ais.StreamDecoder {
 	p.calls.newDecoder++
 
 	return &fakeDecoder{}
@@ -108,16 +108,16 @@ func (p *fakeProvider) NewStreamDecoder(body io.Reader) core.StreamDecoder {
 
 type fakeDecoder struct{ done bool }
 
-func (d *fakeDecoder) Next() (*core.StreamChunk, error) {
+func (d *fakeDecoder) Next() (*ais.StreamChunk, error) {
 	if d.done {
 		return nil, io.EOF
 	}
 
 	d.done = true
 
-	return &core.StreamChunk{ID: "fake", Choices: []core.StreamChunkChoice{{
+	return &ais.StreamChunk{ID: "fake", Choices: []ais.StreamChunkChoice{{
 		Index: 0,
-		Delta: core.Message{Content: core.NewTextContent("chunk")},
+		Delta: ais.Message{Content: ais.NewTextContent("chunk")},
 	}}}, nil
 }
 
@@ -126,7 +126,7 @@ func (d *fakeDecoder) Next() (*core.StreamChunk, error) {
 const fakeProviderName = "fake-acceptance-provider"
 
 func init() {
-	core.Register(fakeProviderName, newFakeProvider)
+	ais.Register(fakeProviderName, newFakeProvider)
 }
 
 func TestFakeProvider_UnaryHooks(t *testing.T) {
@@ -156,8 +156,8 @@ func TestFakeProvider_UnaryHooks(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	resp, err := c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")}},
+	resp, err := c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletion: %v", err)
@@ -203,11 +203,11 @@ func TestFakeProvider_ErrorHook(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_, err = c.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")}},
+	_, err = c.ChatCompletion(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
 	})
 
-	var apiErr *aimodel.APIError
+	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T: %v", err, err)
 	}
@@ -240,8 +240,8 @@ func TestFakeProvider_StreamHooks(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	stream, err := c.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-		Messages: []aimodel.Message{{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("hi")}},
+	stream, err := c.ChatCompletionStream(context.Background(), &ais.ChatRequest{
+		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("hi")}},
 	})
 	if err != nil {
 		t.Fatalf("ChatCompletionStream: %v", err)
@@ -292,14 +292,14 @@ func TestRegister_DeterministicFailures(t *testing.T) {
 
 	assertPanic("duplicate name", func() {
 		// fakeProviderName is already registered in init.
-		core.Register(fakeProviderName, newFakeProvider)
+		ais.Register(fakeProviderName, newFakeProvider)
 	})
 
 	assertPanic("empty name", func() {
-		core.Register("", newFakeProvider)
+		ais.Register("", newFakeProvider)
 	})
 
 	assertPanic("nil factory", func() {
-		core.Register("some-unique-name-for-nil", nil)
+		ais.Register("some-unique-name-for-nil", nil)
 	})
 }

@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
 )
 
@@ -49,12 +50,12 @@ func testThinkingCompletion(client *aimodel.Client) {
 	fmt.Println("=== Anthropic Extended Thinking ===")
 
 	maxTokens := 16000
-	resp, err := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
+	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
 		MaxTokens: &maxTokens,
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("When Will AGI Arrive?")},
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("When Will AGI Arrive?")},
 		},
-		Thinking: &aimodel.Thinking{
+		Thinking: &ais.Thinking{
 			Type:         "enabled",
 			BudgetTokens: 10000,
 		},
@@ -79,12 +80,12 @@ func testThinkingStream(client *aimodel.Client) {
 	fmt.Println("=== Anthropic Extended Thinking Stream ===")
 
 	maxTokens := 16000
-	stream, err := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
+	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
 		MaxTokens: &maxTokens,
-		Messages: []aimodel.Message{
-			{Role: aimodel.RoleUser, Content: aimodel.NewTextContent("When Will AGI Arrive?")},
+		Messages: []ais.Message{
+			{Role: ais.RoleUser, Content: ais.NewTextContent("When Will AGI Arrive?")},
 		},
-		Thinking: &aimodel.Thinking{
+		Thinking: &ais.Thinking{
 			Type:         "enabled",
 			BudgetTokens: 10000,
 		},

@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/openai"
 
 	// Register the built-in Anthropic provider so WithProvider(anthropic.Name)
@@ -42,7 +42,7 @@ const defaultTimeout = 60 * time.Second
 type Client struct {
 	model      string
 	httpClient *http.Client
-	provider   core.ChatProvider
+	provider   ais.ChatProvider
 }
 
 // clientConfig holds the construction-time configuration mutated by Options.
@@ -70,7 +70,7 @@ func WithAPIKey(key string) Option {
 }
 
 // WithDefaultModel sets the default model name.
-// If a ChatRequest has an empty Model field, this default is used.
+// If a ais.ChatRequest has an empty Model field, this default is used.
 func WithDefaultModel(model string) Option {
 	return func(c *clientConfig) {
 		c.model = model
@@ -158,15 +158,15 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 
 	if cfg.apiKey == "" {
-		return nil, ErrNoAPIKey
+		return nil, ais.ErrNoAPIKey
 	}
 
-	factory, ok := core.Lookup(cfg.providerName)
+	factory, ok := ais.Lookup(cfg.providerName)
 	if !ok {
 		return nil, fmt.Errorf("aimodel: unknown provider %q", cfg.providerName)
 	}
 
-	prov, err := factory(core.Config{
+	prov, err := factory(ais.Config{
 		APIKey:  cfg.apiKey,
 		BaseURL: cfg.baseURL,
 		Options: cfg.providerOptions,

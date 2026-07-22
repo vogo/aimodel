@@ -2,7 +2,7 @@
 
 The canonical tool definition, tool choice, and the cross-protocol rules for parallel tool calls.
 
-- **Canonical types**: `core/schema.go` (`Tool`, `FunctionDefinition`, `ToolCall`, `FunctionCall`)
+- **Canonical types**: `ais/schema.go` (`Tool`, `FunctionDefinition`, `ToolCall`, `FunctionCall`)
 - **Anthropic wire mapping**: [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md) §3.5
 
 ---
