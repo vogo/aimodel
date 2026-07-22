@@ -69,11 +69,12 @@ type provider struct {
 // builds the HTTP request. On a streaming call it defaults stream_options to
 // include usage in the final chunk, unless the caller already set it.
 func (p *provider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*http.Request, error) {
-	if req.Stream && req.StreamOptions == nil {
-		req.StreamOptions = &core.StreamOptions{IncludeUsage: true}
+	native := ChatCompletionRequest(*req)
+	if native.Stream && native.StreamOptions == nil {
+		native.StreamOptions = &core.StreamOptions{IncludeUsage: true}
 	}
 
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(&native)
 	if err != nil {
 		return nil, fmt.Errorf("aimodel: marshal request: %w", err)
 	}
@@ -92,7 +93,7 @@ func (p *provider) NewChatRequest(ctx context.Context, req *core.ChatRequest) (*
 // ParseChatResponse decodes an OpenAI-shape completion. A body-level error
 // object becomes an APIError; a response with no choices is ErrEmptyResponse.
 func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error) {
-	var result core.ChatResponse
+	var result ChatCompletionResponse
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("aimodel: decode response: %w", err)
 	}
@@ -109,7 +110,8 @@ func (p *provider) ParseChatResponse(body io.Reader) (*core.ChatResponse, error)
 		return nil, core.ErrEmptyResponse
 	}
 
-	return &result, nil
+	canonical := core.ChatResponse(result)
+	return &canonical, nil
 }
 
 // ParseErrorResponse maps a non-2xx OpenAI response body to an APIError,

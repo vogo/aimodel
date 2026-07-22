@@ -35,7 +35,7 @@ func responseBlocks(blocks []anthropicContentBlock) []anthropicResponseBlock {
 			panic(err)
 		}
 
-		out = append(out, anthropicResponseBlock{anthropicContentBlock: b, raw: raw})
+		out = append(out, anthropicResponseBlock{ContentBlock: b, raw: raw})
 	}
 
 	return out

@@ -47,7 +47,7 @@ type streamDecoder struct {
 	model string
 	// startUsage captures the input/cache token counts from message_start;
 	// the final output_tokens arrives later on message_delta.
-	startUsage anthropicUsage
+	startUsage MessageUsage
 
 	// blockToTool maps Anthropic content block index to tool call index.
 	// Anthropic uses sequential indices for all content blocks (text, thinking,
@@ -104,7 +104,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 
 		switch eventType {
 		case "message_start":
-			var ms anthropicMessageStart
+			var ms MessageStartEvent
 			if err := json.Unmarshal(data, &ms); err != nil {
 				return nil, fmt.Errorf("aimodel: decode message_start: %w", err)
 			}
@@ -128,7 +128,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			continue
 
 		case "content_block_start":
-			var cbs anthropicContentBlockStart
+			var cbs ContentBlockStartEvent
 			if err := json.Unmarshal(data, &cbs); err != nil {
 				return nil, fmt.Errorf("aimodel: decode content_block_start: %w", err)
 			}
@@ -184,7 +184,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			}
 
 		case "content_block_delta":
-			var cbd anthropicContentBlockDelta
+			var cbd ContentBlockDeltaEvent
 			if err := json.Unmarshal(data, &cbd); err != nil {
 				return nil, fmt.Errorf("aimodel: decode content_block_delta: %w", err)
 			}
@@ -268,7 +268,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			return chunk, nil
 
 		case "message_delta":
-			var md anthropicMessageDelta
+			var md MessageDeltaEvent
 			if err := json.Unmarshal(data, &md); err != nil {
 				return nil, fmt.Errorf("aimodel: decode message_delta: %w", err)
 			}
@@ -303,7 +303,7 @@ func (d *streamDecoder) Next() (*core.StreamChunk, error) {
 			return nil, io.EOF
 
 		case "error":
-			var errResp anthropicErrorResponse
+			var errResp ErrorResponse
 			if err := json.Unmarshal(data, &errResp); err != nil {
 				return nil, fmt.Errorf("aimodel: decode stream error: %w", err)
 			}

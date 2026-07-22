@@ -1,5 +1,7 @@
 # Architecture Overview
 
+Vendor-native calls are available from `provider/anthropic` through `Messages` / `MessagesStream` and from `provider/openai` through `ChatCompletions` / `ChatCompletionsStream`. Native streams preserve wire order and do not aggregate a final message. Runnable usage is in `examples/native_anthropic` and `examples/native_openai`.
+
 `github.com/vogo/aimodel` — a unified Go SDK for AI model APIs across multiple protocols (OpenAI-compatible, Anthropic), with zero external dependencies.
 
 This document covers the **cross-cutting architecture**: design scope, the canonical representation, the client and its protocol dispatch, and the repository layout. Everything below the architecture level lives in its own document:

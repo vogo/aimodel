@@ -32,21 +32,52 @@ const (
 	anthropicDefaultMaxTokens = 4096
 )
 
+// Private aliases keep the canonical adapter implementation and its historical
+// wire fixtures on the same exported vendor schema. They are aliases, not a
+// second set of protocol definitions.
+//
+//nolint:unused // aliases are exercised by the historical same-package wire fixtures
+type (
+	anthropicRequest             = MessageRequest
+	anthropicMessage             = MessageParam
+	anthropicOutputConfig        = OutputConfig
+	anthropicOutputFormat        = OutputFormat
+	anthropicContentBlock        = ContentBlock
+	anthropicCacheControl        = CacheControl
+	anthropicContentSource       = ContentSource
+	anthropicTool                = MessageTool
+	anthropicToolChoice          = ToolChoice
+	anthropicResponse            = MessageResponse
+	anthropicResponseBlock       = ResponseContentBlock
+	anthropicUsage               = MessageUsage
+	anthropicOutputTokensDetails = OutputTokensDetails
+	anthropicServerToolUse       = MessageServerToolUse
+	anthropicCacheCreation       = CacheCreation
+	anthropicErrorResponse       = ErrorResponse
+	anthropicError               = ErrorDetail
+	anthropicMessageStart        = MessageStartEvent
+	anthropicContentBlockStart   = ContentBlockStartEvent
+	anthropicContentBlockDelta   = ContentBlockDeltaEvent
+	anthropicDelta               = ContentBlockDelta
+	anthropicMessageDelta        = MessageDeltaEvent
+	anthropicMessageDeltaData    = MessageDelta
+)
+
 // --- Anthropic request types ---
 
-type anthropicRequest struct {
-	Model         string               `json:"model"`
-	Messages      []anthropicMessage   `json:"messages"`
-	System        json.RawMessage      `json:"system,omitempty"`
-	MaxTokens     int                  `json:"max_tokens"`
-	Temperature   *float64             `json:"temperature,omitempty"`
-	TopP          *float64             `json:"top_p,omitempty"`
-	TopK          *int                 `json:"top_k,omitempty"`
-	StopSequences []string             `json:"stop_sequences,omitempty"`
-	Stream        bool                 `json:"stream,omitempty"`
-	Tools         []anthropicTool      `json:"tools,omitempty"`
-	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
-	Thinking      *core.Thinking       `json:"thinking,omitempty"`
+type MessageRequest struct {
+	Model         string          `json:"model"`
+	Messages      []MessageParam  `json:"messages"`
+	System        json.RawMessage `json:"system,omitempty"`
+	MaxTokens     int             `json:"max_tokens"`
+	Temperature   *float64        `json:"temperature,omitempty"`
+	TopP          *float64        `json:"top_p,omitempty"`
+	TopK          *int            `json:"top_k,omitempty"`
+	StopSequences []string        `json:"stop_sequences,omitempty"`
+	Stream        bool            `json:"stream,omitempty"`
+	Tools         []MessageTool   `json:"tools,omitempty"`
+	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
+	Thinking      *core.Thinking  `json:"thinking,omitempty"`
 	// Effort is Anthropic's former top-level reasoning-depth control.
 	//
 	// Deprecated: superseded by OutputConfig.Effort — reasoning depth now
@@ -58,7 +89,7 @@ type anthropicRequest struct {
 	// effort (mapped from core.ChatRequest.ReasoningEffort) and the structured
 	// output format (mapped from core.ChatRequest.ResponseFormat). Omitted when
 	// both are absent.
-	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 	// Container reuses a server-side execution container across requests,
 	// mapped straight through from core.ChatRequest.Container.
 	Container string `json:"container,omitempty"`
@@ -69,50 +100,50 @@ type anthropicRequest struct {
 	// (mapped from core.ChatRequest.AutoCache). The server caches the last
 	// cacheable block and advances the breakpoint as the conversation grows.
 	// It coexists with per-block cache_control markers.
-	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
-type anthropicMessage struct {
+type MessageParam struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 }
 
-// anthropicOutputConfig is the request-side output configuration: how deeply
+// OutputConfig is the request-side output configuration: how deeply
 // the model reasons, and how its answer is shaped.
-type anthropicOutputConfig struct {
+type OutputConfig struct {
 	// Effort selects the reasoning depth (low/medium/high/xhigh/max).
 	Effort string `json:"effort,omitempty"`
 	// Format constrains the response to a schema (structured outputs).
-	Format *anthropicOutputFormat `json:"format,omitempty"`
+	Format *OutputFormat `json:"format,omitempty"`
 }
 
-// anthropicOutputFormat is the structured-output format inside output_config.
+// OutputFormat is the structured-output format inside output_config.
 // Schema holds the caller's JSON Schema as-is — this wrapper never validates
 // or rewrites it.
-type anthropicOutputFormat struct {
+type OutputFormat struct {
 	Type   string `json:"type"`
 	Schema any    `json:"schema,omitempty"`
 }
 
-type anthropicContentBlock struct {
-	Type      string                  `json:"type"`
-	Text      string                  `json:"text,omitempty"`
-	Thinking  string                  `json:"thinking,omitempty"`
-	ID        string                  `json:"id,omitempty"`
-	Name      string                  `json:"name,omitempty"`
-	Input     json.RawMessage         `json:"input,omitempty"`
-	ToolUseID string                  `json:"tool_use_id,omitempty"`
-	Source    *anthropicContentSource `json:"source,omitempty"`
+type ContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Source    *ContentSource  `json:"source,omitempty"`
 	// ResultContent holds the content for tool_result blocks.
 	ResultContent string `json:"content,omitempty"`
 	// CacheControl, when set, marks this block as a prompt-cache
 	// boundary. Anthropic caches everything up to and including this
 	// block for the ephemeral TTL (default 5 minutes).
-	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
-// anthropicCacheControl is the request-side prompt-cache hint.
-type anthropicCacheControl struct {
+// CacheControl is the request-side prompt-cache hint.
+type CacheControl struct {
 	Type string `json:"type"` // always "ephemeral" today
 	// TTL selects the cache lifetime: empty defaults to 5 minutes, "1h"
 	// requests the 1-hour cache. Used by the request-root automatic-caching
@@ -122,31 +153,31 @@ type anthropicCacheControl struct {
 
 // ephemeralCache returns the canonical 5-minute ephemeral marker used on
 // both message content blocks and tool definitions.
-func ephemeralCache() *anthropicCacheControl {
-	return &anthropicCacheControl{Type: "ephemeral"}
+func ephemeralCache() *CacheControl {
+	return &CacheControl{Type: "ephemeral"}
 }
 
-// anthropicContentSource represents the source of an image or document in Anthropic's API format.
+// ContentSource represents the source of an image or document in Anthropic's API format.
 // Supported source types: "base64", "url", "text", "content".
-type anthropicContentSource struct {
-	Type      string                  `json:"type"`
-	MediaType string                  `json:"media_type,omitempty"`
-	Data      string                  `json:"data,omitempty"`
-	URL       string                  `json:"url,omitempty"`
-	Content   []anthropicContentBlock `json:"content,omitempty"`
+type ContentSource struct {
+	Type      string         `json:"type"`
+	MediaType string         `json:"media_type,omitempty"`
+	Data      string         `json:"data,omitempty"`
+	URL       string         `json:"url,omitempty"`
+	Content   []ContentBlock `json:"content,omitempty"`
 }
 
-type anthropicTool struct {
+type MessageTool struct {
 	// Type selects the tool kind. Empty means the default custom tool;
 	// versioned built-in types ("web_search_20260209",
 	// "code_execution_20260521", …) pass through unvalidated.
-	Type         string                 `json:"type,omitempty"`
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description,omitempty"`
-	InputSchema  any                    `json:"input_schema"`
-	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
-	// The following mirror the canonical Tool fields one-to-one; see their
-	// documentation on Tool (schema.go).
+	Type         string        `json:"type,omitempty"`
+	Name         string        `json:"name"`
+	Description  string        `json:"description,omitempty"`
+	InputSchema  any           `json:"input_schema"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+	// The following mirror the canonical MessageTool fields one-to-one; see their
+	// documentation on MessageTool (schema.go).
 	Strict              *bool    `json:"strict,omitempty"`
 	DeferLoading        *bool    `json:"defer_loading,omitempty"`
 	AllowedCallers      []string `json:"allowed_callers,omitempty"`
@@ -154,7 +185,7 @@ type anthropicTool struct {
 	InputExamples       []any    `json:"input_examples,omitempty"`
 }
 
-type anthropicToolChoice struct {
+type ToolChoice struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
 	// DisableParallelToolUse maps the canonical ParallelToolCalls=false:
@@ -164,32 +195,32 @@ type anthropicToolChoice struct {
 
 // --- Anthropic response types ---
 
-type anthropicResponse struct {
-	ID           string                   `json:"id"`
-	Type         string                   `json:"type"`
-	Role         string                   `json:"role"`
-	Model        string                   `json:"model"`
-	Content      []anthropicResponseBlock `json:"content"`
-	StopReason   string                   `json:"stop_reason"`
-	StopSequence *string                  `json:"stop_sequence"`
+type MessageResponse struct {
+	ID           string                 `json:"id"`
+	Type         string                 `json:"type"`
+	Role         string                 `json:"role"`
+	Model        string                 `json:"model"`
+	Content      []ResponseContentBlock `json:"content"`
+	StopReason   string                 `json:"stop_reason"`
+	StopSequence *string                `json:"stop_sequence"`
 	// core.StopDetails carries the structured stop classification (e.g. the refusal
 	// category) returned alongside stop_reason "refusal". Its fields match the
 	// canonical core.StopDetails exactly, so it deserializes straight into it.
 	StopDetails *core.StopDetails `json:"stop_details"`
-	Usage       anthropicUsage    `json:"usage"`
+	Usage       MessageUsage      `json:"usage"`
 	// Container is the server-side execution container the response used. Its
 	// fields match the canonical core.ResponseContainer exactly, so it deserializes
 	// straight into it; nil when absent or null.
 	Container *core.ResponseContainer `json:"container"`
 }
 
-// anthropicResponseBlock is a response-side content block: the known fields
-// decoded into anthropicContentBlock, plus the verbatim JSON of the whole
+// ResponseContentBlock is a response-side content block: the known fields
+// decoded into ContentBlock, plus the verbatim JSON of the whole
 // block. Keeping the original bytes is what lets unmodelled blocks (server
 // tool results, future types) and text-block citations survive into
 // Message.ExtraBlocks without a lossy decode/re-encode round trip.
-type anthropicResponseBlock struct {
-	anthropicContentBlock
+type ResponseContentBlock struct {
+	ContentBlock
 	// Citations, when present, holds the raw citation annotations of a text
 	// block. This wrapper does not interpret them — the field only signals
 	// that the original block carries more than the extracted text.
@@ -207,129 +238,129 @@ type anthropicResponseBlock struct {
 }
 
 // UnmarshalJSON decodes the known fields and retains the original bytes.
-func (b *anthropicResponseBlock) UnmarshalJSON(data []byte) error {
+func (b *ResponseContentBlock) UnmarshalJSON(data []byte) error {
 	// alias drops the method set, so decoding it does not recurse.
-	type alias anthropicResponseBlock
+	type alias ResponseContentBlock
 
 	var a alias
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
 
-	*b = anthropicResponseBlock(a)
+	*b = ResponseContentBlock(a)
 	b.raw = append(json.RawMessage(nil), data...)
 
 	return nil
 }
 
-type anthropicUsage struct {
+type MessageUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	// CacheCreation breaks CacheCreationInputTokens down by TTL. Anthropic
 	// returns it when 1-hour caching or mixed TTLs are in play; nil otherwise.
-	CacheCreation *anthropicCacheCreation `json:"cache_creation,omitempty"`
+	CacheCreation *CacheCreation `json:"cache_creation,omitempty"`
 	// OutputTokensDetails breaks the output tokens down; its thinking_tokens
-	// is Anthropic's source for the canonical Usage.ReasoningTokens.
-	OutputTokensDetails *anthropicOutputTokensDetails `json:"output_tokens_details,omitempty"`
-	// ServerToolUse counts the server-side tool invocations billed with this
+	// is Anthropic's source for the canonical MessageUsage.ReasoningTokens.
+	OutputTokensDetails *OutputTokensDetails `json:"output_tokens_details,omitempty"`
+	// MessageServerToolUse counts the server-side tool invocations billed with this
 	// request; nil when no server tool ran.
-	ServerToolUse *anthropicServerToolUse `json:"server_tool_use,omitempty"`
+	ServerToolUse *MessageServerToolUse `json:"server_tool_use,omitempty"`
 	// InferenceGeo reports the geography inference ran in (e.g. "us").
 	InferenceGeo string `json:"inference_geo,omitempty"`
 	// ServiceTier reports the tier that served the request.
 	ServiceTier string `json:"service_tier,omitempty"`
 }
 
-// anthropicOutputTokensDetails is the per-category breakdown of output tokens.
-type anthropicOutputTokensDetails struct {
+// OutputTokensDetails is the per-category breakdown of output tokens.
+type OutputTokensDetails struct {
 	ThinkingTokens int `json:"thinking_tokens"`
 }
 
-// anthropicServerToolUse counts server-side tool invocations. Its fields match
-// the canonical ServerToolUse exactly.
-type anthropicServerToolUse struct {
+// MessageServerToolUse counts server-side tool invocations. Its fields match
+// the canonical MessageServerToolUse exactly.
+type MessageServerToolUse struct {
 	WebSearchRequests int `json:"web_search_requests"`
 	WebFetchRequests  int `json:"web_fetch_requests"`
 }
 
-// anthropicCacheCreation is the per-TTL breakdown of cache writes; the two
+// CacheCreation is the per-TTL breakdown of cache writes; the two
 // fields sum to cache_creation_input_tokens.
-type anthropicCacheCreation struct {
+type CacheCreation struct {
 	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
 	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // totalInputTokens returns the total input tokens including cached tokens.
-func (u anthropicUsage) totalInputTokens() int {
+func (u MessageUsage) totalInputTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
-type anthropicErrorResponse struct {
-	Type  string         `json:"type"`
-	Error anthropicError `json:"error"`
+type ErrorResponse struct {
+	Type  string      `json:"type"`
+	Error ErrorDetail `json:"error"`
 }
 
-type anthropicError struct {
+type ErrorDetail struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 
 // --- Anthropic streaming types ---
 
-type anthropicMessageStart struct {
-	Type    string            `json:"type"`
-	Message anthropicResponse `json:"message"`
+type MessageStartEvent struct {
+	Type    string          `json:"type"`
+	Message MessageResponse `json:"message"`
 }
 
-type anthropicContentBlockStart struct {
+type ContentBlockStartEvent struct {
 	Type  string `json:"type"`
 	Index int    `json:"index"`
 	// ContentBlock retains its raw JSON so an unrecognized block can be
 	// preserved verbatim on Message.ExtraBlocks.
-	ContentBlock anthropicResponseBlock `json:"content_block"`
+	ContentBlock ResponseContentBlock `json:"content_block"`
 }
 
-type anthropicContentBlockDelta struct {
-	Type  string         `json:"type"`
-	Index int            `json:"index"`
-	Delta anthropicDelta `json:"delta"`
+type ContentBlockDeltaEvent struct {
+	Type  string            `json:"type"`
+	Index int               `json:"index"`
+	Delta ContentBlockDelta `json:"delta"`
 }
 
-type anthropicDelta struct {
+type ContentBlockDelta struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
 	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 
 	// raw is the verbatim delta sub-object, kept for the same reason as
-	// anthropicResponseBlock.raw.
+	// ResponseContentBlock.raw.
 	raw json.RawMessage
 }
 
 // UnmarshalJSON decodes the known fields and retains the original bytes.
-func (d *anthropicDelta) UnmarshalJSON(data []byte) error {
-	type alias anthropicDelta
+func (d *ContentBlockDelta) UnmarshalJSON(data []byte) error {
+	type alias ContentBlockDelta
 
 	var a alias
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
 
-	*d = anthropicDelta(a)
+	*d = ContentBlockDelta(a)
 	d.raw = append(json.RawMessage(nil), data...)
 
 	return nil
 }
 
-type anthropicMessageDelta struct {
-	Type  string                    `json:"type"`
-	Delta anthropicMessageDeltaData `json:"delta"`
-	Usage *anthropicUsage           `json:"usage,omitempty"`
+type MessageDeltaEvent struct {
+	Type  string        `json:"type"`
+	Delta MessageDelta  `json:"delta"`
+	Usage *MessageUsage `json:"usage,omitempty"`
 }
 
-type anthropicMessageDeltaData struct {
+type MessageDelta struct {
 	StopReason   string            `json:"stop_reason,omitempty"`
 	StopSequence *string           `json:"stop_sequence,omitempty"`
 	StopDetails  *core.StopDetails `json:"stop_details,omitempty"`
@@ -338,8 +369,8 @@ type anthropicMessageDeltaData struct {
 // --- Translation functions ---
 
 // toAnthropicRequest converts a core.ChatRequest to an Anthropic API request.
-func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
-	ar := &anthropicRequest{
+func toAnthropicRequest(req *core.ChatRequest) (*MessageRequest, error) {
+	ar := &MessageRequest{
 		Model:        req.Model,
 		Temperature:  req.Temperature,
 		TopP:         req.TopP,
@@ -371,7 +402,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	// Extract system messages and convert the rest.
 	var systemTexts []string
 
-	var systemBlocks []anthropicContentBlock
+	var systemBlocks []ContentBlock
 
 	useBlocks := false
 
@@ -400,7 +431,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 
 				for _, p := range parts {
 					if p.Type == "text" {
-						systemBlocks = append(systemBlocks, anthropicContentBlock{
+						systemBlocks = append(systemBlocks, ContentBlock{
 							Type: "text",
 							Text: p.Text,
 						})
@@ -409,7 +440,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 			} else {
 				text := m.Content.Text()
 				systemTexts = append(systemTexts, text)
-				systemBlocks = append(systemBlocks, anthropicContentBlock{
+				systemBlocks = append(systemBlocks, ContentBlock{
 					Type: "text",
 					Text: text,
 				})
@@ -481,7 +512,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	// cache_control marker; Anthropic caches every tool up to and
 	// including the flagged one.
 	for _, t := range req.Tools {
-		at := anthropicTool{
+		at := MessageTool{
 			Name:                t.Function.Name,
 			Description:         t.Function.Description,
 			InputSchema:         t.Function.Parameters,
@@ -515,7 +546,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	tc := convertToolChoice(req.ToolChoice)
 	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
 		if tc == nil && len(req.Tools) > 0 {
-			tc = &anthropicToolChoice{Type: "auto"}
+			tc = &ToolChoice{Type: "auto"}
 		}
 		if tc != nil && tc.Type != "none" {
 			disable := true
@@ -538,7 +569,7 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 	// caches the last cacheable block and advances the breakpoint as the
 	// conversation grows. Coexists with per-block CacheBreakpoint markers.
 	if req.AutoCache {
-		ar.CacheControl = &anthropicCacheControl{Type: "ephemeral", TTL: req.AutoCacheTTL}
+		ar.CacheControl = &CacheControl{Type: "ephemeral", TTL: req.AutoCacheTTL}
 	}
 
 	return ar, nil
@@ -547,13 +578,13 @@ func toAnthropicRequest(req *core.ChatRequest) (*anthropicRequest, error) {
 // toAnthropicOutputConfig builds the output_config object from the canonical
 // reasoning effort and response format. Either half may be absent; when both
 // are, it returns nil so the field is omitted entirely.
-func toAnthropicOutputConfig(req *core.ChatRequest) *anthropicOutputConfig {
+func toAnthropicOutputConfig(req *core.ChatRequest) *OutputConfig {
 	format := toAnthropicOutputFormat(req.ResponseFormat)
 	if req.ReasoningEffort == "" && format == nil {
 		return nil
 	}
 
-	return &anthropicOutputConfig{
+	return &OutputConfig{
 		Effort: req.ReasoningEffort,
 		Format: format,
 	}
@@ -565,7 +596,7 @@ func toAnthropicOutputConfig(req *core.ChatRequest) *anthropicOutputConfig {
 // flat {type:"json_schema", schema:…}. Anything else — including
 // {type:"json_object"}, which has no Anthropic counterpart — yields nil rather
 // than a fabricated config, keeping this a thin translation.
-func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
+func toAnthropicOutputFormat(rf any) *OutputFormat {
 	m, ok := rf.(map[string]any)
 	if !ok {
 		return nil
@@ -584,19 +615,19 @@ func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
 		return nil
 	}
 
-	return &anthropicOutputFormat{Type: "json_schema", Schema: schema}
+	return &OutputFormat{Type: "json_schema", Schema: schema}
 }
 
 // toolResultBlock builds a single tool_result content block from a canonical
 // tool-result message. It is shared by the consecutive-run merge path and the
 // single-message fallback so the wire shape stays identical. A missing
 // ToolCallID is rejected up front.
-func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
+func toolResultBlock(m core.Message) (ContentBlock, error) {
 	if m.ToolCallID == "" {
-		return anthropicContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
+		return ContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
 	}
 
-	block := anthropicContentBlock{
+	block := ContentBlock{
 		Type:          "tool_result",
 		ToolUseID:     m.ToolCallID,
 		ResultContent: m.Content.Text(),
@@ -613,12 +644,12 @@ func toolResultBlock(m core.Message) (anthropicContentBlock, error) {
 // whose content array holds all the tool_result blocks in order. Anthropic
 // requires the parallel results of one assistant turn to share one user
 // message; merging here keeps the request valid for parallel tool use.
-func toAnthropicToolResultMessage(msgs []core.Message) (anthropicMessage, error) {
-	blocks := make([]anthropicContentBlock, 0, len(msgs))
+func toAnthropicToolResultMessage(msgs []core.Message) (MessageParam, error) {
+	blocks := make([]ContentBlock, 0, len(msgs))
 	for _, m := range msgs {
 		block, err := toolResultBlock(m)
 		if err != nil {
-			return anthropicMessage{}, err
+			return MessageParam{}, err
 		}
 
 		blocks = append(blocks, block)
@@ -626,28 +657,28 @@ func toAnthropicToolResultMessage(msgs []core.Message) (anthropicMessage, error)
 
 	data, err := json.Marshal(blocks)
 	if err != nil {
-		return anthropicMessage{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
+		return MessageParam{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
 	}
 
-	return anthropicMessage{Role: "user", Content: data}, nil
+	return MessageParam{Role: "user", Content: data}, nil
 }
 
-func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
-	am := anthropicMessage{
+func toAnthropicMessage(m core.Message) (MessageParam, error) {
+	am := MessageParam{
 		Role: string(m.Role),
 	}
 
-	// Tool result messages become user messages with tool_result content blocks.
+	// MessageTool result messages become user messages with tool_result content blocks.
 	if m.Role == core.RoleTool {
 		return toAnthropicToolResultMessage([]core.Message{m})
 	}
 
 	// Assistant messages with thinking, tool calls, or both require content-block format.
 	if m.Role == core.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
-		var blocks []anthropicContentBlock
+		var blocks []ContentBlock
 
 		if m.Thinking != "" {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type:     "thinking",
 				Thinking: m.Thinking,
 			})
@@ -655,14 +686,14 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 		text := m.Content.Text()
 		if text != "" {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type: "text",
 				Text: text,
 			})
 		}
 
 		for _, tc := range m.ToolCalls {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
@@ -676,7 +707,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 		data, err := json.Marshal(blocks)
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal assistant content: %w", err)
+			return MessageParam{}, fmt.Errorf("aimodel: marshal assistant content: %w", err)
 		}
 
 		am.Content = data
@@ -686,12 +717,12 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 	// Multimodal content with parts.
 	if parts := m.Content.Parts(); len(parts) > 0 {
-		var blocks []anthropicContentBlock
+		var blocks []ContentBlock
 
 		for _, p := range parts {
 			switch p.Type {
 			case "text":
-				blocks = append(blocks, anthropicContentBlock{
+				blocks = append(blocks, ContentBlock{
 					Type: "text",
 					Text: p.Text,
 				})
@@ -700,16 +731,16 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 					continue
 				}
 
-				block := anthropicContentBlock{Type: "image"}
+				block := ContentBlock{Type: "image"}
 
 				if mediaType, b64Data, ok := parseDataURI(p.ImageURL.URL); ok {
-					block.Source = &anthropicContentSource{
+					block.Source = &ContentSource{
 						Type:      "base64",
 						MediaType: mediaType,
 						Data:      b64Data,
 					}
 				} else {
-					block.Source = &anthropicContentSource{
+					block.Source = &ContentSource{
 						Type: "url",
 						URL:  p.ImageURL.URL,
 					}
@@ -725,7 +756,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 		data, err := json.Marshal(blocks)
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
+			return MessageParam{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
 		}
 
 		am.Content = data
@@ -736,14 +767,14 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 	// Plain text message. Promote to block-array form when the caller
 	// flagged CacheBreakpoint so we can attach cache_control.
 	if m.CacheBreakpoint {
-		block := anthropicContentBlock{
+		block := ContentBlock{
 			Type:         "text",
 			Text:         m.Content.Text(),
 			CacheControl: ephemeralCache(),
 		}
-		data, err := json.Marshal([]anthropicContentBlock{block})
+		data, err := json.Marshal([]ContentBlock{block})
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal cached message content: %w", err)
+			return MessageParam{}, fmt.Errorf("aimodel: marshal cached message content: %w", err)
 		}
 		am.Content = data
 		return am, nil
@@ -751,7 +782,7 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 
 	data, err := json.Marshal(m.Content.Text())
 	if err != nil {
-		return anthropicMessage{}, fmt.Errorf("aimodel: marshal message content: %w", err)
+		return MessageParam{}, fmt.Errorf("aimodel: marshal message content: %w", err)
 	}
 
 	am.Content = data
@@ -759,23 +790,23 @@ func toAnthropicMessage(m core.Message) (anthropicMessage, error) {
 	return am, nil
 }
 
-func convertToolChoice(tc any) *anthropicToolChoice {
+func convertToolChoice(tc any) *ToolChoice {
 	switch v := tc.(type) {
 	case string:
 		switch v {
 		case "auto":
-			return &anthropicToolChoice{Type: "auto"}
+			return &ToolChoice{Type: "auto"}
 		case "required":
-			return &anthropicToolChoice{Type: "any"}
+			return &ToolChoice{Type: "any"}
 		case "none":
 			// Explicit "none" forbids any tool call; an omitted tool_choice
 			// would instead let the model choose, so emit {type:"none"}.
-			return &anthropicToolChoice{Type: "none"}
+			return &ToolChoice{Type: "none"}
 		}
 	case map[string]any:
 		if fn, ok := v["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
-				return &anthropicToolChoice{Type: "tool", Name: name}
+				return &ToolChoice{Type: "tool", Name: name}
 			}
 		}
 	}
@@ -784,7 +815,7 @@ func convertToolChoice(tc any) *anthropicToolChoice {
 }
 
 // fromAnthropicResponse converts an Anthropic API response to a core.ChatResponse.
-func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
+func fromAnthropicResponse(ar *MessageResponse) *core.ChatResponse {
 	msg := core.Message{
 		Role: core.RoleAssistant,
 	}
@@ -851,10 +882,10 @@ func fromAnthropicResponse(ar *anthropicResponse) *core.ChatResponse {
 	}
 }
 
-// anthropicCanonicalUsage builds a canonical Usage from an Anthropic usage
+// anthropicCanonicalUsage builds a canonical MessageUsage from an Anthropic usage
 // object, folding cached/created tokens into PromptTokens (as before) while
 // surfacing the cache read/write counts and the per-TTL write breakdown.
-func anthropicCanonicalUsage(u *anthropicUsage) core.Usage {
+func anthropicCanonicalUsage(u *MessageUsage) core.Usage {
 	cu := core.Usage{
 		PromptTokens:     u.totalInputTokens(),
 		CompletionTokens: u.OutputTokens,
@@ -889,7 +920,7 @@ func anthropicCanonicalUsage(u *anthropicUsage) core.Usage {
 // actually carries are applied — a terminal event that reports just
 // output_tokens must not blank out the input, cache, geo, tier or server-tool
 // information already established.
-func mergeAnthropicUsage(base, next *anthropicUsage) {
+func mergeAnthropicUsage(base, next *MessageUsage) {
 	if next.InputTokens != 0 {
 		base.InputTokens = next.InputTokens
 	}

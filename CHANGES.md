@@ -13,6 +13,13 @@ For the cross-cutting design behind those changes, start at [doc/api.md](./doc/a
 
 **Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/api.md](./doc/api.md) §6.
 
+## Native client synchronization baselines
+
+- **Anthropic Messages:** public native types and client are frozen to the repository's 2026-07-21 audit, using `anthropic-version: 2023-06-01`; no beta is enabled by default.
+- **OpenAI Chat Completions:** public native types and client are frozen to the repository's 2026-06-02 audit.
+
+An official sync is complete only when native types/parsing, canonical translation, protocol documentation, vendor change log, and this index are updated together.
+
 ---
 
 ## Timeline
