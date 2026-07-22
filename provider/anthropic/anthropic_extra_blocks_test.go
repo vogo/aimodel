@@ -61,7 +61,7 @@ func TestFromAnthropicResponse_ExtraBlocks(t *testing.T) {
 			{"type":"tool_use","id":"toolu_1","name":"lookup","input":{"a":1}}
 		]}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(body), &ar); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestFromAnthropicResponse_TextBlockCitations(t *testing.T) {
 		"usage":{"input_tokens":1,"output_tokens":1},
 		"content":[{"type":"text","text":"Answer:"},` + cited + `]}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(body), &ar); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestFromAnthropicResponse_NoExtraBlocks(t *testing.T) {
 		"usage":{"input_tokens":1,"output_tokens":1},
 		"content":[{"type":"text","text":"hi"},{"type":"thinking","thinking":"t"}]}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(body), &ar); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

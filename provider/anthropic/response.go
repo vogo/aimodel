@@ -24,7 +24,7 @@ import (
 	"github.com/vogo/aimodel/ais"
 )
 
-func fromAnthropicResponse(ar *anthropicResponse) *ais.ChatResponse {
+func fromAnthropicResponse(ar *MessagesResponse) *ais.ChatResponse {
 	msg := ais.Message{
 		Role: ais.RoleAssistant,
 	}
@@ -47,7 +47,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *ais.ChatResponse {
 			// above; keep the whole original block so the annotations remain
 			// reachable.
 			if len(block.Citations) > 0 {
-				extraBlocks = append(extraBlocks, block.raw)
+				extraBlocks = append(extraBlocks, block.Raw)
 			}
 		case "tool_use":
 			msg.ToolCalls = append(msg.ToolCalls, ais.ToolCall{
@@ -64,7 +64,7 @@ func fromAnthropicResponse(ar *anthropicResponse) *ais.ChatResponse {
 			// code_execution_tool_result, …) and any block type added after
 			// this wrapper was written. Preserve the original JSON instead of
 			// dropping it silently.
-			extraBlocks = append(extraBlocks, block.raw)
+			extraBlocks = append(extraBlocks, block.Raw)
 		}
 	}
 

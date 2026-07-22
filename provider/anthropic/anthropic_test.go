@@ -26,8 +26,8 @@ import (
 // responseBlocks wraps hand-built content blocks as response blocks, filling
 // in the raw JSON the way a real decode would. Fixtures that need exact
 // original bytes (unknown blocks, citations) decode real JSON instead.
-func responseBlocks(blocks []anthropicContentBlock) []anthropicResponseBlock {
-	out := make([]anthropicResponseBlock, 0, len(blocks))
+func responseBlocks(blocks []ContentBlock) []ResponseContentBlock {
+	out := make([]ResponseContentBlock, 0, len(blocks))
 
 	for _, b := range blocks {
 		raw, err := json.Marshal(b)
@@ -35,7 +35,7 @@ func responseBlocks(blocks []anthropicContentBlock) []anthropicResponseBlock {
 			panic(err)
 		}
 
-		out = append(out, anthropicResponseBlock{anthropicContentBlock: b, raw: raw})
+		out = append(out, ResponseContentBlock{ContentBlock: b, Raw: raw})
 	}
 
 	return out
@@ -482,7 +482,7 @@ func TestToAnthropicRequestToolResult(t *testing.T) {
 		t.Errorf("role = %q, want user", ar.Messages[1].Role)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[1].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal content: %v", err)
 	}
@@ -498,14 +498,14 @@ func TestToAnthropicRequestToolResult(t *testing.T) {
 }
 
 func TestFromAnthropicResponseText(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:    "msg_123",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: responseBlocks([]anthropicContentBlock{
+		Content: responseBlocks([]ContentBlock{
 			{Type: "text", Text: "Hello!"},
 		}),
 		StopReason: "end_turn",
-		Usage: anthropicUsage{
+		Usage: MessagesUsage{
 			InputTokens:  10,
 			OutputTokens: 5,
 		},
@@ -537,10 +537,10 @@ func TestFromAnthropicResponseText(t *testing.T) {
 }
 
 func TestFromAnthropicResponseToolUse(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:    "msg_456",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: responseBlocks([]anthropicContentBlock{
+		Content: responseBlocks([]ContentBlock{
 			{Type: "text", Text: "Let me check the weather."},
 			{
 				Type:  "tool_use",
@@ -550,7 +550,7 @@ func TestFromAnthropicResponseToolUse(t *testing.T) {
 			},
 		}),
 		StopReason: "tool_use",
-		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 30},
+		Usage:      MessagesUsage{InputTokens: 20, OutputTokens: 30},
 	}
 
 	cr := fromAnthropicResponse(ar)
@@ -593,7 +593,7 @@ func TestToAnthropicRequestImageDataURI(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal content: %v", err)
 	}
@@ -638,7 +638,7 @@ func TestToAnthropicRequestImageURL(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal content: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestToAnthropicRequestMixedContent(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal content: %v", err)
 	}
@@ -719,7 +719,7 @@ func TestToAnthropicRequestImageNilURL(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[0].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal content: %v", err)
 	}
@@ -949,16 +949,16 @@ func TestToAnthropicRequestThinkingAdaptive(t *testing.T) {
 }
 
 func TestFromAnthropicResponseThinking(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:    "msg_think",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: responseBlocks([]anthropicContentBlock{
+		Content: responseBlocks([]ContentBlock{
 			{Type: "thinking", Thinking: "Let me analyze this step by step."},
 			{Type: "thinking", Thinking: "The answer involves calculus."},
 			{Type: "text", Text: "The answer is 42."},
 		}),
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 50},
+		Usage:      MessagesUsage{InputTokens: 20, OutputTokens: 50},
 	}
 
 	cr := fromAnthropicResponse(ar)
@@ -989,7 +989,7 @@ func TestToAnthropicMessageThinkingRoundTrip(t *testing.T) {
 		t.Fatalf("toAnthropicMessage: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(am.Content, &blocks); err != nil {
 		t.Fatalf("unmarshal blocks: %v", err)
 	}
@@ -1034,7 +1034,7 @@ func TestToAnthropicMessageThinkingWithToolCalls(t *testing.T) {
 		t.Fatalf("toAnthropicMessage: %v", err)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(am.Content, &blocks); err != nil {
 		t.Fatalf("unmarshal blocks: %v", err)
 	}
@@ -1104,10 +1104,10 @@ func TestMapAnthropicStopReason(t *testing.T) {
 }
 
 func TestFromAnthropicResponseRefusalStopDetails(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:    "msg_refusal",
 		Model: ModelAnthropicClaude4Opus,
-		Content: responseBlocks([]anthropicContentBlock{
+		Content: responseBlocks([]ContentBlock{
 			{Type: "text", Text: "I can't help with that."},
 		}),
 		StopReason: "refusal",
@@ -1141,10 +1141,10 @@ func TestFromAnthropicResponseRefusalStopDetails(t *testing.T) {
 }
 
 func TestFromAnthropicResponseNoStopDetails(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:         "msg_plain",
 		Model:      ModelAnthropicClaude4Sonnet,
-		Content:    responseBlocks([]anthropicContentBlock{{Type: "text", Text: "hi"}}),
+		Content:    responseBlocks([]ContentBlock{{Type: "text", Text: "hi"}}),
 		StopReason: "end_turn",
 	}
 
@@ -1174,7 +1174,7 @@ func TestToAnthropicRequestSystemMultimodal(t *testing.T) {
 	}
 
 	// Multimodal system messages should produce a content block array.
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.System, &blocks); err != nil {
 		t.Fatalf("unmarshal system blocks: %v", err)
 	}
@@ -1189,22 +1189,22 @@ func TestToAnthropicRequestSystemMultimodal(t *testing.T) {
 func TestAnthropicUsageTotalInputTokens(t *testing.T) {
 	tests := []struct {
 		name  string
-		usage anthropicUsage
+		usage MessagesUsage
 		want  int
 	}{
 		{
 			name:  "all zeros",
-			usage: anthropicUsage{},
+			usage: MessagesUsage{},
 			want:  0,
 		},
 		{
 			name:  "only InputTokens",
-			usage: anthropicUsage{InputTokens: 15},
+			usage: MessagesUsage{InputTokens: 15},
 			want:  15,
 		},
 		{
 			name: "all three fields set",
-			usage: anthropicUsage{
+			usage: MessagesUsage{
 				InputTokens:              10,
 				CacheCreationInputTokens: 5,
 				CacheReadInputTokens:     3,
@@ -1213,7 +1213,7 @@ func TestAnthropicUsageTotalInputTokens(t *testing.T) {
 		},
 		{
 			name: "only cache fields set",
-			usage: anthropicUsage{
+			usage: MessagesUsage{
 				CacheCreationInputTokens: 7,
 				CacheReadInputTokens:     4,
 			},
@@ -1231,14 +1231,14 @@ func TestAnthropicUsageTotalInputTokens(t *testing.T) {
 }
 
 func TestFromAnthropicResponseCacheTokens(t *testing.T) {
-	ar := &anthropicResponse{
+	ar := &MessagesResponse{
 		ID:    "msg_cache",
 		Model: ModelAnthropicClaude4Sonnet,
-		Content: responseBlocks([]anthropicContentBlock{
+		Content: responseBlocks([]ContentBlock{
 			{Type: "text", Text: "Cached response."},
 		}),
 		StopReason: "end_turn",
-		Usage: anthropicUsage{
+		Usage: MessagesUsage{
 			InputTokens:              10,
 			CacheCreationInputTokens: 5,
 			CacheReadInputTokens:     3,
@@ -1283,7 +1283,7 @@ func TestToAnthropicRequestSystemMixed(t *testing.T) {
 	}
 
 	// When any system message has parts, all should be content blocks.
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.System, &blocks); err != nil {
 		t.Fatalf("unmarshal system blocks: %v", err)
 	}
@@ -1394,7 +1394,7 @@ func TestToAnthropicRequestConsecutiveToolResults(t *testing.T) {
 		t.Errorf("messages[2] role = %q, want user", ar.Messages[2].Role)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[2].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal merged content: %v", err)
 	}
@@ -1445,7 +1445,7 @@ func TestToAnthropicRequestConsecutiveToolResultsCache(t *testing.T) {
 		t.Fatalf("messages len = %d, want 2", len(ar.Messages))
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[1].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal merged content: %v", err)
 	}
@@ -1507,7 +1507,7 @@ func TestToAnthropicRequestNonConsecutiveToolResults(t *testing.T) {
 		t.Errorf("messages[2] role = %q, want user", ar.Messages[2].Role)
 	}
 	// First run is a single tool_result, still wrapped in a 1-element array.
-	var firstBlocks []anthropicContentBlock
+	var firstBlocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[2].Content, &firstBlocks); err != nil {
 		t.Fatalf("unmarshal first tool result: %v", err)
 	}
@@ -1518,7 +1518,7 @@ func TestToAnthropicRequestNonConsecutiveToolResults(t *testing.T) {
 		t.Errorf("messages[3] role = %q, want system (inline mid-conversation)", ar.Messages[3].Role)
 	}
 	// Last run merges call_2 + call_3 into one user message.
-	var lastBlocks []anthropicContentBlock
+	var lastBlocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[6].Content, &lastBlocks); err != nil {
 		t.Fatalf("unmarshal last merged content: %v", err)
 	}
@@ -1572,7 +1572,7 @@ func TestToAnthropicRequestParallelToolUseRound(t *testing.T) {
 		t.Fatalf("messages[2] role = %q, want user (merged tool results)", ar.Messages[2].Role)
 	}
 
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[2].Content, &blocks); err != nil {
 		t.Fatalf("unmarshal merged content: %v", err)
 	}
@@ -1581,7 +1581,7 @@ func TestToAnthropicRequestParallelToolUseRound(t *testing.T) {
 	}
 
 	// The merged user message must sit immediately after the assistant turn.
-	var asstBlocks []anthropicContentBlock
+	var asstBlocks []ContentBlock
 	if err := json.Unmarshal(ar.Messages[1].Content, &asstBlocks); err != nil {
 		t.Fatalf("unmarshal assistant content: %v", err)
 	}

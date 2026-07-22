@@ -149,7 +149,7 @@ func (p *provider) setHeaders(req *http.Request) {
 // ParseChatResponse decodes an Anthropic message response and converts it to
 // the canonical ChatResponse.
 func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) {
-	var result anthropicResponse
+	var result MessagesResponse
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("aimodel: decode response: %w", err)
 	}
@@ -165,7 +165,7 @@ func (p *provider) ParseChatResponse(body io.Reader) (*ais.ChatResponse, error) 
 // ParseErrorResponse maps a non-2xx Anthropic response body to an APIError,
 // falling back to the raw body when it carries no recognizable error object.
 func (p *provider) ParseErrorResponse(statusCode int, body []byte) error {
-	var errResp anthropicErrorResponse
+	var errResp MessagesErrorResponse
 	if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error.Message == "" {
 		return &ais.APIError{
 			StatusCode: statusCode,

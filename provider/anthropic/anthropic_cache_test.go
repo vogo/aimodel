@@ -43,7 +43,7 @@ func TestToAnthropicRequest_SystemCacheBreakpoint(t *testing.T) {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
 
-	var systemBlocks []anthropicContentBlock
+	var systemBlocks []ContentBlock
 	if err := json.Unmarshal(ar.System, &systemBlocks); err != nil {
 		t.Fatalf("system not a block array: %v (raw=%s)", err, string(ar.System))
 	}
@@ -159,7 +159,7 @@ func TestToAnthropicRequest_SystemWithPartsAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
-	var blocks []anthropicContentBlock
+	var blocks []ContentBlock
 	if err := json.Unmarshal(ar.System, &blocks); err != nil {
 		t.Fatalf("system not a block array: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestToAnthropicRequest_AutoCacheOff(t *testing.T) {
 		t.Errorf("request-root CacheControl should be nil when AutoCache off, got %+v", ar.CacheControl)
 	}
 	// The block-level breakpoint must still be present and independent.
-	var systemBlocks []anthropicContentBlock
+	var systemBlocks []ContentBlock
 	if err := json.Unmarshal(ar.System, &systemBlocks); err != nil {
 		t.Fatalf("system not a block array: %v", err)
 	}
@@ -311,12 +311,12 @@ func TestFromAnthropicResponse_CacheCreationBreakdown(t *testing.T) {
 		`"usage":{"input_tokens":2048,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248,` +
 		`"output_tokens":503,"cache_creation":{"ephemeral_5m_input_tokens":148,"ephemeral_1h_input_tokens":100}}}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(raw), &ar); err != nil {
 		t.Fatalf("unmarshal anthropic response: %v", err)
 	}
 	if ar.Usage.CacheCreation == nil {
-		t.Fatal("cache_creation not parsed into anthropicUsage")
+		t.Fatal("cache_creation not parsed into MessagesUsage")
 	}
 	if ar.Usage.CacheCreation.Ephemeral5mInputTokens != 148 || ar.Usage.CacheCreation.Ephemeral1hInputTokens != 100 {
 		t.Errorf("cache_creation breakdown = %+v, want {148,100}", ar.Usage.CacheCreation)
@@ -350,10 +350,10 @@ func TestFromAnthropicResponse_CacheCreationBreakdown(t *testing.T) {
 // cache_creation object the breakdown fields stay zero while the total cache
 // write still reflects cache_creation_input_tokens.
 func TestFromAnthropicResponse_NoCacheCreation(t *testing.T) {
-	ar := anthropicResponse{
-		Content:    responseBlocks([]anthropicContentBlock{{Type: "text", Text: "hi"}}),
+	ar := MessagesResponse{
+		Content:    responseBlocks([]ContentBlock{{Type: "text", Text: "hi"}}),
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7},
+		Usage:      MessagesUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7},
 	}
 	u := fromAnthropicResponse(&ar).Usage
 
