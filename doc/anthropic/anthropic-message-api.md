@@ -5,7 +5,7 @@
 - **Implementation** (all under `provider/anthropic/`): `anthropic.go` (native wire types and bidirectional translation), `provider.go` (request building, auth headers, response/error parsing, `Options`), `stream.go` (SSE parsing)
 - **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
-The core premise is in [../api.md](../api.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
+The core premise is in [../architecture.md](../architecture.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
 
 ---
 

@@ -7,7 +7,7 @@ This file records **how aimodel's Anthropic wrapper tracks the official Messages
 - **Implementation notes**: [anthropic-message-api.md](./anthropic-message-api.md)
 - **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
-**Maintenance convention**: see [../api.md](../api.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
+**Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 
 Newest first.
 

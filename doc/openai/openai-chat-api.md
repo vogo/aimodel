@@ -11,7 +11,7 @@ Canonical type semantics live in [../design/data-model.md](../design/data-model.
 
 ## 1. The zero-translation path
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation** (see [../api.md](../api.md) §2), so the OpenAI path has **no translation layer at all**:
+The SDK uses the **OpenAI Chat Completions format as its canonical representation** (see [../architecture.md](../architecture.md) §2), so the OpenAI path has **no translation layer at all**:
 
 ```
 ChatRequest ──json.Marshal──▶ POST {baseURL}/chat/completions
