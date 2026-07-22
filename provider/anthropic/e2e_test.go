@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package aimodel_test
+package anthropic_test
 
 import (
 	"context"

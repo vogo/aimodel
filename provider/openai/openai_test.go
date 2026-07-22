@@ -141,3 +141,57 @@ func TestParseErrorResponseFallback(t *testing.T) {
 		t.Errorf("message = %q", apiErr.Message)
 	}
 }
+
+func TestStreamDecoderChunksAndDone(t *testing.T) {
+	body := strings.NewReader(
+		": heartbeat\n\n" +
+			`data: {"id":"1","choices":[{"index":0,"delta":{"content":"Hi"}}]}` + "\n\n" +
+			`data: {"id":"1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":4}}}` + "\n\n" +
+			"data: [DONE]\n\n",
+	)
+	decoder := newProvider(t).NewStreamDecoder(body)
+
+	chunk, err := decoder.Next()
+	if err != nil {
+		t.Fatalf("first Next: %v", err)
+	}
+	if got := chunk.Choices[0].Delta.Content.Text(); got != "Hi" {
+		t.Errorf("content = %q, want Hi", got)
+	}
+
+	chunk, err = decoder.Next()
+	if err != nil {
+		t.Fatalf("second Next: %v", err)
+	}
+	if chunk.Usage == nil || chunk.Usage.CacheReadTokens != 4 {
+		t.Errorf("usage = %+v, want CacheReadTokens 4", chunk.Usage)
+	}
+
+	if _, err := decoder.Next(); !errors.Is(err, io.EOF) {
+		t.Errorf("final Next error = %v, want io.EOF", err)
+	}
+}
+
+func TestStreamDecoderAPIError(t *testing.T) {
+	body := strings.NewReader(
+		`data: {"error":{"message":"rate limited","type":"tokens","code":"rate_limit_exceeded"}}` + "\n\n",
+	)
+	decoder := newProvider(t).NewStreamDecoder(body)
+
+	_, err := decoder.Next()
+	var apiErr *ais.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("Next error = %T %v, want *ais.APIError", err, err)
+	}
+	if apiErr.Code != "rate_limit_exceeded" {
+		t.Errorf("code = %q, want rate_limit_exceeded", apiErr.Code)
+	}
+}
+
+func TestStreamDecoderRejectsInvalidJSON(t *testing.T) {
+	decoder := newProvider(t).NewStreamDecoder(strings.NewReader("data: {invalid json}\n\n"))
+
+	if _, err := decoder.Next(); err == nil {
+		t.Fatal("Next error = nil, want JSON decoding error")
+	}
+}
