@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/provider/anthropic"
 )
 
 func TestComposeClient(t *testing.T) {
@@ -49,7 +50,7 @@ func buildComposeClients() ([]*aimodel.Client, error) {
 		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
 		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
 		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithProvider(anthropic.Name),
 	)
 	if err != nil {
 		return nil, err

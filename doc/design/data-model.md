@@ -69,9 +69,9 @@ Marked `json:"-"`, so they **never** appear on the canonical (OpenAI-shape) body
 
 - `AutoCache bool` + `AutoCacheTTL string` — see [prompt-caching.md](./prompt-caching.md).
 
-### 1.10 `clone()`
+### 1.10 `Clone()`
 
-Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `clone()` duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and each tool's `AllowedCallers` / `InputExamples` slices. Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`, `InputExamples` entries) are shared by contract.
+Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `core.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and each tool's `AllowedCallers` / `InputExamples` slices. Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`, `InputExamples` entries) are shared by contract. Providers receive this working copy and may rewrite it freely.
 
 ---
 

@@ -12,7 +12,7 @@ This document covers the **cross-cutting architecture**: design scope, the canon
 | Prompt-cache modes and accounting | [design/prompt-caching.md](./design/prompt-caching.md) |
 | Sentinel errors, `APIError`, `MultiError` | [design/errors.md](./design/errors.md) |
 | Multi-model dispatch strategies and health tracking | [design/compose.md](./design/compose.md) |
-| Per-protocol wire mapping | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) · [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
+| Per-protocol wire mapping (implemented in `provider/anthropic` · `provider/openai`) | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) · [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
 
 ---
 
@@ -34,23 +34,23 @@ It **deliberately excludes** retry, rate limiting, request validation, caching /
 
 ## 2. Canonical representation: OpenAI-shaped
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation**:
+The SDK uses the **OpenAI Chat Completions format as its canonical representation**. The canonical types live in the vendor-neutral `core` package; the root `aimodel` package re-exports them as **type aliases** (not copies), so callers, provider subpackages, and `composes` all exchange the identical types with one source of truth. A `Client` resolves one registered **provider** at construction time and delegates every call to it:
 
 ```
-                     ┌─────────────────────────┐
-   ChatRequest ─────▶│  Protocol = openai      │──▶ POST {baseURL}/chat/completions
-  (OpenAI shape)     │  (direct serialization) │
-        │            └─────────────────────────┘
-        │            ┌─────────────────────────┐
-        └───────────▶│  Protocol = anthropic   │──▶ POST {baseURL}/v1/messages
-                     │  toAnthropicRequest()   │
-                     └─────────────────────────┘
+                     ┌──────────────────────────────┐
+   ChatRequest ─────▶│ provider "openai"            │──▶ POST {baseURL}/chat/completions
+  (OpenAI shape)     │ (direct serialization)       │
+        │            └──────────────────────────────┘
+        │            ┌──────────────────────────────┐
+        └───────────▶│ provider "anthropic"         │──▶ POST {baseURL}/v1/messages
+                     │ toAnthropicRequest()          │
+                     └──────────────────────────────┘
                                   │
-   ChatResponse ◀── fromAnthropicResponse() ◀───┘
+   ChatResponse ◀── fromAnthropicResponse() ◀────────┘
   (OpenAI shape)
 ```
 
-The reasoning: the OpenAI format is the de-facto standard and the overwhelming majority of backends (DeepSeek, Kimi, GLM, Qwen, Doubao, MiniMax, …) speak it natively. Choosing it as the canonical representation makes the OpenAI path **zero-translation**, leaving only the Anthropic path to translate in both directions.
+The reasoning: the OpenAI format is the de-facto standard and the overwhelming majority of backends (DeepSeek, Kimi, GLM, Qwen, Doubao, MiniMax, …) speak it natively. Choosing it as the canonical representation makes the OpenAI path **zero-translation**, leaving only the Anthropic path to translate in both directions. Each provider's translation lives entirely in its own subpackage (`provider/openai`, `provider/anthropic`), so the root package holds no vendor wire types.
 
 **How protocol-specific fields are handled:**
 
@@ -68,13 +68,30 @@ The `json:"-"` struct-local convention matters: it guarantees a switch **can nev
 
 ### 3.1 Construction & options
 
+Default (OpenAI-compatible) client:
+
 ```go
 client, err := aimodel.NewClient(
     aimodel.WithAPIKey("sk-..."),
     aimodel.WithBaseURL("https://api.openai.com/v1"),
-    aimodel.WithProtocol(aimodel.ProtocolOpenAI),
     aimodel.WithDefaultModel(aimodel.ModelOpenaiGPT4o),
     aimodel.WithTimeout(90*time.Second),
+)
+```
+
+Anthropic client — select the provider by name and pass its vendor options through the unified `WithProviderOptions` channel:
+
+```go
+import "github.com/vogo/aimodel/provider/anthropic"
+
+client, err := aimodel.NewClient(
+    aimodel.WithAPIKey("sk-ant-..."),
+    aimodel.WithProvider(anthropic.Name),
+    aimodel.WithProviderOptions(anthropic.Options{
+        Beta:          []string{"context-1m-2025-08-07"},
+        Version:       "2023-06-01",
+        UserProfileID: "user_abc123",
+    }),
 )
 ```
 
@@ -82,13 +99,13 @@ client, err := aimodel.NewClient(
 |---|---|---|
 | `WithAPIKey(string)` | Auth key | Missing → `ErrNoAPIKey` |
 | `WithBaseURL(string)` | API base URL | Trailing `/` stripped automatically |
-| `WithProtocol(Protocol)` | Protocol selection | Zero value = `ProtocolOpenAI` |
+| `WithProvider(string)` | Provider selection by registered name | Unset = `openai.Name` (OpenAI-compatible); e.g. `anthropic.Name` |
+| `WithProviderOptions(any)` | Provider-specific configuration | Forwarded to the provider factory; type defined by the provider package (e.g. `anthropic.Options`). A type the provider does not recognize fails construction |
 | `WithDefaultModel(string)` | Default model | Fills in an empty request `Model` |
 | `WithTimeout(time.Duration)` | HTTP timeout | Default 60s; **applied after all options**, so option order does not matter |
 | `WithHTTPClient(*http.Client)` | Custom HTTP client | `nil` panics outright (a programming error) |
-| `WithAnthropicBeta(...string)` | `anthropic-beta` header | Anthropic only; accumulates across calls, empty strings ignored, comma-joined on the wire |
-| `WithAnthropicVersion(string)` | `anthropic-version` header | Anthropic only; empty keeps the default `2023-06-01` |
-| `WithAnthropicUserProfileID(string)` | `anthropic-user-profile-id` header | Anthropic only; associates requests with an end-user profile, empty sends no header |
+
+The built-in `openai` and `anthropic` providers register themselves on import (the root package imports both by default). A third protocol is added by writing a subpackage that implements the provider contract and calls `core.Register` in its `init` — **no root-package change required**. See §3.4.
 
 ### 3.2 Environment-variable fallback
 
@@ -104,14 +121,16 @@ Implemented by `GetEnv(keys ...string)`, which returns the first non-empty value
 
 ### 3.3 Construction-time validation
 
+`NewClient` reads generic config (key, base URL, model, timeout, HTTP client), resolves the named provider from the registry, then hands the generic config plus `WithProviderOptions` to the provider factory. Failures surface here, at construction:
+
 - Empty API key → `ErrNoAPIKey`;
-- `ProtocolOpenAI` with an empty base URL → `ErrNoBaseURL` (there are too many OpenAI-compatible backends to pick a default);
-- `ProtocolAnthropic` allows an empty base URL — it falls back to `https://api.anthropic.com` at request time;
-- Any other protocol value → `unsupported protocol %q`.
+- Unknown provider name → `unknown provider %q`;
+- The **provider factory** validates its own requirements — the OpenAI factory rejects an empty base URL with `ErrNoBaseURL` (too many OpenAI-compatible backends to pick a default); the Anthropic factory accepts an empty base URL and defaults to `https://api.anthropic.com` at request time;
+- A `WithProviderOptions` value of a type the provider does not recognize → factory error.
 
-### 3.4 Protocol dispatch
+### 3.4 Registry dispatch and the provider contract
 
-`Client` implements `ChatCompleter`; `chat.go` is the single dispatch point, keyed on `Protocol`:
+Capabilities are modeled as small per-interaction-form interfaces. `Client` implements `ChatCompleter` (the chat capability); a new interaction form is added by introducing a **new** capability interface and matching client method — never by widening this one:
 
 ```go
 type ChatCompleter interface {
@@ -120,12 +139,26 @@ type ChatCompleter interface {
 }
 ```
 
-Both paths share the same preamble:
+`chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `core.ChatProvider`:
 
-1. `req.clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
-2. set the `Stream` flag;
-3. `applyDefaultModel` fills an empty `Model`;
-4. on the streaming path, the OpenAI side auto-adds `{include_usage:true}` when `StreamOptions` is unset, so the terminal chunk carries usage.
+1. `req.Clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
+2. set the `Stream` flag and `applyDefaultModel` fills an empty `Model`;
+3. `provider.NewChatRequest` builds the URL, body, and headers (the OpenAI provider auto-adds `{include_usage:true}` on a stream request when `StreamOptions` is unset);
+4. the core layer sends the single HTTP request;
+5. a non-2xx response is read (under the shared size limit) and handed to `provider.ParseErrorResponse`; a success is normalized by `provider.ParseChatResponse`, or wrapped in a `Stream` driven by `provider.NewStreamDecoder`.
+
+The provider contract (in `core`) is exactly this vendor boundary — request building, response parsing, error parsing, and per-event SSE decoding:
+
+```go
+type ChatProvider interface {
+    NewChatRequest(ctx context.Context, req *ChatRequest) (*http.Request, error)
+    ParseChatResponse(body io.Reader) (*ChatResponse, error)
+    ParseErrorResponse(statusCode int, body []byte) error
+    NewStreamDecoder(body io.Reader) StreamDecoder
+}
+```
+
+Providers are addressed by a stable string name through a concurrency-safe registry. `core.Register(name, factory)` is monotonic: an empty name, a nil factory, or a duplicate name panics, so dispatch never depends on import order. The registry only resolves a name to a factory — it never guesses a protocol from the model and takes no part in `composes`' multi-model selection.
 
 ## 4. Model constants (`model.go`)
 
@@ -135,14 +168,11 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 
 | Path | Contents |
 |---|---|
-| Root package `aimodel` | Client, schema, protocol implementations, streaming |
-| `chat.go` / `chat_client.go` | Protocol dispatch, the `ChatCompleter` interface, `Protocol` constants |
-| `schema.go` | Canonical request/response types |
-| `openai_chat.go` / `openai_stream.go` | OpenAI-compatible protocol implementation |
-| `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` | Anthropic types, translation, HTTP, SSE |
-| `stream.go` / `intercept.go` | Streaming abstraction and interception |
-| `errors.go` / `model.go` / `util.go` | Errors, model constants, environment helpers |
-| `composes/` | Multi-model dispatch strategies and health tracking |
+| `core/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
+| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types and errors are re-exported here as aliases (`schema.go` / `errors.go`) |
+| `provider/openai/` | OpenAI-compatible provider: request building, response/error parsing, SSE decoder. Registers `openai.Name` on import |
+| `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`. Registers `anthropic.Name` on import |
+| `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |
 | `examples/` / `integrations/` | Usage examples and integration tests |
 
 ## 6. Maintenance convention

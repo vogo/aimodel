@@ -18,45 +18,94 @@
 package aimodel
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/vogo/aimodel/provider/anthropic"
 )
 
-func TestNewClientWithAPIKey(t *testing.T) {
-	c, err := NewClient(WithAPIKey("sk-test-key"), WithBaseURL("https://api.example.com/v1"))
+// completionResponse is a minimal valid OpenAI completion body used by the
+// capturing test servers below.
+const completionResponse = `{"id":"x","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+
+// captured records what a test server observed about a request.
+type captured struct {
+	auth string
+	path string
+	seen bool
+}
+
+// runOpenAICapture builds a client from opts (the caller supplies the base URL,
+// possibly via env pointing at the returned server), issues one chat call, and
+// reports what the server saw. The server URL is passed to withURL so the
+// caller can wire it into an option or an env var before construction.
+func runOpenAICapture(t *testing.T, build func(url string) (*Client, error)) captured {
+	t.Helper()
+
+	var got captured
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.seen = true
+		got.auth = r.Header.Get("Authorization")
+		got.path = r.URL.Path
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(completionResponse))
+	}))
+	defer srv.Close()
+
+	c, err := build(srv.URL)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if c.apiKey != "sk-test-key" {
-		t.Errorf("apiKey = %q", c.apiKey)
+
+	_, err = c.ChatCompletion(context.Background(), &ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
+	}
+
+	return got
+}
+
+func TestNewClientWithAPIKey(t *testing.T) {
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		return NewClient(WithAPIKey("sk-test-key"), WithBaseURL(url))
+	})
+
+	if got.auth != "Bearer sk-test-key" {
+		t.Errorf("Authorization = %q, want Bearer sk-test-key", got.auth)
 	}
 }
 
-func TestNewClientCustomBaseURL(t *testing.T) {
-	c, err := NewClient(
-		WithAPIKey("sk-test"),
-		WithBaseURL("https://custom.api.com/v2"),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+func TestNewClientBaseURLReached(t *testing.T) {
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		return NewClient(WithAPIKey("sk-test"), WithBaseURL(url))
+	})
+
+	if !got.seen {
+		t.Fatal("request did not reach the configured base URL")
 	}
-	if c.baseURL != "https://custom.api.com/v2" {
-		t.Errorf("baseURL = %q", c.baseURL)
+
+	if got.path != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", got.path)
 	}
 }
 
 func TestNewClientTrailingSlashTrimmed(t *testing.T) {
-	c, err := NewClient(
-		WithAPIKey("sk-test"),
-		WithBaseURL("https://custom.api.com/v2/"),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	if c.baseURL != "https://custom.api.com/v2" {
-		t.Errorf("baseURL = %q", c.baseURL)
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		// A trailing slash must be trimmed so the path is not "//chat/completions".
+		return NewClient(WithAPIKey("sk-test"), WithBaseURL(url+"/"))
+	})
+
+	if got.path != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions (trailing slash not trimmed)", got.path)
 	}
 }
 
@@ -69,6 +118,7 @@ func TestNewClientCustomTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+
 	if c.httpClient.Timeout != 5*time.Minute {
 		t.Errorf("timeout = %v", c.httpClient.Timeout)
 	}
@@ -87,9 +137,11 @@ func TestNewClientTimeoutWithCustomHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+
 	if c.httpClient != custom {
 		t.Error("httpClient should be the custom client")
 	}
+
 	if c.httpClient.Timeout != 5*time.Minute {
 		t.Errorf("timeout = %v, want 5m (timeout should apply to custom client)", c.httpClient.Timeout)
 	}
@@ -97,6 +149,7 @@ func TestNewClientTimeoutWithCustomHTTPClient(t *testing.T) {
 
 func TestNewClientCustomHTTPClient(t *testing.T) {
 	custom := &http.Client{Timeout: 10 * time.Second}
+
 	c, err := NewClient(
 		WithAPIKey("sk-test"),
 		WithBaseURL("https://api.example.com/v1"),
@@ -105,6 +158,7 @@ func TestNewClientCustomHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+
 	if c.httpClient != custom {
 		t.Error("httpClient should be the custom client")
 	}
@@ -121,77 +175,75 @@ func TestNewClientNilHTTPClientPanics(t *testing.T) {
 }
 
 func TestNewClientEnvFallback(t *testing.T) {
-	t.Setenv("AI_API_KEY", "sk-env-key")
-	t.Setenv("AI_BASE_URL", "https://env.api.com/v1")
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		t.Setenv("AI_API_KEY", "sk-env-key")
+		t.Setenv("AI_BASE_URL", url)
 
-	c, err := NewClient()
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		return NewClient()
+	})
+
+	if got.auth != "Bearer sk-env-key" {
+		t.Errorf("Authorization = %q, want Bearer sk-env-key", got.auth)
 	}
-	if c.apiKey != "sk-env-key" {
-		t.Errorf("apiKey = %q, want sk-env-key", c.apiKey)
-	}
-	if c.baseURL != "https://env.api.com/v1" {
-		t.Errorf("baseURL = %q", c.baseURL)
+
+	if !got.seen {
+		t.Error("request did not reach the env base URL")
 	}
 }
 
 func TestNewClientOpenAIEnvFallback(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-openai-key")
-	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		t.Setenv("OPENAI_API_KEY", "sk-openai-key")
+		t.Setenv("OPENAI_BASE_URL", url)
 
-	c, err := NewClient()
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	if c.apiKey != "sk-openai-key" {
-		t.Errorf("apiKey = %q, want sk-openai-key", c.apiKey)
-	}
-	if c.baseURL != "https://api.openai.com/v1" {
-		t.Errorf("baseURL = %q", c.baseURL)
+		return NewClient()
+	})
+
+	if got.auth != "Bearer sk-openai-key" {
+		t.Errorf("Authorization = %q, want Bearer sk-openai-key", got.auth)
 	}
 }
 
 func TestNewClientAIEnvOverridesOpenAIEnv(t *testing.T) {
-	t.Setenv("AI_API_KEY", "sk-ai")
-	t.Setenv("AI_BASE_URL", "https://ai.api.com/v1")
-	t.Setenv("OPENAI_API_KEY", "sk-openai")
-	t.Setenv("OPENAI_BASE_URL", "https://openai.api.com/v1")
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		t.Setenv("AI_API_KEY", "sk-ai")
+		t.Setenv("AI_BASE_URL", url)
+		t.Setenv("OPENAI_API_KEY", "sk-openai")
+		t.Setenv("OPENAI_BASE_URL", "https://openai.api.com/v1")
 
-	c, err := NewClient()
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		return NewClient()
+	})
+
+	if got.auth != "Bearer sk-ai" {
+		t.Errorf("Authorization = %q, want Bearer sk-ai (AI_ should take precedence)", got.auth)
 	}
-	if c.apiKey != "sk-ai" {
-		t.Errorf("apiKey = %q, want sk-ai (AI_ should take precedence)", c.apiKey)
-	}
-	if c.baseURL != "https://ai.api.com/v1" {
-		t.Errorf("baseURL = %q, want https://ai.api.com/v1", c.baseURL)
+
+	if !got.seen {
+		t.Error("request should reach the AI_BASE_URL server, not the OPENAI_BASE_URL one")
 	}
 }
 
 func TestNewClientOptionOverridesEnv(t *testing.T) {
-	t.Setenv("AI_API_KEY", "sk-env")
-	t.Setenv("AI_BASE_URL", "https://env.api.com/v1")
+	got := runOpenAICapture(t, func(url string) (*Client, error) {
+		t.Setenv("AI_API_KEY", "sk-env")
+		t.Setenv("AI_BASE_URL", "https://env.api.com/v1")
 
-	c, err := NewClient(
-		WithAPIKey("sk-option"),
-		WithBaseURL("https://option.api.com/v1"),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		return NewClient(WithAPIKey("sk-option"), WithBaseURL(url))
+	})
+
+	if got.auth != "Bearer sk-option" {
+		t.Errorf("Authorization = %q, want Bearer sk-option", got.auth)
 	}
-	if c.apiKey != "sk-option" {
-		t.Errorf("apiKey = %q", c.apiKey)
-	}
-	if c.baseURL != "https://option.api.com/v1" {
-		t.Errorf("baseURL = %q", c.baseURL)
+
+	if !got.seen {
+		t.Error("request should reach the option base URL, not the env one")
 	}
 }
 
 func TestNewClientNoAPIKeyError(t *testing.T) {
 	t.Setenv("AI_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	_, err := NewClient(WithBaseURL("https://api.example.com/v1"))
 	if !errors.Is(err, ErrNoAPIKey) {
@@ -204,13 +256,11 @@ func TestNewClientNoBaseURLAllowedForAnthropic(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 
-	// Anthropic protocol does not require baseURL (has a default).
-	c, err := NewClient(WithAPIKey("sk-test"), WithProtocol(ProtocolAnthropic))
+	// The Anthropic provider has a default base URL, so construction succeeds
+	// without one.
+	_, err := NewClient(WithAPIKey("sk-test"), WithProvider(anthropic.Name))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
-	}
-	if c.baseURL != "" {
-		t.Errorf("baseURL = %q, want empty", c.baseURL)
 	}
 }
 
@@ -219,25 +269,16 @@ func TestNewClientNoBaseURLErrorForOpenAI(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 
-	// OpenAI protocol requires baseURL at creation time.
+	// The OpenAI provider requires a base URL at construction time.
 	_, err := NewClient(WithAPIKey("sk-test"))
 	if !errors.Is(err, ErrNoBaseURL) {
 		t.Errorf("err = %v, want ErrNoBaseURL", err)
 	}
 }
 
-func TestAnthropicNoBaseURLUsesDefault(t *testing.T) {
-	t.Setenv("AI_BASE_URL", "")
-	t.Setenv("OPENAI_BASE_URL", "")
-	t.Setenv("ANTHROPIC_BASE_URL", "")
-
-	c, err := NewClient(WithAPIKey("sk-test"), WithProtocol(ProtocolAnthropic))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	// Anthropic client without explicit baseURL should use the default.
-	if got := c.anthropicBaseURL(); got != anthropicDefaultBaseURL {
-		t.Errorf("anthropicBaseURL() = %q, want %q", got, anthropicDefaultBaseURL)
+func TestNewClientUnknownProvider(t *testing.T) {
+	_, err := NewClient(WithAPIKey("sk-test"), WithProvider("does-not-exist"))
+	if err == nil {
+		t.Fatal("expected error for unknown provider")
 	}
 }

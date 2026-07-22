@@ -38,10 +38,10 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 ## Official API references
 
-| Protocol | Official docs | Wrapper code |
+| Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai_chat.go` / `openai_stream.go` |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic.go` / `anthropic_chat.go` / `anthropic_stream.go` |
+| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
 
 ## Maintenance convention
 

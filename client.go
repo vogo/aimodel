@@ -22,30 +22,49 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/provider/openai"
+
+	// Register the built-in Anthropic provider so WithProvider(anthropic.Name)
+	// resolves without the caller importing the subpackage explicitly. Any
+	// further protocol is added by importing its own provider subpackage.
+	_ "github.com/vogo/aimodel/provider/anthropic"
 )
 
 const defaultTimeout = 60 * time.Second
 
-// Client is an AI API client compatible with OpenAI-style endpoints.
-// Set the protocol with WithProtocol to use vendor-specific APIs (e.g., Anthropic).
+// Client is an AI API client. It resolves a registered provider by name at
+// construction time and delegates every chat call to that provider through a
+// single shared execution pipeline. The default provider is the
+// OpenAI-compatible one; select another with WithProvider (e.g.
+// WithProvider(anthropic.Name)).
 type Client struct {
-	apiKey                 string
-	baseURL                string
-	model                  string
-	protocol               Protocol
-	timeout                time.Duration
-	httpClient             *http.Client
-	anthropicBeta          []string
-	anthropicVersion       string
-	anthropicUserProfileID string
+	model      string
+	httpClient *http.Client
+	provider   core.ChatProvider
+}
+
+// clientConfig holds the construction-time configuration mutated by Options.
+// The generic fields (apiKey, baseURL, model, timeout, httpClient) belong to
+// every client; providerName selects the implementation and providerOptions
+// carries the provider-specific configuration to its factory.
+type clientConfig struct {
+	apiKey          string
+	baseURL         string
+	model           string
+	providerName    string
+	providerOptions any
+	timeout         time.Duration
+	httpClient      *http.Client
 }
 
 // Option configures a Client.
-type Option func(*Client)
+type Option func(*clientConfig)
 
 // WithAPIKey sets the API key.
 func WithAPIKey(key string) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.apiKey = key
 	}
 }
@@ -53,14 +72,14 @@ func WithAPIKey(key string) Option {
 // WithDefaultModel sets the default model name.
 // If a ChatRequest has an empty Model field, this default is used.
 func WithDefaultModel(model string) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.model = model
 	}
 }
 
 // WithBaseURL sets the API base URL.
 func WithBaseURL(url string) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.baseURL = strings.TrimRight(url, "/")
 	}
 }
@@ -72,113 +91,101 @@ func WithHTTPClient(hc *http.Client) Option {
 		panic("aimodel: WithHTTPClient called with nil *http.Client")
 	}
 
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.httpClient = hc
 	}
 }
 
-// WithProtocol sets the API protocol used by this client.
-// The default (zero value) uses the OpenAI-compatible protocol.
-func WithProtocol(p Protocol) Option {
-	return func(c *Client) {
-		c.protocol = p
-	}
-}
-
-// WithAnthropicBeta enables one or more Anthropic beta features via the
-// "anthropic-beta" request header (only used by ProtocolAnthropic). The given
-// values are appended to any previously set ones; on the wire they are joined
-// with commas. Empty strings are ignored. With no beta value configured, the
-// header is omitted (default behavior).
-func WithAnthropicBeta(values ...string) Option {
-	return func(c *Client) {
-		for _, v := range values {
-			if v != "" {
-				c.anthropicBeta = append(c.anthropicBeta, v)
-			}
+// WithProvider selects the provider implementation by its registered name.
+// The default (unset) is the OpenAI-compatible provider (openai.Name). Import
+// a provider subpackage (e.g. provider/anthropic) to register its name, then
+// pass it here.
+func WithProvider(name string) Option {
+	return func(c *clientConfig) {
+		if name != "" {
+			c.providerName = name
 		}
 	}
 }
 
-// WithAnthropicVersion overrides the "anthropic-version" request header
-// (only used by ProtocolAnthropic). An empty string keeps the default
-// (anthropicAPIVersion, "2023-06-01").
-func WithAnthropicVersion(version string) Option {
-	return func(c *Client) {
-		if version != "" {
-			c.anthropicVersion = version
-		}
-	}
-}
-
-// WithAnthropicUserProfileID sets the "anthropic-user-profile-id" request
-// header (only used by ProtocolAnthropic), which associates requests with an
-// end-user profile. An empty string leaves the header unset (default).
-func WithAnthropicUserProfileID(id string) Option {
-	return func(c *Client) {
-		if id != "" {
-			c.anthropicUserProfileID = id
-		}
+// WithProviderOptions attaches provider-specific configuration, forwarded
+// verbatim to the selected provider's factory. The concrete type is defined by
+// the provider package (e.g. anthropic.Options); passing a type the provider
+// does not recognize fails construction.
+func WithProviderOptions(opts any) Option {
+	return func(c *clientConfig) {
+		c.providerOptions = opts
 	}
 }
 
 // WithTimeout sets the HTTP client timeout.
 // The timeout is applied after all options, so it works regardless of option ordering.
 func WithTimeout(d time.Duration) Option {
-	return func(c *Client) {
+	return func(c *clientConfig) {
 		c.timeout = d
 	}
 }
 
 // NewClient creates a new Client with the given options.
-// If no API key is provided, it falls back to OPENAI_API_KEY then ANTHROPIC_API_KEY.
-// If no base URL is provided, it falls back to OPENAI_BASE_URL then ANTHROPIC_BASE_URL.
-// For Anthropic models (claude-*), baseURL defaults to https://api.anthropic.com at request time.
+//
+// Generic configuration falls back to the environment when not set explicitly:
+// the API key to AI_API_KEY then OPENAI_API_KEY then ANTHROPIC_API_KEY, the
+// base URL to AI_BASE_URL then OPENAI_BASE_URL then ANTHROPIC_BASE_URL, and the
+// default model to AI_MODEL. The selected provider's factory validates its own
+// required fields (e.g. a base URL for OpenAI, none for Anthropic) and vendor
+// options, so those failures surface here at construction time.
 func NewClient(opts ...Option) (*Client, error) {
-	c := &Client{
-		timeout: defaultTimeout,
+	cfg := &clientConfig{
+		timeout:      defaultTimeout,
+		providerName: openai.Name,
 	}
 
 	if model := GetEnv("AI_MODEL"); model != "" {
-		c.model = model
+		cfg.model = model
 	}
 
 	if key := GetEnv("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"); key != "" {
-		c.apiKey = key
+		cfg.apiKey = key
 	}
 
 	if base := GetEnv("AI_BASE_URL", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"); base != "" {
-		c.baseURL = strings.TrimRight(base, "/")
+		cfg.baseURL = strings.TrimRight(base, "/")
 	}
 
 	// Apply explicit options (override env).
 	for _, opt := range opts {
-		opt(c)
+		opt(cfg)
 	}
 
-	if c.apiKey == "" {
+	if cfg.apiKey == "" {
 		return nil, ErrNoAPIKey
 	}
 
-	switch c.protocol {
-	case "", ProtocolOpenAI:
-		c.protocol = ProtocolOpenAI
+	factory, ok := core.Lookup(cfg.providerName)
+	if !ok {
+		return nil, fmt.Errorf("aimodel: unknown provider %q", cfg.providerName)
+	}
 
-		if c.baseURL == "" {
-			return nil, ErrNoBaseURL
-		}
-	case ProtocolAnthropic:
-		// Anthropic has a default base URL; explicit value is optional.
-	default:
-		return nil, fmt.Errorf("aimodel: unsupported protocol %q", c.protocol)
+	prov, err := factory(core.Config{
+		APIKey:  cfg.apiKey,
+		BaseURL: cfg.baseURL,
+		Options: cfg.providerOptions,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Apply timeout to the HTTP client at the end, ensuring correct ordering.
-	if c.httpClient == nil {
-		c.httpClient = &http.Client{}
+	httpClient := cfg.httpClient
+	if httpClient == nil {
+		httpClient = &http.Client{}
 	}
 
-	c.httpClient.Timeout = c.timeout
+	httpClient.Timeout = cfg.timeout
 
-	return c, nil
+	return &Client{
+		model:      cfg.model,
+		httpClient: httpClient,
+		provider:   prov,
+	}, nil
 }

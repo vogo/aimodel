@@ -17,24 +17,20 @@
 
 package aimodel
 
-import "context"
+import (
+	"io"
 
-// ChatCompleter defines the contract for AI chat completion.
-// Protocol routing is handled internally by each Client based on its configuration.
-type ChatCompleter interface {
-	ChatCompletion(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
-	ChatCompletionStream(ctx context.Context, req *ChatRequest) (*Stream, error)
-}
-
-// Compile-time check: *Client implements ChatCompleter.
-var _ ChatCompleter = (*Client)(nil)
-
-// Protocol determines which API protocol to use for a model.
-type Protocol string
-
-const (
-	// ProtocolOpenAI uses the OpenAI-compatible chat completions API (default).
-	ProtocolOpenAI Protocol = "openai"
-	// ProtocolAnthropic uses the Anthropic Messages API.
-	ProtocolAnthropic Protocol = "anthropic"
+	"github.com/vogo/aimodel/core"
+	"github.com/vogo/aimodel/provider/openai"
 )
+
+// newOpenAIStream builds a root Stream backed by the OpenAI provider's SSE
+// decoder, exercising the real decoder together with the Stream lifecycle.
+func newOpenAIStream(body io.ReadCloser) *Stream {
+	p, err := openai.New(core.Config{APIKey: "sk-test", BaseURL: "https://example.com"})
+	if err != nil {
+		panic(err)
+	}
+
+	return newStream(body, p.NewStreamDecoder(body))
+}

@@ -51,7 +51,7 @@ All `omitempty` and copied verbatim into the Anthropic tool object:
 | `EagerInputStreaming *bool` | `eager_input_streaming` | Stream this tool's input as partial JSON instead of buffering it. |
 | `InputExamples []any` | `input_examples` | Sample inputs demonstrating a complex schema. |
 
-Because `AllowedCallers` and `InputExamples` are slices, `ChatRequest.clone()` duplicates them per tool so a copy's appends or element rewrites cannot reach back into the original request. Their elements stay shallow, matching the existing `any` contract for `Function.Parameters`.
+Because `AllowedCallers` and `InputExamples` are slices, `ChatRequest.Clone()` duplicates them per tool so a copy's appends or element rewrites cannot reach back into the original request. Their elements stay shallow, matching the existing `any` contract for `Function.Parameters`.
 
 ---
 

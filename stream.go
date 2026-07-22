@@ -21,10 +21,9 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
-)
 
-// maxStreamLineSize limits the maximum SSE line size to 1 MB.
-const maxStreamLineSize = 1 << 20
+	"github.com/vogo/aimodel/core"
+)
 
 // Stream reads streaming chat completion responses using SSE.
 // Stream is safe for concurrent use between a single Recv caller and Close.
@@ -35,6 +34,16 @@ type Stream struct {
 	closed  atomic.Bool
 	usage   *Usage // captured from the final chunk that includes usage data
 	onClose func(*Usage)
+}
+
+// newStream wraps a streaming response body and its provider-supplied SSE
+// decoder into a Stream. The decoder only translates events; the Stream owns
+// the close state and the underlying reader.
+func newStream(body io.ReadCloser, decoder core.StreamDecoder) *Stream {
+	return &Stream{
+		reader: body,
+		recv:   decoder.Next,
+	}
 }
 
 // Recv reads the next chunk from the stream.

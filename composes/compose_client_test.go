@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/provider/anthropic"
 )
 
 // newTestServer creates an httptest server that returns a valid OpenAI chat response
@@ -574,7 +575,7 @@ func TestAnthropicChatCompletion(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey("test-key"),
 		aimodel.WithBaseURL(s.URL),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithProvider(anthropic.Name),
 	)
 	if err != nil {
 		t.Fatal(err)

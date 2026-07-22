@@ -28,7 +28,7 @@ func TestStreamRecvSingleChunk(t *testing.T) {
 	body := "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	chunk, err := s.Recv()
 	if err != nil {
@@ -57,7 +57,7 @@ func TestStreamRecvMultipleChunks(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	var contents []string
 	for {
@@ -89,7 +89,7 @@ func TestStreamSkipsHeartbeats(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	chunk, err := s.Recv()
 	if err != nil {
@@ -103,7 +103,7 @@ func TestStreamSkipsHeartbeats(t *testing.T) {
 func TestStreamClose(t *testing.T) {
 	body := "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestStreamClose(t *testing.T) {
 }
 
 func TestStreamEmptyBody(t *testing.T) {
-	s := newStream(io.NopCloser(strings.NewReader("")))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader("")))
 
 	_, err := s.Recv()
 	if !errors.Is(err, io.EOF) {
@@ -126,7 +126,7 @@ func TestStreamEmptyBody(t *testing.T) {
 func TestStreamInvalidJSON(t *testing.T) {
 	body := "data: {invalid json}\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	_, err := s.Recv()
 	if err == nil {
@@ -137,7 +137,7 @@ func TestStreamInvalidJSON(t *testing.T) {
 func TestStreamCloseIdempotent(t *testing.T) {
 	body := "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	// First close should succeed.
 	if err := s.Close(); err != nil {
@@ -159,7 +159,7 @@ func TestStreamCloseIdempotent(t *testing.T) {
 func TestStreamAPIError(t *testing.T) {
 	body := `data: {"error":{"message":"Rate limit exceeded","type":"tokens","code":"rate_limit_exceeded"}}` + "\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	_, err := s.Recv()
 	if err == nil {
@@ -181,7 +181,7 @@ func TestStreamUsageFromFinalChunk(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	for {
 		_, err := s.Recv()
@@ -214,7 +214,7 @@ func TestStreamUsageNilWhenNoUsageChunk(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	for {
 		_, err := s.Recv()
@@ -240,7 +240,7 @@ func TestStreamCloseOnCloseCallback(t *testing.T) {
 	var callbackUsage *Usage
 	var callbackCalled bool
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 	s = WrapStream(s, func(u *Usage) {
 		callbackCalled = true
 		callbackUsage = u
@@ -283,7 +283,7 @@ func TestStreamUsageCacheReadTokens(t *testing.T) {
 	body += "data: " + `{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}` + "\n\n"
 	body += "data: [DONE]\n\n"
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 
 	for {
 		_, err := s.Recv()
@@ -315,7 +315,7 @@ func TestStreamCloseOnCloseCallbackWithoutUsage(t *testing.T) {
 	var callbackCalled bool
 	var callbackUsage *Usage
 
-	s := newStream(io.NopCloser(strings.NewReader(body)))
+	s := newOpenAIStream(io.NopCloser(strings.NewReader(body)))
 	s = WrapStream(s, func(u *Usage) {
 		callbackCalled = true
 		callbackUsage = u

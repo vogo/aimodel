@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/vogo/aimodel"
+	"github.com/vogo/aimodel/provider/anthropic"
 )
 
 // Test 1a: Anthropic sync response with cache_read_input_tokens.
@@ -56,7 +57,7 @@ func TestIntegration_Anthropic_CacheReadTokens_Sync(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey("sk-test"),
 		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithProvider(anthropic.Name),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -118,7 +119,7 @@ func TestIntegration_Anthropic_CacheReadTokens_Stream(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey("sk-test"),
 		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithProvider(anthropic.Name),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -365,7 +366,7 @@ func TestIntegration_Anthropic_ZeroCacheTokens_Sync(t *testing.T) {
 	client, err := aimodel.NewClient(
 		aimodel.WithAPIKey("sk-test"),
 		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProtocol(aimodel.ProtocolAnthropic),
+		aimodel.WithProvider(anthropic.Name),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
