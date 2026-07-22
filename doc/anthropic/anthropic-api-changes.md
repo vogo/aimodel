@@ -1,5 +1,7 @@
 # Anthropic Messages API — Change Log
 
+> Historical record: references below to an “OpenAI shape” describe the older canonical design. The current schema admits a field only when at least two providers have a verified semantic mapping.
+
 This file records **how aimodel's Anthropic wrapper tracks the official Messages API**: what changed upstream, and how the wrapper followed.
 
 - **Official protocol**: Anthropic Messages API (`POST /v1/messages`)

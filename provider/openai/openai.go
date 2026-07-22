@@ -15,9 +15,7 @@
  * limitations under the License.
  */
 
-// Package openai implements the OpenAI-compatible chat provider. The canonical
-// types are already the OpenAI wire shape, so this path serializes the request
-// directly with no translation layer. Importing this package registers the
+// Package openai implements the OpenAI-compatible chat provider. Importing this package registers the
 // provider under Name; the root aimodel package imports it by default.
 //
 // OpenAI reference: https://platform.openai.com/docs/api-reference/chat
@@ -65,15 +63,24 @@ type provider struct {
 	baseURL string
 }
 
-// NewChatRequest serializes the canonical request as the OpenAI wire body and
-// builds the HTTP request. On a streaming call it defaults stream_options to
-// include usage in the final chunk, unless the caller already set it.
+// NewChatRequest serializes the shared request fields as the OpenAI wire body.
+// Streaming calls request the final usage chunk through a provider-owned wire
+// field that is intentionally absent from the canonical schema.
 func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
-	if req.Stream && req.StreamOptions == nil {
-		req.StreamOptions = &ais.StreamOptions{IncludeUsage: true}
+	type streamOptions struct {
+		IncludeUsage bool `json:"include_usage"`
+	}
+	type openAIRequest struct {
+		*ais.ChatRequest
+		StreamOptions *streamOptions `json:"stream_options,omitempty"`
 	}
 
-	body, err := json.Marshal(req)
+	wireReq := openAIRequest{ChatRequest: req}
+	if req.Stream {
+		wireReq.StreamOptions = &streamOptions{IncludeUsage: true}
+	}
+
+	body, err := json.Marshal(wireReq)
 	if err != nil {
 		return nil, fmt.Errorf("aimodel: marshal request: %w", err)
 	}

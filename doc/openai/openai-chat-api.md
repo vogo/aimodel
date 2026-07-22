@@ -2,25 +2,23 @@
 
 - **Official protocol**: OpenAI Chat Completions API (`POST {baseURL}/chat/completions`)
 - **Official docs**: https://platform.openai.com/docs/api-reference/chat
-- **Implementation**: `provider/openai/openai.go` (request building and error parsing), `provider/openai/stream.go` (SSE parsing), `ais/schema.go` (the canonical types *are* the OpenAI shape)
+- **Implementation**: `provider/openai/openai.go` (wire request building and error parsing), `provider/openai/stream.go` (SSE parsing), `ais/schema.go` (shared canonical types)
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
 
 Canonical type semantics live in [../design/data-model.md](../design/data-model.md); this document covers what is specific to the OpenAI path.
 
 ---
 
-## 1. The zero-translation path
+## 1. Provider mapping
 
-The SDK uses the **OpenAI Chat Completions format as its canonical representation** (see [../architecture.md](../architecture.md) §2), so the OpenAI path has **no translation layer at all**:
+The OpenAI provider serializes shared canonical fields into the Chat Completions body and owns any OpenAI-only wire additions:
 
 ```
 ChatRequest ──json.Marshal──▶ POST {baseURL}/chat/completions
 ChatResponse ◀──json.Decode── response body
 ```
 
-`ChatRequest` / `ChatResponse` / `Message` / `Choice` / `Usage` in `schema.go` are the OpenAI wire structures. Which means: **adding a new OpenAI request parameter is just one `omitempty` field on `ChatRequest`** — no protocol code changes.
-
-The same property makes it fit every OpenAI-compatible backend (DeepSeek, Kimi/Moonshot, GLM, Qwen, Doubao, MiniMax, Gemini's OpenAI-compatible endpoint, …): a backend's private extension parameters pass straight through as long as the shape matches, and unknown fields are ignored by the backend itself.
+New OpenAI-only parameters must be added to the provider's native surface, not `ais.ChatRequest`. Canonical admission still requires a verified mapping in at least two providers.
 
 ## 2. Sending the request (`doRequest`)
 
@@ -53,7 +51,7 @@ Step 6 is a necessary defence: OpenAI-compatible implementations are not consist
 Same flow as non-streaming, with two differences:
 
 1. `Stream = true` is forced by the pipeline;
-2. **when `StreamOptions` is `nil`, `provider.NewChatRequest` adds `{IncludeUsage: true}` automatically** — otherwise the terminal chunk carries no usage and `Stream.Usage()` returns nothing. An explicit caller setting is respected.
+2. `provider.NewChatRequest` always adds the wire-only `stream_options.include_usage=true` for a streaming request, so the terminal usage-only chunk remains observable. Non-streaming requests omit it.
 
 On success the pipeline wraps the body in a `Stream` backed by `provider.NewStreamDecoder`; on failure it closes the body before returning the error.
 
@@ -98,7 +96,7 @@ OpenAI has no notion of cache-write billing, so the `CacheWrite*` fields are alw
 
 ### 5.2 Prompt caching
 
-OpenAI caches prefixes over ~1024 tokens **automatically**, with no request-side marker. That is why the Anthropic-only switches (`Message.CacheBreakpoint`, `Tool.CacheBreakpoint`, `ChatRequest.AutoCache`) are all `json:"-"` and never appear in an OpenAI request body. To improve hit rates, use `PromptCacheKey`. See [../design/prompt-caching.md](../design/prompt-caching.md).
+OpenAI caches prefixes automatically, with no canonical request-side control. Anthropic cache controls live in its extension API and never appear in an OpenAI request body. See [../design/prompt-caching.md](../design/prompt-caching.md).
 
 ## 6. Error handling (`provider.ParseErrorResponse`)
 
@@ -107,10 +105,6 @@ OpenAI caches prefixes over ~1024 tokens **automatically**, with no request-side
 3. **decode failure or missing `error` → put the raw body into `Message`**, so diagnostics are never lost;
 4. success → `APIError{StatusCode, Code, Message, Type}`.
 
-## 7. Fields with no Anthropic counterpart
+## 7. Mapping boundary
 
-These canonical fields are silently ignored when the client uses the Anthropic provider (`WithProvider(anthropic.Name)`): `N`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `Verbosity`, `Logprobs` / `TopLogprobs` / `LogitBias`, `ServiceTier` (request side only — the response's `usage.service_tier` *is* mapped), `Store`, `Metadata`, `PromptCacheKey`, `Modalities` / `Audio`, `StreamOptions`.
-
-`ResponseFormat` is mapped only in its JSON-schema shape (to Anthropic's `output_config.format`); other shapes are ignored like the rest.
-
-When writing cross-protocol code, treat all of these as best-effort parameters.
+OpenAI-only request fields, log probabilities, audio/file payloads and generated-audio response data are intentionally absent from canonical types. Use the OpenAI native API for those capabilities. `ResponseFormat` is shared only in its JSON-schema shape; unsupported shapes do not produce an Anthropic output format.

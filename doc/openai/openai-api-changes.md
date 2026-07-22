@@ -1,5 +1,7 @@
 # OpenAI Chat Completions API — Change Log
 
+> Historical record: entries below describe the API surface when each change landed. OpenAI-only audio/file, log-probability, verbosity, storage/metadata, prompt-cache routing, generation-count and request-tier members were removed from the canonical schema in July 2026; they are not current `ais` capabilities.
+
 This file records **how aimodel's OpenAI wrapper tracks the official Chat Completions API**: what changed upstream, and how the wrapper followed.
 
 - **Official protocol**: OpenAI Chat Completions API (`POST /chat/completions`; no standalone version number — keyed by the endpoint)

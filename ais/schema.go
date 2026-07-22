@@ -19,7 +19,6 @@ package ais
 
 import (
 	"encoding/json"
-	"maps"
 	"strings"
 )
 
@@ -66,15 +65,6 @@ const (
 	ReasoningEffortXHigh   = "xhigh"
 )
 
-// Verbosity constants enumerate the official OpenAI verbosity values that
-// control how detailed the model's output is. ChatRequest.Verbosity stays a
-// plain string for the same pass-through reason as ReasoningEffort.
-const (
-	VerbosityLow    = "low"
-	VerbosityMedium = "medium"
-	VerbosityHigh   = "high"
-)
-
 // Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
 type Thinking struct {
 	// Type selects the thinking mode. Anthropic accepts "enabled", "disabled",
@@ -94,11 +84,6 @@ type Thinking struct {
 	// "omitted" (Anthropic, since 2026-03-16) to suppress thinking blocks and
 	// speed up streaming; empty streams thinking as usual.
 	Display string `json:"display,omitempty"`
-}
-
-// StreamOptions configures streaming behavior.
-type StreamOptions struct {
-	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatRequest represents a request to the chat completions API.
@@ -131,18 +116,12 @@ type ChatRequest struct {
 	// accept it will honour it; the rest ignore the unknown field).
 	TopK *int `json:"top_k,omitempty"`
 
-	N                *int           `json:"n,omitempty"`
-	Stop             []string       `json:"stop,omitempty"`
-	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
-	Seed             *int           `json:"seed,omitempty"`
-	User             string         `json:"user,omitempty"`
-	ResponseFormat   any            `json:"response_format,omitempty"`
-	Stream           bool           `json:"stream,omitempty"`
-	StreamOptions    *StreamOptions `json:"stream_options,omitempty"`
-	Tools            []Tool         `json:"tools,omitempty"`
-	ToolChoice       any            `json:"tool_choice,omitempty"`
-	Thinking         *Thinking      `json:"thinking,omitempty"`
+	Stop           []string  `json:"stop,omitempty"`
+	ResponseFormat any       `json:"response_format,omitempty"`
+	Stream         bool      `json:"stream,omitempty"`
+	Tools          []Tool    `json:"tools,omitempty"`
+	ToolChoice     any       `json:"tool_choice,omitempty"`
+	Thinking       *Thinking `json:"thinking,omitempty"`
 
 	// ReasoningEffort controls how many reasoning tokens the model spends.
 	// It maps to OpenAI's reasoning_effort and to Anthropic's top-level
@@ -151,64 +130,15 @@ type ChatRequest struct {
 	// any value a custom backend accepts.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
-	// Verbosity maps to OpenAI's verbosity and controls how detailed the
-	// output is. Use the Verbosity* constants (low/medium/high).
-	Verbosity string `json:"verbosity,omitempty"`
-
-	// Logprobs requests per-token log probabilities in the response. When
-	// true, each Choice carries a LogProbs payload.
-	Logprobs *bool `json:"logprobs,omitempty"`
-
-	// TopLogprobs (0–20) asks for that many most-likely tokens at each
-	// position, each with a log probability. Requires Logprobs to be true.
-	TopLogprobs *int `json:"top_logprobs,omitempty"`
-
-	// LogitBias nudges the likelihood of specific tokens. Keys are token IDs
-	// (as strings); values are bias amounts in [-100, 100].
-	LogitBias map[string]int `json:"logit_bias,omitempty"`
-
 	// ParallelToolCalls toggles whether the model may emit multiple tool
 	// calls in a single turn. Defaults to true server-side when unset.
 	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
-
-	// ServiceTier selects the latency/throughput tier (e.g. "auto",
-	// "default", "flex", "priority"). Kept a plain string for pass-through.
-	ServiceTier string `json:"service_tier,omitempty"`
-
-	// Store asks OpenAI to persist this completion for later retrieval
-	// (e.g. dashboards, evals).
-	Store *bool `json:"store,omitempty"`
-
-	// Metadata attaches up to 16 string key/value pairs to the request,
-	// surfaced alongside a stored completion.
-	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// PromptCacheKey routes requests sharing a cacheable prefix to the same
-	// cache, improving prompt cache hit rates.
-	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
-
-	// Modalities lists the output types the model may generate, e.g.
-	// ["text"] or ["text", "audio"]. Required when requesting audio output.
-	Modalities []string `json:"modalities,omitempty"`
-
-	// Audio configures audio output (voice and format); required when
-	// "audio" is included in Modalities.
-	Audio *AudioConfig `json:"audio,omitempty"`
 
 	// Extensions is the unified provider extension channel for request-level
 	// vendor parameters (e.g. anthropic.RequestExtension set via that
 	// package's helpers). See the Extensions type for the contract; never
 	// serialized on the canonical body.
 	Extensions Extensions `json:"-"`
-}
-
-// AudioConfig configures the audio output of a request (ChatRequest.Audio).
-// Voice selects the speaker (e.g. "alloy"); Format is the output encoding
-// (e.g. "wav", "mp3", "flac", "opus", "pcm16"). Both stay plain strings for
-// pass-through to OpenAI-compatible backends.
-type AudioConfig struct {
-	Voice  string `json:"voice"`
-	Format string `json:"format"`
 }
 
 // ChatResponse represents a response from the chat completions API.
@@ -232,36 +162,9 @@ type Choice struct {
 	Index        int          `json:"index"`
 	Message      Message      `json:"message"`
 	FinishReason FinishReason `json:"finish_reason"`
-	// LogProbs carries per-token log probabilities when the request set
-	// Logprobs to true; nil otherwise.
-	LogProbs *LogProbs `json:"logprobs,omitempty"`
-
 	// Extensions carries provider-scoped per-choice metadata (e.g.
 	// anthropic.ChoiceExtension with the structured stop details).
 	Extensions Extensions `json:"-"`
-}
-
-// LogProbs holds the token log-probability payload for a Choice, mirroring
-// OpenAI's choices[].logprobs object.
-type LogProbs struct {
-	Content []TokenLogprob `json:"content,omitempty"`
-	Refusal []TokenLogprob `json:"refusal,omitempty"`
-}
-
-// TokenLogprob is the log probability of a single output token, plus the
-// most-likely alternatives at that position (TopLogprobs).
-type TokenLogprob struct {
-	Token       string       `json:"token"`
-	Logprob     float64      `json:"logprob"`
-	Bytes       []int        `json:"bytes,omitempty"`
-	TopLogprobs []TopLogprob `json:"top_logprobs,omitempty"`
-}
-
-// TopLogprob is one alternative token and its log probability at a position.
-type TopLogprob struct {
-	Token   string  `json:"token"`
-	Logprob float64 `json:"logprob"`
-	Bytes   []int   `json:"bytes,omitempty"`
 }
 
 // Content represents chat message content that can be either a plain string
@@ -273,36 +176,17 @@ type Content struct {
 
 // ContentPart represents a single part in a multimodal content array.
 // Exactly one of the payload fields is set, selected by Type:
-// "text" → Text, "image_url" → ImageURL, "input_audio" → InputAudio,
-// "file" → File.
+// "text" → Text, "image_url" → ImageURL.
 type ContentPart struct {
-	Type       string      `json:"type"`
-	Text       string      `json:"text,omitempty"`
-	ImageURL   *ImageURL   `json:"image_url,omitempty"`
-	InputAudio *InputAudio `json:"input_audio,omitempty"`
-	File       *FilePart   `json:"file,omitempty"`
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
 }
 
 // ImageURL represents an image URL in a content part.
 type ImageURL struct {
 	URL    string `json:"url"`
 	Detail string `json:"detail,omitempty"`
-}
-
-// InputAudio represents an audio input in a content part (type "input_audio").
-// Data is the base64-encoded audio; Format is the encoding ("wav" or "mp3").
-type InputAudio struct {
-	Data   string `json:"data"`
-	Format string `json:"format"`
-}
-
-// FilePart represents a file input in a content part (type "file"). Reference
-// an already-uploaded file via FileID, or inline one with Filename + FileData
-// (base64-encoded contents).
-type FilePart struct {
-	FileID   string `json:"file_id,omitempty"`
-	Filename string `json:"filename,omitempty"`
-	FileData string `json:"file_data,omitempty"`
 }
 
 // NewTextContent creates a Content from a plain string.
@@ -371,10 +255,6 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 
-	// Audio carries the generated audio of an assistant message when audio
-	// output was requested (ChatRequest.Modalities includes "audio").
-	Audio *MessageAudio `json:"audio,omitempty"`
-
 	// Extensions carries provider-scoped message extensions: request-side
 	// markers (e.g. the anthropic.MessageExtension cache breakpoint) and
 	// response-side payloads the canonical layer does not model (e.g.
@@ -434,17 +314,6 @@ type FunctionCall struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
-// MessageAudio is the generated audio attached to an assistant message
-// (Message.Audio), mirroring OpenAI's message.audio object. Data is the
-// base64-encoded audio; Transcript is its text transcript; ID references the
-// audio for multi-turn reuse; ExpiresAt is its Unix expiry time.
-type MessageAudio struct {
-	ID         string `json:"id,omitempty"`
-	Data       string `json:"data,omitempty"`
-	Transcript string `json:"transcript,omitempty"`
-	ExpiresAt  int64  `json:"expires_at,omitempty"`
-}
-
 // Tool represents a tool definition for the API.
 type Tool struct {
 	// Type is OpenAI's tool kind — "function" for every tool OpenAI defines.
@@ -496,11 +365,6 @@ func (r *ChatRequest) Clone() ChatRequest {
 		copy(c.Stop, r.Stop)
 	}
 
-	if len(r.Modalities) > 0 {
-		c.Modalities = make([]string, len(r.Modalities))
-		copy(c.Modalities, r.Modalities)
-	}
-
 	if len(r.Tools) > 0 {
 		c.Tools = make([]Tool, len(r.Tools))
 		copy(c.Tools, r.Tools)
@@ -508,14 +372,6 @@ func (r *ChatRequest) Clone() ChatRequest {
 		for i := range c.Tools {
 			c.Tools[i].Extensions = c.Tools[i].Extensions.Clone()
 		}
-	}
-
-	if len(r.LogitBias) > 0 {
-		c.LogitBias = maps.Clone(r.LogitBias)
-	}
-
-	if len(r.Metadata) > 0 {
-		c.Metadata = maps.Clone(r.Metadata)
 	}
 
 	c.Extensions = r.Extensions.Clone()

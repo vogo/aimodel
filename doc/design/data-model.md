@@ -1,6 +1,6 @@
 # Data Model
 
-The canonical request/response types in `ais/schema.go`. They **are** the OpenAI Chat Completions wire shape (see [../architecture.md](../architecture.md) §2), so the OpenAI path serializes them directly and only the Anthropic path translates.
+The canonical request/response types in `ais/schema.go` model only semantics with verified mappings in at least two providers (see [../architecture.md](../architecture.md) §2).
 
 - **Canonical types**: `ais/schema.go`
 - **Per-protocol mapping**: [../openai/openai-chat-api.md](../openai/openai-chat-api.md) · [../anthropic/anthropic-message-api.md](../anthropic/anthropic-message-api.md)
@@ -13,7 +13,7 @@ Pointer types (`*float64` / `*int` / `*bool`) exist to distinguish "unset" from 
 
 ### 1.1 Basics
 
-`Model`, `Messages`, `Temperature`, `TopP`, `TopK`, `N`, `Stop`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `ResponseFormat`.
+`Model`, `Messages`, `Temperature`, `TopP`, `TopK`, `Stop`, `ResponseFormat`.
 
 `TopK *int` → `top_k` is top-k truncation sampling (restrict sampling to the K most-likely tokens). It is native to Anthropic, where the translator maps it straight through. OpenAI's Chat Completions has no `top_k`, so it is simply omitted when unset and passed through verbatim when set — compatible backends that accept it honour it, the rest ignore the unknown field.
 
@@ -27,10 +27,9 @@ Both are `omitempty`. Anthropic always requires `max_tokens`, so its translator 
 ### 1.3 Reasoning & thinking
 
 - `ReasoningEffort string` → OpenAI `reasoning_effort` / Anthropic `output_config.effort`: how many reasoning tokens the model spends. Constants: `ReasoningEffortNone` / `Minimal` / `Low` / `Medium` / `High` / `XHigh` (GPT-5.1 defaults to `none`).
-- `Verbosity string` → OpenAI `verbosity`: how detailed the output is. Constants: `VerbosityLow` / `Medium` / `High`.
 - `Thinking *Thinking` → `{Type, BudgetTokens, Display}`. `Type` is `enabled` / `disabled` / `adaptive` (the model sizes its own thinking); `BudgetTokens` is **deprecated** in favour of `ReasoningEffort` or `adaptive`; `Display: "omitted"` suppresses thinking content to speed up streaming.
 
-`ReasoningEffort` and `Verbosity` stay plain `string` rather than enums, so any value a custom OpenAI-compatible backend accepts passes through.
+`ReasoningEffort` stays a plain `string` so providers can map newly introduced shared values without a canonical enum migration.
 
 ### 1.4 Tools
 
@@ -38,23 +37,7 @@ Both are `omitempty`. Anthropic always requires `max_tokens`, so its translator 
 
 ### 1.5 Streaming
 
-`Stream bool`, `StreamOptions *StreamOptions{IncludeUsage}`. See [streaming.md](./streaming.md).
-
-### 1.6 Observability & routing (OpenAI)
-
-| Field | Wire | Meaning |
-|---|---|---|
-| `Logprobs *bool` / `TopLogprobs *int` | `logprobs` / `top_logprobs` | Per-token log probabilities and the N most-likely alternatives per position. `TopLogprobs` (0–20) requires `Logprobs=true`. |
-| `LogitBias map[string]int` | `logit_bias` | Per-token-ID bias in `[-100, 100]`; keys are token IDs as strings. |
-| `ParallelToolCalls *bool` | `parallel_tool_calls` | Whether the model may emit multiple tool calls in one turn; server-side default is true. |
-| `ServiceTier string` | `service_tier` | Latency/throughput tier (`auto` / `default` / `flex` / `priority`); plain `string` for pass-through. |
-| `Store *bool` | `store` | Persist the completion for dashboards / evals. |
-| `Metadata map[string]string` | `metadata` | Up to 16 key/value pairs returned alongside a stored completion. |
-| `PromptCacheKey string` | `prompt_cache_key` | Route requests sharing a cacheable prefix to the same cache. |
-
-### 1.7 Multimodal
-
-`Modalities []string` (e.g. `["text","audio"]`) and `Audio *AudioConfig{Voice, Format}`. Requesting audio output requires `"audio"` in `Modalities`; the generated audio comes back on `Message.Audio`.
+`Stream bool`. The OpenAI provider adds its wire-only `stream_options.include_usage=true` for streaming requests. See [streaming.md](./streaming.md).
 
 ### 1.8 Provider extensions (`Extensions`)
 
@@ -62,7 +45,7 @@ Both are `omitempty`. Anthropic always requires `max_tokens`, so its translator 
 
 ### 1.9 `Clone()`
 
-Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` (exported on `ais.ChatRequest`, so the pipeline and any provider can call it) duplicates the `Messages` / `Stop` / `Modalities` / `Tools` slices, the `LogitBias` / `Metadata` maps, and the `Extensions` map at every node (request, each message, each tool). Elements themselves stay shallow — dynamic `any` values (`Function.Parameters`) and extension values are shared by contract; extension values are read-only configuration and must not be mutated after being attached. Providers receive this working copy and may rewrite it freely.
+Every dispatch deep-copies the request first, so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object. `Clone()` duplicates the retained `Messages`, `Stop` and `Tools` slices and the `Extensions` map at every node (request, each message, each tool). Dynamic `any` values and extension values remain shared read-only configuration.
 
 ---
 
@@ -75,7 +58,6 @@ type Message struct {
     Thinking   string     `json:"reasoning_content,omitempty"`
     ToolCallID string
     ToolCalls  []ToolCall
-    Audio      *MessageAudio
     Extensions ais.Extensions `json:"-"`  // provider extension channel
 }
 ```
@@ -100,8 +82,6 @@ ais.NewPartsContent(                                 // → [{...},{...}]
 |---|---|
 | `text` | `Text string` |
 | `image_url` | `ImageURL{URL, Detail}` |
-| `input_audio` | `InputAudio{Data (base64), Format ("wav"/"mp3")}` |
-| `file` | `FilePart{FileID}`, or `{Filename, FileData}` for inline base64 contents |
 
 On the Anthropic path, native content blocks the canonical layer does not model are preserved verbatim on the message's extension (`anthropic.MessageExtensionOf(&msg).ExtraBlocks`) — see [streaming.md](./streaming.md) §4.
 
@@ -123,7 +103,6 @@ type Choice struct {
     Index        int
     Message      Message
     FinishReason FinishReason
-    LogProbs     *LogProbs  // present when the request set Logprobs
     Extensions ais.Extensions `json:"-"`  // provider per-choice metadata
 }
 ```
@@ -143,14 +122,6 @@ Response information with no cross-provider consensus rides the `Extensions` cha
 | Cache writes, server-tool counts, inference geography | `anthropic.UsageExtensionOf(&resp.Usage)` — see §4 |
 
 Each accessor returns `nil` when the response carries no such metadata.
-
-### 3.3 `LogProbs`
-
-When `Logprobs` is true, `Choice.LogProbs` carries the parsed `content` / `refusal` token log probabilities: `LogProbs{Content, Refusal []TokenLogprob}`, `TokenLogprob{Token, Logprob, Bytes, TopLogprobs}`, `TopLogprob{Token, Logprob, Bytes}`.
-
-### 3.4 `MessageAudio`
-
-`Message.Audio` (`{ID, Data, Transcript, ExpiresAt}`) carries assistant-generated audio when audio output was requested. Never present on the Anthropic path.
 
 ---
 

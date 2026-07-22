@@ -5,7 +5,7 @@
 - **Implementation** (all under `provider/anthropic/`): `anthropic.go` (native wire types and bidirectional translation), `provider.go` (request building, auth headers, response/error parsing, `Options`), `stream.go` (SSE parsing)
 - **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
-The core premise is in [../architecture.md](../architecture.md): the SDK's canonical representation is the **OpenAI shape**, so Anthropic is the only path that translates in both directions. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
+The core premise is in [../architecture.md](../architecture.md): canonical types contain only semantics mapped by at least two providers. This document records the Anthropic side of that mapping. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
 
 ---
 
@@ -108,8 +108,6 @@ The content shape is chosen per message type:
 
 **Image source discrimination**: `parseDataURI` recognizes the `data:<mediaType>;base64,<data>` form → `source{type:"base64", media_type, data}`; anything else is treated as a remote URL → `source{type:"url", url}`.
 
-**Unmapped parts**: `input_audio` / `file` content blocks have no Anthropic counterpart — the `switch` simply does not match them, so they are skipped safely (no error, no empty block).
-
 In every block-array shape, the cache breakpoint attaches to the **last** block.
 
 ### 3.5 Tools & `tool_choice`
@@ -132,7 +130,7 @@ The `tool_choice` mapping and the `ParallelToolCalls` folding rules are document
 
 ### 3.7 Prompt caching
 
-Two coexisting modes — per-block breakpoints (`anthropic.MessageExtension` / `ToolExtension`) and request-root automatic caching (`anthropic.RequestExtension.AutoCache` / `AutoCacheTTL`). Both ride the `Extensions` channel (`json:"-"`) and never appear in an OpenAI-shape body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
+Two coexisting modes — per-block breakpoints (`anthropic.MessageExtension` / `ToolExtension`) and request-root automatic caching (`anthropic.RequestExtension.AutoCache` / `AutoCacheTTL`). Both ride the `Extensions` channel (`json:"-"`) and never appear in another provider's wire body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
 
 ## 4. Response translation (`fromAnthropicResponse`)
 
@@ -239,10 +237,6 @@ See [../design/streaming.md](../design/streaming.md) §3.
 
 An `error` event on the streaming path likewise produces an `*APIError`, but without an HTTP status code (`StatusCode` is 0).
 
-## 7. Known unmapped fields
+## 7. Mapping boundary
 
-These canonical fields have no Anthropic counterpart and are silently ignored during translation: `N`, `FrequencyPenalty`, `PresencePenalty`, `Seed`, `User`, `Verbosity`, `Logprobs` / `TopLogprobs` / `LogitBias`, `ServiceTier` (request side only — the response's `usage.service_tier` *is* mapped), `Store`, `Metadata`, `PromptCacheKey`, `Modalities` / `Audio`, `StreamOptions` (Anthropic streaming always returns usage).
-
-`ResponseFormat` is mapped only in its JSON-schema shape (§3.6); other shapes are ignored like the rest, with no fabricated config.
-
-In the other direction, `LogProbs` and `Message.Audio` never appear in an Anthropic response and stay `nil`.
+Every retained `ChatRequest` field is consumed by this translation path or a helper it invokes. `ResponseFormat` maps only its JSON-schema shape (§3.6); other shapes produce no fabricated config. OpenAI-only request/response capabilities are absent from canonical types rather than silently ignored here. Response-side `Usage.ServiceTier` remains canonical because both providers report it.
