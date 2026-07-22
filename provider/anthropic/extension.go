@@ -197,8 +197,8 @@ type ResponseExtension struct {
 
 // ServerToolUse counts server-side tool invocations billed with a request.
 type ServerToolUse struct {
-	WebSearchRequests int
-	WebFetchRequests  int
+	WebSearchRequests int `json:"web_search_requests"`
+	WebFetchRequests  int `json:"web_fetch_requests"`
 }
 
 // UsageExtension carries the Anthropic-only usage accounting, written by this

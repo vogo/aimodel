@@ -32,7 +32,7 @@ import (
 // (RequestExtension / MessageExtension / ToolExtension); a mis-typed
 // extension value fails here — before any network I/O — with a
 // *ais.ExtensionTypeError.
-func toAnthropicRequest(req *ais.ChatRequest) (*anthropicRequest, error) {
+func toAnthropicRequest(req *ais.ChatRequest) (*MessagesRequest, error) {
 	reqExt, err := extensionOf[RequestExtension](req.Extensions, "ChatRequest")
 	if err != nil {
 		return nil, err
@@ -50,15 +50,21 @@ func toAnthropicRequest(req *ais.ChatRequest) (*anthropicRequest, error) {
 	}
 
 	ar.ToolChoice = toAnthropicToolChoice(req)
-	ar.Thinking = req.Thinking
+	if req.Thinking != nil {
+		ar.Thinking = &MessagesThinking{
+			Type:         req.Thinking.Type,
+			BudgetTokens: req.Thinking.BudgetTokens, //nolint:staticcheck // deprecated compatibility field
+			Display:      req.Thinking.Display,
+		}
+	}
 	ar.OutputConfig = toAnthropicOutputConfig(req)
 	setAnthropicAutoCache(ar, reqExt)
 
 	return ar, nil
 }
 
-func newAnthropicRequest(req *ais.ChatRequest, ext *RequestExtension) *anthropicRequest {
-	ar := &anthropicRequest{
+func newAnthropicRequest(req *ais.ChatRequest, ext *RequestExtension) *MessagesRequest {
+	ar := &MessagesRequest{
 		Model:        req.Model,
 		Temperature:  req.Temperature,
 		TopP:         req.TopP,
@@ -83,9 +89,9 @@ func newAnthropicRequest(req *ais.ChatRequest, ext *RequestExtension) *anthropic
 	return ar
 }
 
-func setAnthropicMessages(ar *anthropicRequest, messages []ais.Message) error {
+func setAnthropicMessages(ar *MessagesRequest, messages []ais.Message) error {
 	var systemTexts []string
-	var systemBlocks []anthropicContentBlock
+	var systemBlocks []ContentBlock
 	var useBlocks bool
 	var anyCacheableSystem bool
 	var seenNonSystem bool
@@ -105,13 +111,13 @@ func setAnthropicMessages(ar *anthropicRequest, messages []ais.Message) error {
 				useBlocks = true
 				for _, p := range parts {
 					if p.Type == "text" {
-						systemBlocks = append(systemBlocks, anthropicContentBlock{Type: "text", Text: p.Text})
+						systemBlocks = append(systemBlocks, ContentBlock{Type: "text", Text: p.Text})
 					}
 				}
 			} else {
 				text := m.Content.Text()
 				systemTexts = append(systemTexts, text)
-				systemBlocks = append(systemBlocks, anthropicContentBlock{Type: "text", Text: text})
+				systemBlocks = append(systemBlocks, ContentBlock{Type: "text", Text: text})
 			}
 			continue
 		}
@@ -148,7 +154,7 @@ func setAnthropicMessages(ar *anthropicRequest, messages []ais.Message) error {
 	return nil
 }
 
-func marshalAnthropicSystem(texts []string, blocks []anthropicContentBlock, useBlocks, cacheable bool) (json.RawMessage, error) {
+func marshalAnthropicSystem(texts []string, blocks []ContentBlock, useBlocks, cacheable bool) (json.RawMessage, error) {
 	if (useBlocks || cacheable) && len(blocks) > 0 {
 		if cacheable {
 			blocks[len(blocks)-1].CacheControl = ephemeralCache()
@@ -170,7 +176,7 @@ func marshalAnthropicSystem(texts []string, blocks []anthropicContentBlock, useB
 	return data, nil
 }
 
-func setAnthropicTools(ar *anthropicRequest, tools []ais.Tool) error {
+func setAnthropicTools(ar *MessagesRequest, tools []ais.Tool) error {
 	for _, t := range tools {
 		tExt, err := extensionOf[ToolExtension](t.Extensions, "Tool")
 		if err != nil {
@@ -180,7 +186,7 @@ func setAnthropicTools(ar *anthropicRequest, tools []ais.Tool) error {
 			tExt = &ToolExtension{}
 		}
 
-		at := anthropicTool{
+		at := MessagesTool{
 			Name:                t.Function.Name,
 			Description:         t.Function.Description,
 			InputSchema:         t.Function.Parameters,
@@ -201,11 +207,11 @@ func setAnthropicTools(ar *anthropicRequest, tools []ais.Tool) error {
 	return nil
 }
 
-func toAnthropicToolChoice(req *ais.ChatRequest) *anthropicToolChoice {
+func toAnthropicToolChoice(req *ais.ChatRequest) *ToolChoice {
 	tc := convertToolChoice(req.ToolChoice)
 	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
 		if tc == nil && len(req.Tools) > 0 {
-			tc = &anthropicToolChoice{Type: "auto"}
+			tc = &ToolChoice{Type: "auto"}
 		}
 		if tc != nil && tc.Type != "none" {
 			disable := true
@@ -215,9 +221,9 @@ func toAnthropicToolChoice(req *ais.ChatRequest) *anthropicToolChoice {
 	return tc
 }
 
-func setAnthropicAutoCache(ar *anthropicRequest, ext *RequestExtension) {
+func setAnthropicAutoCache(ar *MessagesRequest, ext *RequestExtension) {
 	if ext.AutoCache {
-		ar.CacheControl = &anthropicCacheControl{Type: "ephemeral", TTL: ext.AutoCacheTTL}
+		ar.CacheControl = &CacheControl{Type: "ephemeral", TTL: ext.AutoCacheTTL}
 	}
 }
 
@@ -235,13 +241,13 @@ func messageCacheBreakpoint(m *ais.Message) (bool, error) {
 // toAnthropicOutputConfig builds the output_config object from the canonical
 // reasoning effort and response format. Either half may be absent; when both
 // are, it returns nil so the field is omitted entirely.
-func toAnthropicOutputConfig(req *ais.ChatRequest) *anthropicOutputConfig {
+func toAnthropicOutputConfig(req *ais.ChatRequest) *OutputConfig {
 	format := toAnthropicOutputFormat(req.ResponseFormat)
 	if req.ReasoningEffort == "" && format == nil {
 		return nil
 	}
 
-	return &anthropicOutputConfig{
+	return &OutputConfig{
 		Effort: req.ReasoningEffort,
 		Format: format,
 	}
@@ -253,7 +259,7 @@ func toAnthropicOutputConfig(req *ais.ChatRequest) *anthropicOutputConfig {
 // flat {type:"json_schema", schema:…}. Anything else — including
 // {type:"json_object"}, which has no Anthropic counterpart — yields nil rather
 // than a fabricated config, keeping this a thin translation.
-func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
+func toAnthropicOutputFormat(rf any) *OutputFormat {
 	m, ok := rf.(map[string]any)
 	if !ok {
 		return nil
@@ -272,19 +278,19 @@ func toAnthropicOutputFormat(rf any) *anthropicOutputFormat {
 		return nil
 	}
 
-	return &anthropicOutputFormat{Type: "json_schema", Schema: schema}
+	return &OutputFormat{Type: "json_schema", Schema: schema}
 }
 
 // toolResultBlock builds a single tool_result content block from a canonical
 // tool-result message. It is shared by the consecutive-run merge path and the
 // single-message fallback so the wire shape stays identical. A missing
 // ToolCallID is rejected up front.
-func toolResultBlock(m ais.Message) (anthropicContentBlock, error) {
+func toolResultBlock(m ais.Message) (ContentBlock, error) {
 	if m.ToolCallID == "" {
-		return anthropicContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
+		return ContentBlock{}, fmt.Errorf("aimodel: tool result message missing tool_call_id")
 	}
 
-	block := anthropicContentBlock{
+	block := ContentBlock{
 		Type:          "tool_result",
 		ToolUseID:     m.ToolCallID,
 		ResultContent: m.Content.Text(),
@@ -292,7 +298,7 @@ func toolResultBlock(m ais.Message) (anthropicContentBlock, error) {
 
 	bp, err := messageCacheBreakpoint(&m)
 	if err != nil {
-		return anthropicContentBlock{}, err
+		return ContentBlock{}, err
 	}
 
 	if bp {
@@ -307,12 +313,12 @@ func toolResultBlock(m ais.Message) (anthropicContentBlock, error) {
 // whose content array holds all the tool_result blocks in order. Anthropic
 // requires the parallel results of one assistant turn to share one user
 // message; merging here keeps the request valid for parallel tool use.
-func toAnthropicToolResultMessage(msgs []ais.Message) (anthropicMessage, error) {
-	blocks := make([]anthropicContentBlock, 0, len(msgs))
+func toAnthropicToolResultMessage(msgs []ais.Message) (MessagesMessage, error) {
+	blocks := make([]ContentBlock, 0, len(msgs))
 	for _, m := range msgs {
 		block, err := toolResultBlock(m)
 		if err != nil {
-			return anthropicMessage{}, err
+			return MessagesMessage{}, err
 		}
 
 		blocks = append(blocks, block)
@@ -320,14 +326,14 @@ func toAnthropicToolResultMessage(msgs []ais.Message) (anthropicMessage, error) 
 
 	data, err := json.Marshal(blocks)
 	if err != nil {
-		return anthropicMessage{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
+		return MessagesMessage{}, fmt.Errorf("aimodel: marshal tool result: %w", err)
 	}
 
-	return anthropicMessage{Role: "user", Content: data}, nil
+	return MessagesMessage{Role: "user", Content: data}, nil
 }
 
-func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
-	am := anthropicMessage{
+func toAnthropicMessage(m ais.Message) (MessagesMessage, error) {
+	am := MessagesMessage{
 		Role: string(m.Role),
 	}
 
@@ -338,15 +344,15 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 	cacheBreakpoint, err := messageCacheBreakpoint(&m)
 	if err != nil {
-		return anthropicMessage{}, err
+		return MessagesMessage{}, err
 	}
 
 	// Assistant messages with thinking, tool calls, or both require content-block format.
 	if m.Role == ais.RoleAssistant && (m.Thinking != "" || len(m.ToolCalls) > 0) {
-		var blocks []anthropicContentBlock
+		var blocks []ContentBlock
 
 		if m.Thinking != "" {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type:     "thinking",
 				Thinking: m.Thinking,
 			})
@@ -354,14 +360,14 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 		text := m.Content.Text()
 		if text != "" {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type: "text",
 				Text: text,
 			})
 		}
 
 		for _, tc := range m.ToolCalls {
-			blocks = append(blocks, anthropicContentBlock{
+			blocks = append(blocks, ContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
@@ -375,7 +381,7 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 		data, err := json.Marshal(blocks)
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal assistant content: %w", err)
+			return MessagesMessage{}, fmt.Errorf("aimodel: marshal assistant content: %w", err)
 		}
 
 		am.Content = data
@@ -385,12 +391,12 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 	// Multimodal content with parts.
 	if parts := m.Content.Parts(); len(parts) > 0 {
-		var blocks []anthropicContentBlock
+		var blocks []ContentBlock
 
 		for _, p := range parts {
 			switch p.Type {
 			case "text":
-				blocks = append(blocks, anthropicContentBlock{
+				blocks = append(blocks, ContentBlock{
 					Type: "text",
 					Text: p.Text,
 				})
@@ -399,16 +405,16 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 					continue
 				}
 
-				block := anthropicContentBlock{Type: "image"}
+				block := ContentBlock{Type: "image"}
 
 				if mediaType, b64Data, ok := parseDataURI(p.ImageURL.URL); ok {
-					block.Source = &anthropicContentSource{
+					block.Source = &ContentSource{
 						Type:      "base64",
 						MediaType: mediaType,
 						Data:      b64Data,
 					}
 				} else {
-					block.Source = &anthropicContentSource{
+					block.Source = &ContentSource{
 						Type: "url",
 						URL:  p.ImageURL.URL,
 					}
@@ -424,7 +430,7 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 		data, err := json.Marshal(blocks)
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
+			return MessagesMessage{}, fmt.Errorf("aimodel: marshal multimodal content: %w", err)
 		}
 
 		am.Content = data
@@ -435,14 +441,14 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 	// Plain text message. Promote to block-array form when the caller
 	// flagged CacheBreakpoint so we can attach cache_control.
 	if cacheBreakpoint {
-		block := anthropicContentBlock{
+		block := ContentBlock{
 			Type:         "text",
 			Text:         m.Content.Text(),
 			CacheControl: ephemeralCache(),
 		}
-		data, err := json.Marshal([]anthropicContentBlock{block})
+		data, err := json.Marshal([]ContentBlock{block})
 		if err != nil {
-			return anthropicMessage{}, fmt.Errorf("aimodel: marshal cached message content: %w", err)
+			return MessagesMessage{}, fmt.Errorf("aimodel: marshal cached message content: %w", err)
 		}
 		am.Content = data
 		return am, nil
@@ -450,7 +456,7 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 
 	data, err := json.Marshal(m.Content.Text())
 	if err != nil {
-		return anthropicMessage{}, fmt.Errorf("aimodel: marshal message content: %w", err)
+		return MessagesMessage{}, fmt.Errorf("aimodel: marshal message content: %w", err)
 	}
 
 	am.Content = data
@@ -458,23 +464,23 @@ func toAnthropicMessage(m ais.Message) (anthropicMessage, error) {
 	return am, nil
 }
 
-func convertToolChoice(tc any) *anthropicToolChoice {
+func convertToolChoice(tc any) *ToolChoice {
 	switch v := tc.(type) {
 	case string:
 		switch v {
 		case "auto":
-			return &anthropicToolChoice{Type: "auto"}
+			return &ToolChoice{Type: "auto"}
 		case "required":
-			return &anthropicToolChoice{Type: "any"}
+			return &ToolChoice{Type: "any"}
 		case "none":
 			// Explicit "none" forbids any tool call; an omitted tool_choice
 			// would instead let the model choose, so emit {type:"none"}.
-			return &anthropicToolChoice{Type: "none"}
+			return &ToolChoice{Type: "none"}
 		}
 	case map[string]any:
 		if fn, ok := v["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
-				return &anthropicToolChoice{Type: "tool", Name: name}
+				return &ToolChoice{Type: "tool", Name: name}
 			}
 		}
 	}

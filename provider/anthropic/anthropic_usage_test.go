@@ -41,7 +41,7 @@ func TestFromAnthropicResponse_UsageExtensions(t *testing.T) {
 		}
 	}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(body), &ar); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestFromAnthropicResponse_UsageExtensionsAbsent(t *testing.T) {
 	body := `{"id":"msg_plain","model":"claude-sonnet-4","content":[{"type":"text","text":"hi"}],
 		"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":2}}`
 
-	var ar anthropicResponse
+	var ar MessagesResponse
 	if err := json.Unmarshal([]byte(body), &ar); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -182,15 +182,15 @@ func TestUsageAdd_LeavesExtensionsAlone(t *testing.T) {
 // TestMergeAnthropicUsage verifies the merge updates exactly the fields the
 // later usage object carries and leaves every other one at the baseline.
 func TestMergeAnthropicUsage(t *testing.T) {
-	baseline := func() anthropicUsage {
-		return anthropicUsage{
+	baseline := func() MessagesUsage {
+		return MessagesUsage{
 			InputTokens:              100,
 			OutputTokens:             1,
 			CacheCreationInputTokens: 8,
 			CacheReadInputTokens:     20,
-			CacheCreation:            &anthropicCacheCreation{Ephemeral5mInputTokens: 8},
-			OutputTokensDetails:      &anthropicOutputTokensDetails{ThinkingTokens: 5},
-			ServerToolUse:            &anthropicServerToolUse{WebSearchRequests: 2},
+			CacheCreation:            &CacheCreation{Ephemeral5mInputTokens: 8},
+			OutputTokensDetails:      &OutputTokensDetails{ThinkingTokens: 5},
+			ServerToolUse:            &ServerToolUse{WebSearchRequests: 2},
 			InferenceGeo:             "us",
 			ServiceTier:              "priority",
 		}
@@ -198,7 +198,7 @@ func TestMergeAnthropicUsage(t *testing.T) {
 
 	t.Run("output tokens only preserves the rest", func(t *testing.T) {
 		got := baseline()
-		mergeAnthropicUsage(&got, &anthropicUsage{OutputTokens: 42})
+		mergeAnthropicUsage(&got, &MessagesUsage{OutputTokens: 42})
 
 		want := baseline()
 		want.OutputTokens = 42
@@ -210,14 +210,14 @@ func TestMergeAnthropicUsage(t *testing.T) {
 
 	t.Run("carried fields overwrite", func(t *testing.T) {
 		got := baseline()
-		next := anthropicUsage{
+		next := MessagesUsage{
 			InputTokens:              111,
 			OutputTokens:             42,
 			CacheCreationInputTokens: 9,
 			CacheReadInputTokens:     21,
-			CacheCreation:            &anthropicCacheCreation{Ephemeral1hInputTokens: 9},
-			OutputTokensDetails:      &anthropicOutputTokensDetails{ThinkingTokens: 30},
-			ServerToolUse:            &anthropicServerToolUse{WebSearchRequests: 4, WebFetchRequests: 1},
+			CacheCreation:            &CacheCreation{Ephemeral1hInputTokens: 9},
+			OutputTokensDetails:      &OutputTokensDetails{ThinkingTokens: 30},
+			ServerToolUse:            &ServerToolUse{WebSearchRequests: 4, WebFetchRequests: 1},
 			InferenceGeo:             "eu",
 			ServiceTier:              "standard",
 		}
@@ -231,7 +231,7 @@ func TestMergeAnthropicUsage(t *testing.T) {
 
 	t.Run("empty terminal usage changes nothing", func(t *testing.T) {
 		got := baseline()
-		mergeAnthropicUsage(&got, &anthropicUsage{})
+		mergeAnthropicUsage(&got, &MessagesUsage{})
 
 		if !reflect.DeepEqual(got, baseline()) {
 			t.Errorf("merged = %+v, want the untouched baseline", got)
@@ -270,7 +270,7 @@ func TestFromAnthropicResponse_Container(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var ar anthropicResponse
+			var ar MessagesResponse
 			if err := json.Unmarshal([]byte(tt.body), &ar); err != nil {
 				t.Fatalf("decode: %v", err)
 			}

@@ -15,6 +15,16 @@ Newest first.
 
 ---
 
+## 2026-07-22 — Public native Messages client
+
+**Official change**
+
+None. This release exposes the already-audited 2026-07-21 Messages API baseline as a public Go surface; the default protocol header remains `anthropic-version: 2023-06-01`.
+
+**Wrapper change**
+
+`provider/anthropic` now exports `MessagesRequest`, `MessagesResponse`, their content/tool/thinking/output/cache/container/usage/error types, and all Messages SSE payload types. `NewClient` returns a native `Client` with `Messages` and `MessagesStream`; these methods force the appropriate stream flag on a copy and do not run canonical translation or defaults. The canonical provider now translates directly to and from the same exported wire schema, so there is no parallel private model. Unknown native events retain their complete JSON payload. This does not add Batches, Files, Token Counting, retries, validation, or automatic beta enablement.
+
 ## 2026-07-22 — Canonical de-vendoring: Anthropic-only surfaces move to the unified extension channel
 
 **Official change**

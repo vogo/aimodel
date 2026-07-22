@@ -19,7 +19,7 @@ package anthropic
 
 import "github.com/vogo/aimodel/ais"
 
-func anthropicCanonicalUsage(u *anthropicUsage) ais.Usage {
+func anthropicCanonicalUsage(u *MessagesUsage) ais.Usage {
 	cu := ais.Usage{
 		PromptTokens:     u.totalInputTokens(),
 		CompletionTokens: u.OutputTokens,
@@ -62,7 +62,7 @@ func anthropicCanonicalUsage(u *anthropicUsage) ais.Usage {
 // actually carries are applied — a terminal event that reports just
 // output_tokens must not blank out the input, cache, geo, tier or server-tool
 // information already established.
-func mergeAnthropicUsage(base, next *anthropicUsage) {
+func mergeAnthropicUsage(base, next *MessagesUsage) {
 	if next.InputTokens != 0 {
 		base.InputTokens = next.InputTokens
 	}

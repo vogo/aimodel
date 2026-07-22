@@ -12,14 +12,18 @@ The core premise is in [../architecture.md](../architecture.md): canonical types
 ## 1. Overall structure
 
 ```
-ChatRequest ──toAnthropicRequest()──▶ anthropicRequest ──JSON──▶ POST {base}/v1/messages
+ChatRequest ──toAnthropicRequest()──▶ MessagesRequest ──JSON──▶ POST {base}/v1/messages
                                                                         │
-ChatResponse ◀─fromAnthropicResponse()── anthropicResponse ◀────────────┘   (non-streaming)
+ChatResponse ◀─fromAnthropicResponse()── MessagesResponse ◀─────────────┘   (non-streaming)
 
 Stream.Recv() ◀─anthropicRecvFunc()── SSE events (message_start / content_block_* / message_delta / …)
+
+Client.Messages() / Client.MessagesStream() ── public native wire types ──▶ POST /v1/messages
 ```
 
-**Every Anthropic type is package-private** (`anthropicRequest`, `anthropicResponse`, `anthropicContentBlock`, …) and never exposed — callers only ever face the canonical types, so protocol details cannot leak into the public API.
+The Anthropic wire schema is public and fixed to the repository's 2026-07-21 audit baseline. The canonical adapter and native `Client` share `MessagesRequest`, `MessagesResponse`, content, usage, error, and SSE payload types; no private parallel wire structs exist. Native calls bypass canonical defaults and translation, preserve the caller request, and force only `stream:false` or `stream:true` on an internal copy.
+
+The native constructor is `anthropic.NewClient(apiKey, ...ClientOption)`. Options cover base URL, custom `http.Client`, version, beta values, and user profile ID. `MessagesStream` returns events in wire order through `Recv`; `Raw` preserves unknown event payloads, and `Close` is idempotent.
 
 ## 2. Endpoint, auth & headers
 
