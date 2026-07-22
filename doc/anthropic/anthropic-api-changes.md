@@ -13,6 +13,32 @@ Newest first.
 
 ---
 
+## 2026-07-22 — Canonical de-vendoring: Anthropic-only surfaces move to the unified extension channel
+
+**Official change**
+
+None — this is a wrapper-side refactor. The wire behavior is unchanged: with no extension set, request JSON and headers are byte-for-byte identical to the previous release, and every previously observable Anthropic response detail remains reachable.
+
+**Wrapper change (breaking, compile-time)**
+
+All single-vendor canonical surfaces moved out of the canonical/root packages (now `ais`) into this package, reachable through the unified extension channel `ais.Extensions` (see [../architecture.md](../architecture.md) §2). Migration is one-to-one:
+
+| Before (canonical) | After (`provider/anthropic`) |
+|---|---|
+| `ChatRequest.AutoCache` / `AutoCacheTTL` | `anthropic.ExtendRequest(req, &anthropic.RequestExtension{AutoCache: true, AutoCacheTTL: "1h"})` |
+| `ChatRequest.Container` / `InferenceGeo` | `anthropic.RequestExtension{Container: …, InferenceGeo: …}` |
+| `Message.CacheBreakpoint` | `anthropic.ExtendMessage(&msg, &anthropic.MessageExtension{CacheBreakpoint: true})` |
+| `Message.ExtraBlocks` | `anthropic.MessageExtensionOf(&msg).ExtraBlocks` |
+| `Tool.CacheBreakpoint` / `DeferLoading` / `AllowedCallers` / `EagerInputStreaming` / `InputExamples` | `anthropic.ExtendTool(&tool, &anthropic.ToolExtension{…})` (`Tool.Strict` stays canonical — OpenAI `function.strict` / Anthropic `strict`) |
+| `Choice.StopDetails` / `StreamChunkChoice.StopDetails` (and the `StopDetails` type) | `anthropic.ChoiceExtensionOf(&choice).StopDetails` / `anthropic.ChunkChoiceExtensionOf(&chunkChoice).StopDetails` (`anthropic.StopDetails`) |
+| `ChatResponse.Container` / `StreamChunk.Container` (and `ResponseContainer`) | `anthropic.ResponseExtensionOf(resp).Container` / `anthropic.ChunkExtensionOf(chunk).Container` (`anthropic.ResponseContainer`) |
+| `Usage.CacheWriteTokens` / `CacheWrite5mTokens` / `CacheWrite1hTokens` / `ServerToolUse` / `InferenceGeo` (and `ServerToolUse`) | `anthropic.UsageExtensionOf(&usage)` (`anthropic.UsageExtension` / `anthropic.ServerToolUse`); `Usage.CacheReadTokens`, `ReasoningTokens`, `ServiceTier` stay canonical |
+| `aimodel.FinishReasonRefusal` / `FinishReasonPauseTurn` / `FinishReasonModelContextWindowExceeded` | `anthropic.FinishReasonRefusal` / `FinishReasonPauseTurn` / `FinishReasonModelContextWindowExceeded` (the open `FinishReason` string still passes the values through) |
+
+Client-level configuration is unchanged: `anthropic.Options{Beta, Version, UserProfileID}` via `aimodel.WithProviderOptions` remains the only client extension entry (the old root `WithAnthropic*` options were already removed in the provider-subpackage refactor).
+
+Contract notes: extension values are read-only once attached; `ChatRequest.Clone` copies every node's extension map; `Message.AppendDelta` merges this provider's namespace through `ais.ExtensionMerger` (copy-on-write, arrival order preserved); a wrong-typed value in the `anthropic` namespace fails `NewChatRequest` with a `*ais.ExtensionTypeError` naming the node, before any network I/O.
+
 ## 2026-07-21 — `output_config`, usage extensions, `container`/`inference_geo`, tool fields, unknown-block preservation, profile header
 
 **Official change**

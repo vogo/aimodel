@@ -82,16 +82,17 @@ func TestFromAnthropicResponse_ExtraBlocks(t *testing.T) {
 	}
 
 	// Unknown blocks are preserved, in order, with every nested field intact.
-	if len(msg.ExtraBlocks) != 2 {
-		t.Fatalf("extra blocks len = %d, want 2: %v", len(msg.ExtraBlocks), msg.ExtraBlocks)
+	blocks := extraBlocksOf(&msg)
+	if len(blocks) != 2 {
+		t.Fatalf("extra blocks len = %d, want 2: %v", len(blocks), blocks)
 	}
 
-	if !sameJSON(t, msg.ExtraBlocks[0], serverToolUse) {
-		t.Errorf("extra block 0 = %s\nwant %s", msg.ExtraBlocks[0], serverToolUse)
+	if !sameJSON(t, blocks[0], serverToolUse) {
+		t.Errorf("extra block 0 = %s\nwant %s", blocks[0], serverToolUse)
 	}
 
-	if !sameJSON(t, msg.ExtraBlocks[1], searchResult) {
-		t.Errorf("extra block 1 = %s\nwant %s", msg.ExtraBlocks[1], searchResult)
+	if !sameJSON(t, blocks[1], searchResult) {
+		t.Errorf("extra block 1 = %s\nwant %s", blocks[1], searchResult)
 	}
 }
 
@@ -116,12 +117,13 @@ func TestFromAnthropicResponse_TextBlockCitations(t *testing.T) {
 		t.Errorf("content = %q", msg.Content.Text())
 	}
 
-	if len(msg.ExtraBlocks) != 1 {
-		t.Fatalf("extra blocks len = %d, want only the cited block: %v", len(msg.ExtraBlocks), msg.ExtraBlocks)
+	blocks := extraBlocksOf(&msg)
+	if len(blocks) != 1 {
+		t.Fatalf("extra blocks len = %d, want only the cited block: %v", len(blocks), blocks)
 	}
 
-	if !sameJSON(t, msg.ExtraBlocks[0], cited) {
-		t.Errorf("extra block = %s\nwant %s", msg.ExtraBlocks[0], cited)
+	if !sameJSON(t, blocks[0], cited) {
+		t.Errorf("extra block = %s\nwant %s", blocks[0], cited)
 	}
 }
 
@@ -137,7 +139,8 @@ func TestFromAnthropicResponse_NoExtraBlocks(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if got := fromAnthropicResponse(&ar).Choices[0].Message.ExtraBlocks; got != nil {
+	msg := fromAnthropicResponse(&ar).Choices[0].Message
+	if got := extraBlocksOf(&msg); got != nil {
 		t.Errorf("extra blocks = %v, want nil", got)
 	}
 }
@@ -196,13 +199,15 @@ func TestAnthropicStream_ExtraBlocks(t *testing.T) {
 	}
 
 	want := []string{unknownStart, unknownDelta, futureDelta}
-	if len(acc.ExtraBlocks) != len(want) {
-		t.Fatalf("extra blocks len = %d, want %d: %v", len(acc.ExtraBlocks), len(want), acc.ExtraBlocks)
+
+	blocks := extraBlocksOf(&acc)
+	if len(blocks) != len(want) {
+		t.Fatalf("extra blocks len = %d, want %d: %v", len(blocks), len(want), blocks)
 	}
 
 	for i, w := range want {
-		if !sameJSON(t, acc.ExtraBlocks[i], w) {
-			t.Errorf("extra block %d = %s\nwant %s", i, acc.ExtraBlocks[i], w)
+		if !sameJSON(t, blocks[i], w) {
+			t.Errorf("extra block %d = %s\nwant %s", i, blocks[i], w)
 		}
 	}
 }
@@ -248,8 +253,8 @@ func TestAnthropicStream_KnownBlocksNoExtra(t *testing.T) {
 		}
 	}
 
-	if acc.ExtraBlocks != nil {
-		t.Errorf("extra blocks = %v, want none", acc.ExtraBlocks)
+	if got := extraBlocksOf(&acc); got != nil {
+		t.Errorf("extra blocks = %v, want none", got)
 	}
 
 	if acc.Thinking != "hmm" {
@@ -296,8 +301,8 @@ func TestAnthropicStream_ContainerAndUsageMerge(t *testing.T) {
 			t.Fatalf("Recv: %v", err)
 		}
 
-		if chunk.Container != nil {
-			containers = append(containers, chunk.Container)
+		if c := chunkContainer(chunk); c != nil {
+			containers = append(containers, c)
 		}
 
 		if chunk.Usage != nil {
@@ -329,12 +334,17 @@ func TestAnthropicStream_ContainerAndUsageMerge(t *testing.T) {
 		t.Errorf("cache_read_tokens = %d, want 20 preserved through the merge", lastUsage.CacheReadTokens)
 	}
 
-	if lastUsage.InferenceGeo != "us" || lastUsage.ServiceTier != "priority" {
-		t.Errorf("geo/tier = %q/%q, want them preserved through the merge", lastUsage.InferenceGeo, lastUsage.ServiceTier)
+	uext := UsageExtensionOf(lastUsage)
+	if uext == nil {
+		t.Fatal("usage extension missing")
 	}
 
-	if lastUsage.ServerToolUse == nil || lastUsage.ServerToolUse.WebSearchRequests != 2 {
-		t.Errorf("server_tool_use = %+v, want it preserved through the merge", lastUsage.ServerToolUse)
+	if uext.InferenceGeo != "us" || lastUsage.ServiceTier != "priority" {
+		t.Errorf("geo/tier = %q/%q, want them preserved through the merge", uext.InferenceGeo, lastUsage.ServiceTier)
+	}
+
+	if uext.ServerToolUse == nil || uext.ServerToolUse.WebSearchRequests != 2 {
+		t.Errorf("server_tool_use = %+v, want it preserved through the merge", uext.ServerToolUse)
 	}
 
 	if lastUsage.ReasoningTokens != 5 {
@@ -365,8 +375,8 @@ func TestAnthropicStream_NoContainer(t *testing.T) {
 			t.Fatalf("Recv: %v", err)
 		}
 
-		if chunk.Container != nil {
-			t.Errorf("container = %+v, want none", chunk.Container)
+		if c := chunkContainer(chunk); c != nil {
+			t.Errorf("container = %+v, want none", c)
 		}
 	}
 }

@@ -19,6 +19,7 @@ package ais
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -327,7 +328,7 @@ func TestUsageAdd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.base.Add(&tt.other)
-			if tt.base != tt.expect {
+			if !reflect.DeepEqual(tt.base, tt.expect) {
 				t.Errorf("got %+v, want %+v", tt.base, tt.expect)
 			}
 		})
@@ -541,52 +542,21 @@ func TestUsageAddWithCacheReadTokens(t *testing.T) {
 	}
 }
 
-func TestUsageAddWithCacheWriteTokens(t *testing.T) {
-	base := Usage{CacheWriteTokens: 10, CacheWrite5mTokens: 6, CacheWrite1hTokens: 4}
-	other := Usage{CacheWriteTokens: 20, CacheWrite5mTokens: 12, CacheWrite1hTokens: 8}
-	base.Add(&other)
+// TestUsageJSONCarriesNoExtensions verifies the Extensions namespace never
+// reaches canonical Usage JSON — provider usage accounting is an in-process
+// contract, not part of the wire shape.
+func TestUsageJSONCarriesNoExtensions(t *testing.T) {
+	u := Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	u.Extensions.Set("some-provider", map[string]int{"cache_write_tokens": 30})
 
-	if base.CacheWriteTokens != 30 {
-		t.Errorf("CacheWriteTokens = %d, want 30", base.CacheWriteTokens)
-	}
-	if base.CacheWrite5mTokens != 18 {
-		t.Errorf("CacheWrite5mTokens = %d, want 18", base.CacheWrite5mTokens)
-	}
-	if base.CacheWrite1hTokens != 12 {
-		t.Errorf("CacheWrite1hTokens = %d, want 12", base.CacheWrite1hTokens)
-	}
-}
-
-func TestUsageCacheWriteTokensJSONRoundTrip(t *testing.T) {
-	in := Usage{
-		PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150,
-		CacheWriteTokens: 30, CacheWrite5mTokens: 18, CacheWrite1hTokens: 12,
-	}
-	data, err := json.Marshal(in)
+	data, err := json.Marshal(u)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out Usage
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.CacheWriteTokens != 30 || out.CacheWrite5mTokens != 18 || out.CacheWrite1hTokens != 12 {
-		t.Errorf("round-trip lost cache write fields: %+v", out)
-	}
-}
 
-func TestUsageCacheWriteTokensOmittedWhenZero(t *testing.T) {
-	data, err := json.Marshal(Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	for _, k := range []string{"cache_write_tokens", "cache_write_5m_tokens", "cache_write_1h_tokens"} {
-		if _, ok := raw[k]; ok {
-			t.Errorf("%s should be omitted when zero", k)
+	for _, leak := range []string{"Extensions", "extensions", "some-provider", "cache_write_tokens"} {
+		if strings.Contains(string(data), leak) {
+			t.Errorf("usage JSON leaked %q: %s", leak, data)
 		}
 	}
 }

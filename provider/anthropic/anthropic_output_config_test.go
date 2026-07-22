@@ -128,12 +128,13 @@ func TestToAnthropicRequest_OutputConfig(t *testing.T) {
 func TestToAnthropicRequest_ContainerAndInferenceGeo(t *testing.T) {
 	base := []Message{{Role: RoleUser, Content: NewTextContent("hi")}}
 
-	set, err := toAnthropicRequest(&ChatRequest{
-		Model:        ModelAnthropicClaude4Sonnet,
-		Messages:     base,
-		Container:    "container_abc123",
-		InferenceGeo: "eu",
-	})
+	withExt := &ChatRequest{
+		Model:    ModelAnthropicClaude4Sonnet,
+		Messages: base,
+	}
+	ExtendRequest(withExt, &RequestExtension{Container: "container_abc123", InferenceGeo: "eu"})
+
+	set, err := toAnthropicRequest(withExt)
 	if err != nil {
 		t.Fatalf("toAnthropicRequest: %v", err)
 	}
@@ -182,13 +183,9 @@ func TestToAnthropicRequest_ToolExtensions(t *testing.T) {
 		Messages: []Message{{Role: RoleUser, Content: NewTextContent("hi")}},
 		Tools: []Tool{
 			{
-				Type:                "function",
-				Function:            FunctionDefinition{Name: "lookup"},
-				Strict:              &strict,
-				DeferLoading:        &deferLoading,
-				AllowedCallers:      []string{"code_execution_20260120"},
-				EagerInputStreaming: &eager,
-				InputExamples:       []any{map[string]any{"q": "weather"}},
+				Type:     "function",
+				Function: FunctionDefinition{Name: "lookup"},
+				Strict:   &strict,
 			},
 			{
 				Type:     "web_search_20260209",
@@ -196,6 +193,12 @@ func TestToAnthropicRequest_ToolExtensions(t *testing.T) {
 			},
 		},
 	}
+	ExtendTool(&req.Tools[0], &ToolExtension{
+		DeferLoading:        &deferLoading,
+		AllowedCallers:      []string{"code_execution_20260120"},
+		EagerInputStreaming: &eager,
+		InputExamples:       []any{map[string]any{"q": "weather"}},
+	})
 
 	ar, err := toAnthropicRequest(req)
 	if err != nil {
@@ -282,36 +285,24 @@ func TestToAnthropicRequest_ToolExtensionsOmitted(t *testing.T) {
 	}
 }
 
-// TestChatRequestClone_ToolSlices verifies clone() duplicates each tool's
-// slice fields, so mutating a copy cannot reach back into the original.
-func TestChatRequestClone_ToolSlices(t *testing.T) {
+// TestChatRequestClone_ToolExtensions verifies Clone() duplicates each tool's
+// extension map, so re-pointing a clone's tool extension cannot reach back
+// into the original request.
+func TestChatRequestClone_ToolExtensions(t *testing.T) {
 	orig := &ChatRequest{
 		Model: ModelAnthropicClaude4Sonnet,
 		Tools: []Tool{
-			{
-				Function:       FunctionDefinition{Name: "lookup"},
-				AllowedCallers: []string{"code_execution_20260120"},
-				InputExamples:  []any{"a"},
-			},
+			{Function: FunctionDefinition{Name: "lookup"}},
 		},
 	}
+	ExtendTool(&orig.Tools[0], &ToolExtension{AllowedCallers: []string{"code_execution_20260120"}})
 
 	c := orig.Clone()
 
-	c.Tools[0].AllowedCallers[0] = "mutated"
-	c.Tools[0].AllowedCallers = append(c.Tools[0].AllowedCallers, "extra")
-	c.Tools[0].InputExamples[0] = "b"
-	c.Tools[0].InputExamples = append(c.Tools[0].InputExamples, "c")
+	ExtendTool(&c.Tools[0], &ToolExtension{AllowedCallers: []string{"mutated"}})
 
-	if orig.Tools[0].AllowedCallers[0] != "code_execution_20260120" {
-		t.Errorf("original AllowedCallers mutated: %v", orig.Tools[0].AllowedCallers)
-	}
-
-	if len(orig.Tools[0].AllowedCallers) != 1 {
-		t.Errorf("original AllowedCallers grew: %v", orig.Tools[0].AllowedCallers)
-	}
-
-	if orig.Tools[0].InputExamples[0] != "a" || len(orig.Tools[0].InputExamples) != 1 {
-		t.Errorf("original InputExamples mutated: %v", orig.Tools[0].InputExamples)
+	got := ToolExtensionOf(&orig.Tools[0])
+	if got == nil || len(got.AllowedCallers) != 1 || got.AllowedCallers[0] != "code_execution_20260120" {
+		t.Errorf("original tool extension mutated: %+v", got)
 	}
 }

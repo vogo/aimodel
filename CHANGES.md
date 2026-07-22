@@ -23,6 +23,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
+| 2026-07-22 | [Canonical de-vendoring: Anthropic-only surfaces move to the unified extension channel (breaking; migration table inside)](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-07-21 | [`output_config`, usage extensions, `container`/`inference_geo`, tool fields, unknown-block preservation, profile header](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-07-10 | [Merge consecutive parallel `tool_result` blocks into one `user` message](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-06-02 | [Request-root automatic caching + per-TTL `cache_creation` in usage](./doc/anthropic/anthropic-api-changes.md) |

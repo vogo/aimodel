@@ -22,10 +22,10 @@ Design points:
 - **Protocol differences are absorbed by the provider's SSE decoder.** The `Stream` struct itself is protocol-agnostic: it wraps an `ais.StreamDecoder` (whose `Next()` becomes the stream's `recv`). The OpenAI provider's decoder does line-by-line `data:` parsing (`[DONE]` → `io.EOF`); the Anthropic provider's decoder does paired `event:` + `data:` parsing (`message_stop` → `io.EOF`).
 - **Concurrency safety**: `Recv` serializes on a mutex; `Close` uses `CompareAndSwap` to run exactly once and **closes the underlying reader directly** to unblock an in-flight `Recv` (`http.Response.Body.Close` is safe to call concurrently). After closing, `Recv` returns `ErrStreamClosed`.
 - **Usage capture**: any chunk carrying a `Usage` is recorded into `s.usage`; `Usage()` returns it once the stream ends.
-- **Container ID**: `StreamChunk.Container` (`*ResponseContainer`) is emitted **once**, on the Anthropic path, as soon as `message_start` is read — see §3.
+- **Container ID**: the Anthropic execution container rides the chunk's extension namespace (`anthropic.ChunkExtensionOf(chunk).Container`) and is emitted **once**, as soon as `message_start` is read — see §3.
 - **SSE line cap** `maxStreamLineSize = 1 MB` (`bufio.Scanner` buffer starts at 64 KB).
 
-`StreamChunk` mirrors `ChatResponse` for the incremental case: `{ID, Object, Created, Model, Choices []StreamChunkChoice, Usage *Usage, Container *ResponseContainer}`, with `StreamChunkChoice{Index, Delta Message, FinishReason *string, StopDetails *StopDetails}`.
+`StreamChunk` mirrors `ChatResponse` for the incremental case: `{ID, Object, Created, Model, Choices []StreamChunkChoice, Usage *Usage, Extensions}`, with `StreamChunkChoice{Index, Delta Message, FinishReason *string, Extensions}`. Provider-only stream metadata (the Anthropic container, the terminal stop details) rides the `Extensions` channel — read it through the provider's accessors ([data-model.md](./data-model.md) §3.2).
 
 ---
 
@@ -38,7 +38,7 @@ func (tc *ToolCall) Merge(delta *ToolCall)
 
 `AppendDelta` concatenates text and thinking, and merges tool calls in place by `ToolCall.Index` (growing the slice with placeholder elements when needed). `Merge` uses "non-empty overwrite" for ID / Type / Name and **string append** for `Arguments`, because tool-argument JSON is streamed in fragments.
 
-`AppendDelta` also appends `Message.ExtraBlocks` in arrival order — see §4.
+`AppendDelta` also merges each delta's provider extension namespaces through the `ais.ExtensionMerger` contract (copy-on-write; a stored value that does not implement it is replaced by the delta's). The canonical layer never interprets the values — for Anthropic that is what keeps unmodelled blocks accumulating in arrival order, see §4.
 
 ---
 
@@ -46,13 +46,13 @@ func (tc *ToolCall) Merge(delta *ToolCall)
 
 The Anthropic execution container is already known at `message_start`, but the streaming path never produces a `ChatResponse` — so if the ID only rode along with a text delta, a stream that produces only tool events (or ends immediately) would lose it entirely, and the caller would have no way to obtain the ID it needs to reuse the container next turn.
 
-`StreamChunk.Container` therefore carries it, and the parser emits a chunk holding just that field the moment `message_start` is parsed. Ordinary deltas never repeat it — it appears exactly once per stream, and not at all when the response carries no container.
+The decoder therefore emits a chunk carrying only the Anthropic response extension (`anthropic.ChunkExtensionOf(chunk).Container`) the moment `message_start` is parsed. Ordinary deltas never repeat it — it appears exactly once per stream, and not at all when the response carries no container.
 
 ---
 
 ## 4. Unmodelled content blocks (`ExtraBlocks`)
 
-`Message.ExtraBlocks []json.RawMessage` (`json:"-"`, runtime-only) preserves protocol content blocks this wrapper does not model, instead of dropping them silently. Elements are the **verbatim** response / SSE sub-objects — never decoded-then-re-marshalled, so unknown nested fields survive intact.
+`anthropic.MessageExtension.ExtraBlocks []json.RawMessage` — the Anthropic message extension, read via `anthropic.MessageExtensionOf(&msg)` — preserves native content blocks this wrapper does not model, instead of dropping them silently. Elements are the **verbatim** response / SSE sub-objects — never decoded-then-re-marshalled, so unknown nested fields survive intact.
 
 What lands there (Anthropic path):
 
@@ -64,7 +64,7 @@ What lands there (Anthropic path):
 | Streaming: any later delta on that block's index | Its original `delta` |
 | Streaming: an unknown delta type on a **known** block | Its original `delta` |
 
-The wrapper deliberately does **not** try to reassemble a complete block from the streamed start + deltas. Guessing at merge rules for a type it does not understand would corrupt the data; emitting each event's raw sub-object in arrival order is lossless and stable, at the cost of the caller understanding the increment order. `AppendDelta` appends them without parsing, merging, or rewriting, so callers reassemble them however they need.
+The wrapper deliberately does **not** try to reassemble a complete block from the streamed start + deltas. Guessing at merge rules for a type it does not understand would corrupt the data; emitting each event's raw sub-object in arrival order is lossless and stable, at the cost of the caller understanding the increment order. `MessageExtension.MergeExtension` (invoked by `AppendDelta`) concatenates them without parsing, merging, or rewriting, so callers reassemble them however they need.
 
 Regression guarantees: `signature_delta` stays ignored, and `text` / `thinking` / `tool_use` / `input_json_delta` on known blocks behave exactly as before.
 

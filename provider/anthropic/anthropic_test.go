@@ -1124,10 +1124,12 @@ func TestFromAnthropicResponseRefusalStopDetails(t *testing.T) {
 		t.Fatalf("finish_reason = %q, want %q", got, FinishReasonRefusal)
 	}
 
-	sd := cr.Choices[0].StopDetails
-	if sd == nil {
+	cext := ChoiceExtensionOf(&cr.Choices[0])
+	if cext == nil || cext.StopDetails == nil {
 		t.Fatal("StopDetails = nil, want populated")
 	}
+
+	sd := cext.StopDetails
 
 	if sd.Type != "refusal" || sd.Category != "cyber" {
 		t.Errorf("StopDetails = %+v, want type=refusal category=cyber", sd)
@@ -1147,8 +1149,8 @@ func TestFromAnthropicResponseNoStopDetails(t *testing.T) {
 	}
 
 	cr := fromAnthropicResponse(ar)
-	if cr.Choices[0].StopDetails != nil {
-		t.Errorf("StopDetails = %+v, want nil", cr.Choices[0].StopDetails)
+	if ext := ChoiceExtensionOf(&cr.Choices[0]); ext != nil {
+		t.Errorf("choice extension = %+v, want nil", ext)
 	}
 }
 
@@ -1429,7 +1431,7 @@ func TestToAnthropicRequestConsecutiveToolResultsCache(t *testing.T) {
 				},
 			},
 			{Role: RoleTool, Content: NewTextContent("a"), ToolCallID: "call_1"},
-			{Role: RoleTool, Content: NewTextContent("b"), ToolCallID: "call_2", CacheBreakpoint: true},
+			cacheMsg(Message{Role: RoleTool, Content: NewTextContent("b"), ToolCallID: "call_2"}),
 			{Role: RoleTool, Content: NewTextContent("c"), ToolCallID: "call_3"},
 		},
 	}

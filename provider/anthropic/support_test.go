@@ -18,6 +18,7 @@
 package anthropic
 
 import (
+	"encoding/json"
 	"io"
 
 	"github.com/vogo/aimodel/ais"
@@ -43,9 +44,6 @@ type (
 	Choice             = ais.Choice
 	StreamChunk        = ais.StreamChunk
 	Thinking           = ais.Thinking
-	StopDetails        = ais.StopDetails
-	ServerToolUse      = ais.ServerToolUse
-	ResponseContainer  = ais.ResponseContainer
 	Error              = ais.Error
 	APIError           = ais.APIError
 	FinishReason       = ais.FinishReason
@@ -57,12 +55,9 @@ const (
 	RoleAssistant = ais.RoleAssistant
 	RoleTool      = ais.RoleTool
 
-	FinishReasonStop                       = ais.FinishReasonStop
-	FinishReasonLength                     = ais.FinishReasonLength
-	FinishReasonToolCalls                  = ais.FinishReasonToolCalls
-	FinishReasonModelContextWindowExceeded = ais.FinishReasonModelContextWindowExceeded
-	FinishReasonRefusal                    = ais.FinishReasonRefusal
-	FinishReasonPauseTurn                  = ais.FinishReasonPauseTurn
+	FinishReasonStop      = ais.FinishReasonStop
+	FinishReasonLength    = ais.FinishReasonLength
+	FinishReasonToolCalls = ais.FinishReasonToolCalls
 
 	ReasoningEffortLow    = ais.ReasoningEffortLow
 	ReasoningEffortMedium = ais.ReasoningEffortMedium
@@ -70,10 +65,51 @@ const (
 	ReasoningEffortXHigh  = ais.ReasoningEffortXHigh
 
 	// Model constants used by the wire tests. The canonical model-name
-	// constants live in ais; these mirror the two the tests reference.
-	ModelAnthropicClaude4Opus   = "claude-opus-4-8"
-	ModelAnthropicClaude4Sonnet = "claude-sonnet-5"
+	// constants live in the root package (protocol-agnostic); these mirror
+	// the two the migrated tests reference.
+	ModelAnthropicClaude4Opus   = "claude-opus-4"
+	ModelAnthropicClaude4Sonnet = "claude-sonnet-4"
 )
+
+// cacheMsg returns m with the Anthropic cache-breakpoint extension attached,
+// keeping the migrated wire tests close to their pre-extension baseline.
+func cacheMsg(m Message) Message {
+	ExtendMessage(&m, &MessageExtension{CacheBreakpoint: true})
+
+	return m
+}
+
+// cacheTool returns t with the Anthropic cache-breakpoint extension attached.
+func cacheTool(t Tool) Tool {
+	ExtendTool(&t, &ToolExtension{CacheBreakpoint: true})
+
+	return t
+}
+
+// autoCache attaches the automatic-caching request extension to req.
+func autoCache(req *ChatRequest, ttl string) {
+	ExtendRequest(req, &RequestExtension{AutoCache: true, AutoCacheTTL: ttl})
+}
+
+// extraBlocksOf returns the unmodelled blocks preserved on a message's
+// Anthropic extension, or nil when it carries none.
+func extraBlocksOf(m *Message) []json.RawMessage {
+	if ext := MessageExtensionOf(m); ext != nil {
+		return ext.ExtraBlocks
+	}
+
+	return nil
+}
+
+// chunkContainer returns the execution container reported on a stream chunk's
+// Anthropic extension, or nil.
+func chunkContainer(c *StreamChunk) *ResponseContainer {
+	if ext := ChunkExtensionOf(c); ext != nil {
+		return ext.Container
+	}
+
+	return nil
+}
 
 var (
 	ErrEmptyResponse = ais.ErrEmptyResponse

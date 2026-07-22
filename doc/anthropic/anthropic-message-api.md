@@ -61,8 +61,10 @@ The Anthropic-specific configuration is passed as an `anthropic.Options` value t
 | `Thinking` | `thinking` (struct reused directly) |
 | `ReasoningEffort` | `output_config.effort` |
 | `ResponseFormat` (JSON-schema shape) | `output_config.format` |
-| `Container` | `container` |
-| `InferenceGeo` | `inference_geo` |
+| `anthropic.RequestExtension.Container` | `container` |
+| `anthropic.RequestExtension.InferenceGeo` | `inference_geo` |
+
+Anthropic-only request parameters arrive through the extension channel (`anthropic.ExtendRequest` / `ExtendMessage` / `ExtendTool`); a value of the wrong type in this provider's namespace fails `toAnthropicRequest` with a `*ais.ExtensionTypeError` naming the node — before any network I/O.
 
 ### 3.2 `max_tokens` (required)
 
@@ -88,7 +90,7 @@ The `system` field has two wire shapes, carried by `json.RawMessage`:
 | Condition | Shape |
 |---|---|
 | Plain text, no cache marker | String (multiple entries joined with `\n`) |
-| Contains multimodal parts, or any entry set `CacheBreakpoint` | Block array `[{type:"text",text:…}]` |
+| Contains multimodal parts, or any entry flagged via `anthropic.MessageExtension.CacheBreakpoint` | Block array `[{type:"text",text:…}]` |
 
 When a cache marker is set, `cache_control` attaches to the **last** block — Anthropic caches everything "up to and including" that block.
 
@@ -101,20 +103,20 @@ The content shape is chosen per message type:
 | `RoleTool` | `role:"user"` + `[{type:"tool_result", tool_use_id, content}]`; a missing `ToolCallID` is an error |
 | `RoleAssistant` with thinking or tool calls | Block array: `thinking` block → `text` block → one `tool_use` block each (`Input` is `Function.Arguments` verbatim as `json.RawMessage`) |
 | Contains multimodal parts | Block array: `text` → `{type:"text"}`; `image_url` → `{type:"image", source:…}` |
-| Plain text + `CacheBreakpoint` | Single-element block array (so there is a block to attach `cache_control` to) |
+| Plain text + cache breakpoint (`anthropic.MessageExtension`) | Single-element block array (so there is a block to attach `cache_control` to) |
 | Plain text | String |
 
 **Image source discrimination**: `parseDataURI` recognizes the `data:<mediaType>;base64,<data>` form → `source{type:"base64", media_type, data}`; anything else is treated as a remote URL → `source{type:"url", url}`.
 
 **Unmapped parts**: `input_audio` / `file` content blocks have no Anthropic counterpart — the `switch` simply does not match them, so they are skipped safely (no error, no empty block).
 
-In every block-array shape, `CacheBreakpoint` attaches to the **last** block.
+In every block-array shape, the cache breakpoint attaches to the **last** block.
 
 ### 3.5 Tools & `tool_choice`
 
-The base mapping is direct: `Function.Name/Description/Parameters` → `name/description/input_schema`; a true `Tool.CacheBreakpoint` attaches `cache_control` (Anthropic caches every tool definition up to and including it).
+The base mapping is direct: `Function.Name/Description/Parameters` → `name/description/input_schema`; a true `anthropic.ToolExtension.CacheBreakpoint` attaches `cache_control` (Anthropic caches every tool definition up to and including it).
 
-The tool-definition extensions are copied verbatim: `Strict` → `strict`, `DeferLoading` → `defer_loading`, `AllowedCallers` → `allowed_callers`, `EagerInputStreaming` → `eager_input_streaming`, `InputExamples` → `input_examples` (all `omitempty`).
+The canonical `Strict` maps to `strict`; the `anthropic.ToolExtension` controls are copied verbatim: `DeferLoading` → `defer_loading`, `AllowedCallers` → `allowed_callers`, `EagerInputStreaming` → `eager_input_streaming`, `InputExamples` → `input_examples` (all `omitempty`).
 
 `Tool.Type` doubles as the Anthropic tool type, but in OpenAI semantics that canonical field is `"function"` for every ordinary tool, and sending that verbatim would be rejected — so **`"function"` and empty alike are treated as Anthropic's default custom tool and not sent**. Any other value (a versioned built-in such as `web_search_20260209`) passes through with no enumeration and no version-name validation.
 
@@ -130,7 +132,7 @@ The `tool_choice` mapping and the `ParallelToolCalls` folding rules are document
 
 ### 3.7 Prompt caching
 
-Two coexisting modes — per-block breakpoints and request-root automatic caching. Both switches are `json:"-"` struct-local fields that never appear in an OpenAI-shape body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
+Two coexisting modes — per-block breakpoints (`anthropic.MessageExtension` / `ToolExtension`) and request-root automatic caching (`anthropic.RequestExtension.AutoCache` / `AutoCacheTTL`). Both ride the `Extensions` channel (`json:"-"`) and never appear in an OpenAI-shape body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
 
 ## 4. Response translation (`fromAnthropicResponse`)
 
@@ -141,13 +143,13 @@ Content blocks are aggregated into a single assistant message:
 | `thinking` | Accumulated, joined with `\n` → `Message.Thinking` |
 | `text` | Accumulated, joined with `\n` → `Message.Content` |
 | `tool_use` | Appended as `ToolCall{Index, ID, Type:"function", Function{Name, Arguments:string(Input)}}` |
-| anything else (`server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, future types) | Raw JSON appended to `Message.ExtraBlocks` |
+| anything else (`server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, future types) | Raw JSON appended to the message extension's `ExtraBlocks` (`anthropic.MessageExtensionOf(&msg)`) |
 
 A `text` block carrying `citations` contributes its text as usual **and additionally** appends its whole original block to `ExtraBlocks` — the annotations are not promoted to canonical fields, but they are not lost either.
 
 Fidelity dictates the implementation: `anthropicResponse.Content`'s element type is `anthropicResponseBlock`, which decodes the known fields **while retaining each block's original bytes** (decoding into a known struct and re-marshalling would drop unmodelled fields). That type also shadows the request-side `ResultContent` (tagged `content` too) with a `json.RawMessage` — the response-side `content` is polymorphic (an array for server-tool results, an object for code-execution results), and decoding it as a `string` would fail the entire response.
 
-Remaining fields: `ID` → `ID`; `Object` is fixed at `"chat.completion"`; `Model` passes through; `container` → `ChatResponse.Container` (`*ResponseContainer{ID, ExpiresAt}` — identical field shape, so it deserializes directly; `ExpiresAt` stays the server string, with no expiry parsing and no auto-renewal); exactly **one `Choice`** is produced (Anthropic has no `n` concept).
+Remaining fields: `ID` → `ID`; `Object` is fixed at `"chat.completion"`; `Model` passes through; `container` → the response extension (`anthropic.ResponseExtensionOf(resp).Container`, a `*ResponseContainer{ID, ExpiresAt}` — the public type's JSON tags match the wire shape, so it deserializes directly; `ExpiresAt` stays the server string, with no expiry parsing and no auto-renewal); exactly **one `Choice`** is produced (Anthropic has no `n` concept).
 
 ### 4.1 Stop-reason mapping (`mapAnthropicStopReason`)
 
@@ -156,16 +158,16 @@ Remaining fields: `ID` → `ID`; `Object` is fixed at `"chat.completion"`; `Mode
 | `end_turn`, `stop_sequence` | `stop` |
 | `max_tokens` | `length` |
 | `tool_use` | `tool_calls` |
-| `model_context_window_exceeded` | Same-named constant (**not** folded into `length` — it is a context-window overflow, not the requested `max_tokens` being hit) |
-| `refusal` | Same-named constant (streaming classifiers aborted on a potential policy violation) |
-| `pause_turn` | Same-named constant (a long-running / server-tool turn was paused; the client may replay it) |
+| `model_context_window_exceeded` | `anthropic.FinishReasonModelContextWindowExceeded` (**not** folded into `length` — it is a context-window overflow, not the requested `max_tokens` being hit) |
+| `refusal` | `anthropic.FinishReasonRefusal` (streaming classifiers aborted on a potential policy violation) |
+| `pause_turn` | `anthropic.FinishReasonPauseTurn` (a long-running / server-tool turn was paused; the client may replay it) |
 | anything else | Passed through verbatim as `FinishReason(reason)` |
 
-The last three keep Anthropic's semantics rather than being normalized into `content_filter` / `length` — deliberately, because normalizing destroys exactly the information a caller decides on (replay? switch model? change the prompt?).
+The last three keep Anthropic's semantics rather than being normalized into `content_filter` / `length` — deliberately, because normalizing destroys exactly the information a caller decides on (replay? switch model? change the prompt?). The constants are named in this package; the canonical `FinishReason` stays an open string.
 
 ### 4.2 `stop_details`
 
-`anthropicResponse.StopDetails` is declared directly as the canonical `*StopDetails` — the field shapes are identical (`type` / `category` / `explanation`), so it **deserializes with no conversion** and is attached to `Choice.StopDetails`.
+`anthropicResponse.StopDetails` is declared directly as the public `*anthropic.StopDetails` — the JSON tags match the wire shape (`type` / `category` / `explanation`), so it **deserializes with no conversion** and is attached to the choice extension (`anthropic.ChoiceExtensionOf(&choice).StopDetails`).
 
 ### 4.3 Usage mapping (`anthropicCanonicalUsage`)
 
@@ -176,16 +178,18 @@ PromptTokens       = input_tokens + cache_creation_input_tokens + cache_read_inp
 CompletionTokens   = output_tokens
 TotalTokens        = PromptTokens + CompletionTokens
 CacheReadTokens    = cache_read_input_tokens
-CacheWriteTokens   = cache_creation_input_tokens
-CacheWrite5mTokens = cache_creation.ephemeral_5m_input_tokens   (when present)
-CacheWrite1hTokens = cache_creation.ephemeral_1h_input_tokens   (when present)
 ReasoningTokens    = output_tokens_details.thinking_tokens      (when present)
-ServerToolUse      = server_tool_use{web_search_requests, web_fetch_requests}  (when present)
-InferenceGeo       = inference_geo
 ServiceTier        = service_tier
+
+anthropic.UsageExtension (attached when any member is present):
+  CacheWriteTokens   = cache_creation_input_tokens
+  CacheWrite5mTokens = cache_creation.ephemeral_5m_input_tokens   (when present)
+  CacheWrite1hTokens = cache_creation.ephemeral_1h_input_tokens   (when present)
+  ServerToolUse      = server_tool_use{web_search_requests, web_fetch_requests}  (when present)
+  InferenceGeo       = inference_geo
 ```
 
-Note that `PromptTokens` is the **total input including the cached portion** (`totalInputTokens()`); the cache read/write counts are subsets of it, surfaced separately purely for observability. `Usage.Add` accumulates every count including `ServerToolUse`, but leaves `InferenceGeo` / `ServiceTier` alone — they describe one request, so neither concatenation nor summation is meaningful.
+Note that `PromptTokens` is the **total input including the cached portion** (`totalInputTokens()`); the cache read/write counts are subsets of it, surfaced separately purely for observability. `Usage.Add` accumulates the canonical counts and leaves `ServiceTier` and the extension alone — they describe one request, so neither concatenation nor summation is meaningful. Read the extension via `anthropic.UsageExtensionOf(&usage)`.
 
 ## 5. Streaming (`provider/anthropic/stream.go`)
 
@@ -200,17 +204,17 @@ Closure state: `msgID`, `model`, `startUsage`, `blockToTool map[int]int`, `nextT
 
 | Event | Behavior |
 |---|---|
-| `message_start` | Record `msgID` / `model` / `startUsage`; **when a `container` is present, immediately emit a chunk carrying only `Container`**, otherwise emit nothing |
+| `message_start` | Record `msgID` / `model` / `startUsage`; **when a `container` is present, immediately emit a chunk carrying only the response extension** (`anthropic.ChunkExtensionOf`), otherwise emit nothing |
 | `content_block_start` (`tool_use`) | Allocate a tool index, record `blockToTool[block index] = tool index`, emit a tool-call chunk carrying `ID` / `Name` |
 | `content_block_start` (`text` / `thinking`) | Skip |
-| `content_block_start` (unknown type) | Record `unknownBlocks[block index] = true`, emit an `ExtraBlocks` chunk carrying the raw `content_block` |
-| `content_block_delta` (block index in `unknownBlocks`) | Whatever the delta's own type, emit an `ExtraBlocks` chunk carrying the raw `delta` |
+| `content_block_start` (unknown type) | Record `unknownBlocks[block index] = true`, emit a delta whose message extension carries the raw `content_block` |
+| `content_block_delta` (block index in `unknownBlocks`) | Whatever the delta's own type, emit a delta whose message extension carries the raw `delta` |
 | `content_block_delta` / `text_delta` | Emit `Delta.Content` |
 | `content_block_delta` / `thinking_delta` | Emit `Delta.Thinking` |
 | `content_block_delta` / `input_json_delta` | Look the tool index up via `blockToTool`, emit a `Function.Arguments` fragment; skip when not found |
 | `content_block_delta` / `signature_delta` | Skip |
-| `content_block_delta` (unknown delta type on a **known** block) | Emit an `ExtraBlocks` chunk carrying the raw `delta` |
-| `message_delta` | Emit the terminal chunk: `FinishReason` (via `mapAnthropicStopReason`) + `StopDetails`; when it carries `usage`, fold it into `startUsage` via `mergeAnthropicUsage` and produce the full `Usage` via `anthropicCanonicalUsage` |
+| `content_block_delta` (unknown delta type on a **known** block) | Emit a delta whose message extension carries the raw `delta` |
+| `message_delta` | Emit the terminal chunk: `FinishReason` (via `mapAnthropicStopReason`) + the choice extension's `StopDetails`; when it carries `usage`, fold it into `startUsage` via `mergeAnthropicUsage` and produce the full `Usage` via `anthropicCanonicalUsage` |
 | `message_stop` | Return `io.EOF` |
 | `error` | Return `*APIError{Type, Message}` |
 | `ping` / `content_block_stop` | Skip |
