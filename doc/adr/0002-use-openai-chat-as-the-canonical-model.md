@@ -1,7 +1,10 @@
 # ADR 0002: Use OpenAI Chat Completions as the canonical model
 
-- Status: Accepted
+- Status: **Superseded** by [ADR 0005](./0005-canonical-shared-semantics-over-provider-native-wire.md)
 - Date: 2026-07-21
+- Superseded: 2026-07-25
+
+> **This decision is no longer in force.** The text below is preserved as the record of what was decided on 2026-07-21 and why. Canonical types are no longer the OpenAI wire shape, and the OpenAI-compatible path is no longer translation-free — every provider, OpenAI included, now owns a native wire model with an explicit bidirectional canonical translation. Read [ADR 0005](./0005-canonical-shared-semantics-over-provider-native-wire.md) for the decision currently in effect.
 
 ## Context
 
@@ -22,5 +25,6 @@ Provider-only controls that must not appear on the OpenAI wire use struct-local 
 
 ## References
 
-- [Architecture §2](../architecture.md#2-canonical-representation-openai-shaped)
+- [ADR 0005 — the decision that supersedes this one](./0005-canonical-shared-semantics-over-provider-native-wire.md)
+- [Architecture §2](../architecture.md#2-canonical-representation-shared-provider-semantics)
 - [Canonical data model](../design/data-model.md)

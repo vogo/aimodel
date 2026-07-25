@@ -54,6 +54,15 @@ The canonical types in `ais` are a provider-neutral shared semantic layer. A fie
 
 Each provider owns its wire construction and response normalization. Provider-only capabilities belong to its native API. Existing provider-specific extension scenarios continue through the unified extension channel, but extensions are not a loophole for reintroducing removed canonical request fields.
 
+**Canonical sits on top of the native layer — on every path, including OpenAI.** Each provider package holds its own native wire model and public native client (`provider/openai/wire.go` + `native.go`, `provider/anthropic/wire.go` + `native.go`), and its canonical translation maps between `ais` types and *that* model. The OpenAI path is not exempt: canonical requests go through `toOpenAIRequest`, and responses and stream chunks come back through `fromOpenAIResponse` / `fromOpenAIChunk` (`provider/openai/translate.go`). This gives two clearly separated entry points:
+
+| Entry point | Types | Translation | Reaches vendor-only features |
+|---|---|---|---|
+| Unified client `aimodel.Client` | canonical `ais` in and out | canonical ↔ native at the provider boundary | Only through the `Extensions` channel where a provider defines one |
+| Native client (`openai.NewClient` / `anthropic.NewClient`) | that provider's native types end to end | none — canonical translation is bypassed | Yes, the native surface pursues full official-API coverage |
+
+Recorded in [ADR 0005](./adr/0005-canonical-shared-semantics-over-provider-native-wire.md), which supersedes ADR 0002's earlier "canonical *is* the OpenAI shape, so the OpenAI path serializes directly" decision. One consequence to keep in mind when adding fields: because both seams are hand-written, a new canonical field that is not wired into a provider's translation is dropped silently. There is deliberately no reflective field-coverage test — canonical and native are not isomorphic contracts, and several unmapped fields are intended boundaries (see the tables above and each protocol document's mapping-boundary section) — so the four-way sync in §6 is what keeps the seam honest.
+
 **Field attribution — the “≥ 2 providers” test.** This is the sole admission rule:
 
 | Situation | Approach | Example |
@@ -193,4 +202,4 @@ When an official API changes, update these in sync:
 3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md);
 4. the root `README.md` / `CLAUDE.md` **only if** the public usage surface or the agent-facing guidance changed — they link here rather than restating design.
 
-When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md).
+When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md). This is part of step 2, not optional cleanup: a change that contradicts an invariant an accepted ADR states is not synced until that ADR is superseded. Accepted ADRs are immutable, so record the new decision in a new ADR and mark the old one superseded rather than editing its decision text.

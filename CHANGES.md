@@ -11,7 +11,7 @@ Each protocol's change log is ordered newest-first, and every entry records at l
 
 For the cross-cutting design behind those changes, start at [doc/architecture.md](./doc/architecture.md).
 
-**Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/architecture.md](./doc/architecture.md) §6.
+**Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/architecture.md](./doc/architecture.md) §6. If the change contradicts an invariant an accepted ADR states, supersede that ADR too ([ADR index](./doc/adr.md)).
 
 ---
 
@@ -40,7 +40,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
-| 2026-07-22 | Public native Chat Completions client and explicit canonical translation layer; native non-streaming and streaming integration examples added |
+| 2026-07-22 | [Public native Chat Completions client and explicit canonical translation layer](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Multimodal input/output (`input_audio` / `file` parts, `modalities` / `audio`)](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Extend `ChatRequest` with common request fields (+ response `logprobs`)](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Sync `reasoning_effort` values, add `verbosity`](./doc/openai/openai-api-changes.md) |
