@@ -40,6 +40,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
+| 2026-07-26 | [Remove `ais.Usage.UnmarshalJSON` (breaking for raw-wire decoding)](./doc/openai/openai-api-changes.md) |
 | 2026-07-22 | [Public native Chat Completions client and explicit canonical translation layer](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Multimodal input/output (`input_audio` / `file` parts, `modalities` / `audio`)](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Extend `ChatRequest` with common request fields (+ response `logprobs`)](./doc/openai/openai-api-changes.md) |

@@ -131,29 +131,6 @@ func TestUsage_ExtensionNotSerialized(t *testing.T) {
 	}
 }
 
-// TestUsage_ReasoningTokensPrecedence verifies an explicit top-level
-// reasoning_tokens wins over the nested OpenAI details, matching the existing
-// cached_tokens rule that Anthropic's thinking_tokens now shares.
-func TestUsage_ReasoningTokensPrecedence(t *testing.T) {
-	var withTop Usage
-	if err := json.Unmarshal([]byte(`{"reasoning_tokens":9,"completion_tokens_details":{"reasoning_tokens":3}}`), &withTop); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if withTop.ReasoningTokens != 9 {
-		t.Errorf("reasoning_tokens = %d, want the explicit top-level 9", withTop.ReasoningTokens)
-	}
-
-	var nestedOnly Usage
-	if err := json.Unmarshal([]byte(`{"completion_tokens_details":{"reasoning_tokens":3}}`), &nestedOnly); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if nestedOnly.ReasoningTokens != 3 {
-		t.Errorf("reasoning_tokens = %d, want the nested 3", nestedOnly.ReasoningTokens)
-	}
-}
-
 // TestUsageAdd_LeavesExtensionsAlone verifies Add sums only the canonical
 // counts: the per-request tier and the provider extension stay untouched.
 func TestUsageAdd_LeavesExtensionsAlone(t *testing.T) {

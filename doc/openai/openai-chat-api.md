@@ -106,7 +106,7 @@ OpenAI puts two breakdown counts inside nested objects. The native `ChatCompleti
 
 `ServiceTier` comes from the response root, not from `usage`. The remaining native breakdown members (`prompt_tokens_details.audio_tokens`, `completion_tokens_details.audio_tokens` / `accepted_prediction_tokens` / `rejected_prediction_tokens`) have no canonical counterpart and stay readable only on the native surface.
 
-`ais.Usage` also has its own `UnmarshalJSON` that accepts the same nested shape under an **explicit top-level wins** rule (the nested value is used only when the top-level field is 0). That path is for callers decoding canonical JSON directly — the provider translation above does not go through it, since the native wire type has no top-level `cache_read_tokens` / `reasoning_tokens` to conflict with.
+This translation is the **only** place the nested shape is understood. `ais.Usage` is a plain struct decode: it carries the canonical counts and knows nothing about `prompt_tokens_details` or any other wire breakdown. Feeding a raw Chat Completions `usage` object straight into `ais.Usage` therefore yields zeroes for the cache and reasoning counts — decode it as the native `ChatCompletionUsage` instead, or let the provider do it.
 
 OpenAI has no notion of cache-write billing, so the `CacheWrite*` fields are always 0 (omitted) on this path.
 
