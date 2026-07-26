@@ -411,15 +411,13 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	// CacheReadTokens reports prompt tokens served from the provider's prompt
-	// cache (OpenAI prompt_tokens_details.cached_tokens, Anthropic
-	// cache_read_input_tokens). It is a subset of PromptTokens, surfaced
-	// separately for observability.
+	// cache. Both providers report it, and each one's translation fills this
+	// field from its own usage object. It is a subset of PromptTokens,
+	// surfaced separately for observability.
 	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
 	// ReasoningTokens reports tokens consumed by a reasoning model's internal
-	// thinking, parsed from OpenAI's completion_tokens_details.reasoning_tokens
-	// and from Anthropic's usage.output_tokens_details.thinking_tokens (an
-	// explicit top-level reasoning_tokens takes precedence over either nested
-	// source). Like the OpenAI count it is a subset of CompletionTokens.
+	// thinking, filled by each provider's translation from its own usage
+	// object. It is a subset of CompletionTokens.
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 
 	// ServiceTier reports the latency/throughput tier that served the request
@@ -432,58 +430,6 @@ type Usage struct {
 	// cross-provider consensus (e.g. anthropic.UsageExtension with the cache
 	// write totals). It describes one request: Usage.Add does not combine it.
 	Extensions Extensions `json:"-"`
-}
-
-// usageJSON is the JSON representation used for unmarshaling Usage,
-// including nested OpenAI prompt_tokens_details.
-type usageJSON struct {
-	PromptTokens            int                      `json:"prompt_tokens"`
-	CompletionTokens        int                      `json:"completion_tokens"`
-	TotalTokens             int                      `json:"total_tokens"`
-	CacheReadTokens         int                      `json:"cache_read_tokens,omitempty"`
-	ReasoningTokens         int                      `json:"reasoning_tokens,omitempty"`
-	ServiceTier             string                   `json:"service_tier,omitempty"`
-	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
-}
-
-// promptTokensDetails captures OpenAI's nested prompt token details.
-type promptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
-}
-
-// completionTokensDetails captures OpenAI's nested completion token details.
-type completionTokensDetails struct {
-	ReasoningTokens int `json:"reasoning_tokens"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler for Usage.
-// It extracts OpenAI's nested prompt_tokens_details.cached_tokens
-// into CacheReadTokens when present.
-func (u *Usage) UnmarshalJSON(data []byte) error {
-	var raw usageJSON
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	u.PromptTokens = raw.PromptTokens
-	u.CompletionTokens = raw.CompletionTokens
-	u.TotalTokens = raw.TotalTokens
-	u.CacheReadTokens = raw.CacheReadTokens
-	u.ReasoningTokens = raw.ReasoningTokens
-	u.ServiceTier = raw.ServiceTier
-
-	// Extract OpenAI's cached_tokens from nested prompt_tokens_details.
-	if u.CacheReadTokens == 0 && raw.PromptTokensDetails != nil {
-		u.CacheReadTokens = raw.PromptTokensDetails.CachedTokens
-	}
-
-	// Extract OpenAI's reasoning_tokens from nested completion_tokens_details.
-	if u.ReasoningTokens == 0 && raw.CompletionTokensDetails != nil {
-		u.ReasoningTokens = raw.CompletionTokensDetails.ReasoningTokens
-	}
-
-	return nil
 }
 
 // Add accumulates token counts from another Usage into this one. Counts are

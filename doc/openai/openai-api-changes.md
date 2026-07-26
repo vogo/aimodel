@@ -1,6 +1,6 @@
 # OpenAI Chat Completions API — Change Log
 
-> Historical record: entries below describe the API surface when each change landed. OpenAI-only audio/file, log-probability, verbosity, storage/metadata, prompt-cache routing, generation-count and request-tier members were removed from the canonical schema in July 2026; they are not current `ais` capabilities.
+> Historical record: entries below describe the API surface when each change landed. OpenAI-only audio/file, log-probability, verbosity, storage/metadata, prompt-cache routing, generation-count and request-tier members were removed from the canonical schema in July 2026; they are not current `ais` capabilities. Entries dated before 2026-07-22 also predate the native wire model and the canonical translation layer — where they describe canonical types as the OpenAI wire shape, read that as the design at the time, not as a current invariant ([ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md)).
 
 This file records **how aimodel's OpenAI wrapper tracks the official Chat Completions API**: what changed upstream, and how the wrapper followed.
 
@@ -11,11 +11,39 @@ This file records **how aimodel's OpenAI wrapper tracks the official Chat Comple
 
 **Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 
-Because the OpenAI format *is* the SDK's canonical representation, the vast majority of OpenAI-side changes show up as **field additions on `schema.go`** and touch no protocol code.
+Since 2026-07-22 the OpenAI path has its own native wire model, so an OpenAI-side change lands in `provider/openai/wire.go` first. It reaches `ais/schema.go` only when the "≥ 2 providers" attribution test passes, and then it also needs a mapping in `provider/openai/translate.go` — canonical no longer picks up OpenAI fields for free.
 
 Newest first.
 
 ---
+
+## 2026-07-26 — Remove `ais.Usage.UnmarshalJSON` (breaking for raw-wire decoding)
+
+**Official change**: none — dead-code removal following the 2026-07-22 restructuring.
+
+**Wrapper change**
+
+- Deleted `ais.Usage.UnmarshalJSON` and its private helpers `usageJSON` / `promptTokensDetails` / `completionTokensDetails` from `ais/schema.go`. `Usage` now decodes as a plain struct.
+- **Why**: after 2026-07-22 neither provider reached it. OpenAI decodes `ChatCompletionUsage` and promotes through `fromOpenAIUsage`; Anthropic decodes `MessagesUsage` and promotes through `anthropicCanonicalUsage`. The canonical method was a third, unreachable copy of the same promotion — and the only remaining place in `ais` that hard-coded a vendor wire shape (`prompt_tokens_details`, `completion_tokens_details`), which the canonical layer is not supposed to know about.
+- **Breaking**: decoding a raw provider `usage` object directly into `ais.Usage` no longer promotes the nested breakdowns — `CacheReadTokens` / `ReasoningTokens` come back 0. Decode the provider's native usage type instead, or go through the unified client. **Not affected**: canonical JSON produced by this SDK (`Usage` has no custom `MarshalJSON`, so it only ever emits the flat canonical fields, which still round-trip), and every unified-client or native-client call.
+- The "explicit top-level wins" precedence rule disappears with the method; it only ever arbitrated between a flat field and a nested one in the same document, which no provider payload contains.
+- Tests: the four nested-promotion cases in `ais/schema_test.go` and `TestUsage_ReasoningTokensPrecedence` in `provider/anthropic` (which tested canonical behavior through a test-only `Usage = ais.Usage` alias) were replaced by `TestUsageDecodesCanonicalFieldsOnly`, which pins the new boundary. Provider-side promotion stays covered by each provider's own usage tests.
+- **Field-count sentinel added**: `TestCanonicalNodeFieldCountsAreStable` (`ais/schema_sentinel_test.go`) pins the field count of the 14 canonical nodes a provider translation walks, and fails with a pointer to the translation layers when one changes. This is deliberately *not* the rejected field-coverage guard — it asserts nothing about whether a field is mapped, only that a canonical shape change cannot land without the author being sent to the seams. Leaving a field unmapped stays a legitimate outcome; it just has to be a decision. Rationale in [ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md).
+
+## 2026-07-22 — Public native Chat Completions client and explicit canonical translation layer
+
+**Official change**: none — this is a wrapper restructuring, driven by the customization principle (every vendor exposes a public, full-fidelity native API) and by the tightened canonical field-attribution rule that had just removed the OpenAI-only members from `ais`.
+
+**Wrapper change**
+
+- **Native wire model** (`provider/openai/wire.go`): independent exported types for the full Chat Completions surface — `ChatCompletionRequest` / `ChatCompletionResponse` / `ChatCompletionChunk`, `ChatCompletionMessage`, `ChatCompletionContentPart`, `ChatCompletionUsage` with its nested `PromptTokensDetails` / `CompletionTokensDetails`, tools, `StreamOptions`, `Thinking`, and the OpenAI-only members that are not canonical (log probabilities, audio/file, storage/metadata, prompt-cache routing, generation counts, request-side tier).
+- **Native client** (`provider/openai/native.go`): `openai.NewClient(apiKey, ...ClientOption)` with `WithBaseURL` / `WithHTTPClient`, `ChatCompletions` and `ChatCompletionsStream`. Native types end to end, canonical translation bypassed; default base URL `https://api.openai.com/v1`.
+- **Canonical translation** (`provider/openai/translate.go`): `toOpenAIRequest`, `fromOpenAIResponse`, `fromOpenAIChunk`, `fromOpenAIMessage`, `fromOpenAIUsage`. The unified-client path now goes canonical → native → wire instead of marshalling `ais.ChatRequest` directly, and decodes into `ChatCompletionResponse` / `ChatCompletionChunk` before normalizing back to canonical.
+- `provider.NewChatRequest` still adds the wire-only `stream_options.include_usage=true` on streaming requests; it is now set on the native request in `toOpenAIRequest`.
+- Usage promotion moved with it: `fromOpenAIUsage` reads the nested native details into `Usage.CacheReadTokens` / `ReasoningTokens`. (`ais.Usage.UnmarshalJSON` still carried a duplicate of that promotion at this point; it was removed on 2026-07-26, see the entry above.)
+- **Integration examples**: native non-streaming and streaming samples added under `integrations/`.
+- **No canonical change**: no `ais` field was added, removed, renamed or remapped, and the serialized request/response bodies are unchanged. Purely additive on the public surface (the native client and types).
+- **Architecture consequence**: this retired the "OpenAI-compatible path has no translation layer" invariant from ADR 0002. Recorded on 2026-07-25 in [ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md), which supersedes it; `doc/architecture.md` §2, `openai-chat-api.md` and `CLAUDE.md` were reconciled at the same time. The seam is hand-written on both sides and has **no field-coverage test** — see [openai-chat-api.md](./openai-chat-api.md) §7 for why, and what a canonical field addition must do instead. A field-count sentinel was added on 2026-07-26 (entry above) to make a canonical shape change impossible to miss.
 
 ## 2026-06-02 — Multimodal input/output (`input_audio` / `file` content parts, `modalities` / `audio`)
 

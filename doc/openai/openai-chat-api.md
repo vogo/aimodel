@@ -16,7 +16,17 @@ The OpenAI provider explicitly translates shared canonical fields into its indep
 ```
 ChatRequest ──toOpenAIRequest──▶ ChatCompletionRequest ──▶ POST {baseURL}/chat/completions
 ChatResponse ◀─fromOpenAIResponse─ ChatCompletionResponse ◀── response body
+StreamChunk  ◀─fromOpenAIChunk──── ChatCompletionChunk    ◀── SSE data line
 ```
+
+There is **no zero-translation path**: the canonical types are the provider-neutral shared semantic layer, not the OpenAI wire shape, so every unified-client call crosses this seam exactly as the Anthropic path crosses its own ([ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md), superseding ADR 0002).
+
+Two entry points reach this protocol:
+
+| Entry point | Types | Path |
+|---|---|---|
+| `aimodel.Client` (unified) | canonical `ais` in and out | canonical ↔ native translation, then the shared pipeline in `chat.go` |
+| `openai.Client` (native, §1.1) | `ChatCompletionRequest` / `ChatCompletionResponse` / `ChatCompletionChunk` | native types end to end; canonical translation is bypassed |
 
 New OpenAI-only parameters must be added to the provider's native surface, not `ais.ChatRequest`. Canonical admission still requires a verified mapping in at least two providers.
 
@@ -87,14 +97,16 @@ Canonical field semantics are in [../design/data-model.md](../design/data-model.
 
 ### 5.1 Nested usage fields are promoted
 
-OpenAI puts two breakdown counts inside nested objects; `Usage.UnmarshalJSON` **promotes them to the top-level canonical fields**:
+OpenAI puts two breakdown counts inside nested objects. The native `ChatCompletionUsage` keeps them nested, exactly as the wire has them, and `fromOpenAIUsage` **promotes them to the top-level canonical fields**:
 
-| OpenAI wire path | Canonical field |
+| OpenAI wire path (native `ChatCompletionUsage`) | Canonical field |
 |---|---|
 | `prompt_tokens_details.cached_tokens` | `CacheReadTokens` |
 | `completion_tokens_details.reasoning_tokens` | `ReasoningTokens` |
 
-The rule is **explicit top-level wins** — the nested value is only used when the top-level field is 0.
+`ServiceTier` comes from the response root, not from `usage`. The remaining native breakdown members (`prompt_tokens_details.audio_tokens`, `completion_tokens_details.audio_tokens` / `accepted_prediction_tokens` / `rejected_prediction_tokens`) have no canonical counterpart and stay readable only on the native surface.
+
+This translation is the **only** place the nested shape is understood. `ais.Usage` is a plain struct decode: it carries the canonical counts and knows nothing about `prompt_tokens_details` or any other wire breakdown. Feeding a raw Chat Completions `usage` object straight into `ais.Usage` therefore yields zeroes for the cache and reasoning counts — decode it as the native `ChatCompletionUsage` instead, or let the provider do it.
 
 OpenAI has no notion of cache-write billing, so the `CacheWrite*` fields are always 0 (omitted) on this path.
 
@@ -111,4 +123,8 @@ OpenAI caches prefixes automatically, with no canonical request-side control. An
 
 ## 7. Mapping boundary
 
-OpenAI-only request fields, log probabilities, audio/file payloads and generated-audio response data are intentionally absent from canonical types. Use the OpenAI native API for those capabilities. `ResponseFormat` is shared only in its JSON-schema shape; unsupported shapes do not produce an Anthropic output format.
+OpenAI-only request fields, log probabilities, audio/file payloads and generated-audio response data are intentionally absent from canonical types. Use the OpenAI native API for those capabilities — they are fully represented in `wire.go` and reachable through `openai.Client` (§1.1). `ResponseFormat` is shared only in its JSON-schema shape; unsupported shapes do not produce an Anthropic output format.
+
+Because canonical and native are deliberately **not** isomorphic, this boundary cannot be checked mechanically: a canonical field with no entry in `translate.go` may be an intended boundary or an oversight, and no test can tell them apart. There is therefore no field-*coverage* guard — when a canonical field is added, wiring it into `toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk` (or recording here why it is out of scope) is part of the change, per the four-way sync in [../architecture.md](../architecture.md) §6.
+
+What does exist is a *count* sentinel, `TestCanonicalNodeFieldCountsAreStable` in `ais/schema_sentinel_test.go`. It fails whenever a canonical node gains or loses a field and points at the translation layers. It does not judge the mapping — it just makes the omission impossible to commit without noticing. Updating the count is the last step of the change, not the first.

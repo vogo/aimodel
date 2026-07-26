@@ -587,82 +587,37 @@ func TestUsageCacheReadTokensOmittedWhenZero(t *testing.T) {
 	}
 }
 
-func TestUsageOpenAIPromptTokensDetails(t *testing.T) {
-	// OpenAI includes cached tokens in a nested prompt_tokens_details field.
+// TestUsageDecodesCanonicalFieldsOnly pins the boundary: Usage carries the
+// canonical counts only, and decoding it is a plain struct decode. Nested
+// provider-shaped breakdowns are a wire concern — each provider's translation
+// reads them from its own usage type and fills the canonical fields — so they
+// must not leak back in through canonical JSON.
+func TestUsageDecodesCanonicalFieldsOnly(t *testing.T) {
 	raw := `{
 		"prompt_tokens": 100,
-		"completion_tokens": 50,
-		"total_tokens": 150,
-		"prompt_tokens_details": {
-			"cached_tokens": 30
-		}
-	}`
-	var u Usage
-	if err := json.Unmarshal([]byte(raw), &u); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if u.CacheReadTokens != 30 {
-		t.Errorf("CacheReadTokens = %d, want 30 (from prompt_tokens_details.cached_tokens)", u.CacheReadTokens)
-	}
-}
-
-func TestUsageExplicitCacheReadTokensTakesPrecedence(t *testing.T) {
-	// When cache_read_tokens is explicitly set, prompt_tokens_details should not override it.
-	raw := `{
-		"prompt_tokens": 100,
-		"completion_tokens": 50,
-		"total_tokens": 150,
+		"completion_tokens": 80,
+		"total_tokens": 180,
 		"cache_read_tokens": 25,
+		"reasoning_tokens": 40,
 		"prompt_tokens_details": {
 			"cached_tokens": 30
+		},
+		"completion_tokens_details": {
+			"reasoning_tokens": 50
 		}
 	}`
+
 	var u Usage
 	if err := json.Unmarshal([]byte(raw), &u); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+
 	if u.CacheReadTokens != 25 {
-		t.Errorf("CacheReadTokens = %d, want 25 (explicit cache_read_tokens)", u.CacheReadTokens)
+		t.Errorf("CacheReadTokens = %d, want the canonical 25", u.CacheReadTokens)
 	}
-}
 
-func TestUsageOpenAICompletionTokensDetails(t *testing.T) {
-	// OpenAI reports reasoning model thinking cost in a nested
-	// completion_tokens_details.reasoning_tokens field.
-	raw := `{
-		"prompt_tokens": 100,
-		"completion_tokens": 80,
-		"total_tokens": 180,
-		"completion_tokens_details": {
-			"reasoning_tokens": 50
-		}
-	}`
-	var u Usage
-	if err := json.Unmarshal([]byte(raw), &u); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if u.ReasoningTokens != 50 {
-		t.Errorf("ReasoningTokens = %d, want 50 (from completion_tokens_details.reasoning_tokens)", u.ReasoningTokens)
-	}
-}
-
-func TestUsageExplicitReasoningTokensTakesPrecedence(t *testing.T) {
-	// An explicit flat reasoning_tokens overrides the nested details value.
-	raw := `{
-		"prompt_tokens": 100,
-		"completion_tokens": 80,
-		"total_tokens": 180,
-		"reasoning_tokens": 40,
-		"completion_tokens_details": {
-			"reasoning_tokens": 50
-		}
-	}`
-	var u Usage
-	if err := json.Unmarshal([]byte(raw), &u); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
 	if u.ReasoningTokens != 40 {
-		t.Errorf("ReasoningTokens = %d, want 40 (explicit reasoning_tokens)", u.ReasoningTokens)
+		t.Errorf("ReasoningTokens = %d, want the canonical 40", u.ReasoningTokens)
 	}
 }
 

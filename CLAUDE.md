@@ -26,6 +26,8 @@ Three principles arbitrate every interface decision. When a new vendor or a new 
 
 **Four-way sync**: when an official API changes, update in order — ① the vendor's native layer → ② the canonical translation → ③ the relevant `doc/` document → ④ the protocol's change log plus the `CHANGES.md` index. When a step does not apply, state so explicitly — never shortcut by writing a vendor-specific change directly into canonical. Details in [doc/architecture.md](./doc/architecture.md) §6.
 
+Step ③ includes the ADRs: if a change contradicts an invariant an accepted ADR states, the ADR is part of the sync, not an afterthought. Accepted ADRs are immutable — add a new ADR that supersedes it and update the [ADR index](./doc/adr.md), rather than rewriting the old decision.
+
 ## Build & Test Commands
 
 ```bash
@@ -57,14 +59,18 @@ go tool cover -func=coverage.out
 | Errors | [doc/design/errors.md](./doc/design/errors.md) | `ais/errors.go` |
 | Multi-model dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
 | Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/` |
-| OpenAI path (zero-translation), SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/` |
+| OpenAI native wire types, canonical translation, SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/` |
 
 ## Architecture at a glance
 
 `Client` implements the `ChatCompleter` capability and delegates to a **provider** resolved by name from a registry at construction time. The default provider (`openai.Name`) is OpenAI-compatible; `anthropic.Name` selects Anthropic. Both built-ins register themselves on import.
 
-- **openai** (default) — the canonical types *are* the OpenAI wire shape, so this path serializes directly with no translation layer.
-- **anthropic** — public native `/v1/messages` client and wire types, with bidirectional translation layered on the same types for canonical calls.
+Both providers have the same two-layer shape — a public native client over its own wire types, with canonical translation layered **on top** of it ([ADR 0005](./doc/adr/0005-canonical-shared-semantics-over-provider-native-wire.md)). No provider gets a zero-translation path; canonical is the shared semantic layer, not any vendor's wire format.
+
+- **openai** (default) — public native `/chat/completions` client and wire types (`wire.go` / `native.go`), with bidirectional canonical translation in `translate.go` (`toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk`).
+- **anthropic** — public native `/v1/messages` client and wire types, with bidirectional canonical translation on the same types.
+
+Two entry points: the unified `aimodel.Client` is canonical in / canonical out and translates at the provider boundary; a provider's native client (`openai.NewClient` / `anthropic.NewClient`) uses native types end to end, bypasses canonical translation, and is the way to reach vendor-only features.
 
 `chat.go` runs one shared pipeline (clone → default model → build → single HTTP call → parse/stream); the vendor boundary is the `ais.ChatProvider` contract, implemented per subpackage. Adding a protocol = new subpackage that calls `ais.Register` in `init`, with **zero root-package change**. New interaction forms are added as new capability interfaces, never by widening `ChatCompleter`.
 
