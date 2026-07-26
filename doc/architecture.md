@@ -61,7 +61,13 @@ Each provider owns its wire construction and response normalization. Provider-on
 | Unified client `aimodel.Client` | canonical `ais` in and out | canonical ↔ native at the provider boundary | Only through the `Extensions` channel where a provider defines one |
 | Native client (`openai.NewClient` / `anthropic.NewClient`) | that provider's native types end to end | none — canonical translation is bypassed | Yes, the native surface pursues full official-API coverage |
 
-Recorded in [ADR 0005](./adr/0005-canonical-shared-semantics-over-provider-native-wire.md), which supersedes ADR 0002's earlier "canonical *is* the OpenAI shape, so the OpenAI path serializes directly" decision. One consequence to keep in mind when adding fields: because both seams are hand-written, a new canonical field that is not wired into a provider's translation is dropped silently. There is deliberately no reflective field-coverage test — canonical and native are not isomorphic contracts, and several unmapped fields are intended boundaries (see the tables above and each protocol document's mapping-boundary section) — so the four-way sync in §6 is what keeps the seam honest.
+Recorded in [ADR 0005](./adr/0005-canonical-shared-semantics-over-provider-native-wire.md), which supersedes ADR 0002's earlier "canonical *is* the OpenAI shape, so the OpenAI path serializes directly" decision.
+
+One consequence to keep in mind when adding fields: because both seams are hand-written, a new canonical field that is not wired into a provider's translation is **dropped silently** — Go does not require a composite literal to list every field, so the omission compiles, produces a valid request body with the field simply absent, and returns 200. There is deliberately **no field-coverage test**: canonical and native are not isomorphic contracts, and several unmapped fields are intended boundaries (see the tables above and each protocol document's mapping-boundary section), so asserting full coverage would contradict the admission rule. What guards the seam instead:
+
+1. `TestCanonicalNodeFieldCountsAreStable` (`ais/schema_sentinel_test.go`) — a **count sentinel**, not a coverage check. It pins how many fields each canonical node has and fails when that changes, sending the author to the translation layers. It takes no position on whether the new field should be mapped.
+2. The four-way sync in §6 — native layer and canonical translation move together.
+3. Each protocol document's mapping-boundary section — the written record of what is intentionally *not* mapped, which is what lets a reviewer tell an intended boundary from an oversight.
 
 **Field attribution — the “≥ 2 providers” test.** This is the sole admission rule:
 
