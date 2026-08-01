@@ -32,6 +32,26 @@ var (
 	ErrNoActiveModels = errors.New("aimodel: no active models available")
 )
 
+// ErrCapabilityNotSupported reports that the client's resolved provider does
+// not implement the requested capability. Match it with errors.Is; the wrapping
+// CapabilityError names the provider and the capability.
+var ErrCapabilityNotSupported = errors.New("aimodel: capability not supported by provider")
+
+// CapabilityError says which provider was selected and which capability it does
+// not implement. It is returned before any network I/O.
+type CapabilityError struct {
+	Provider   string
+	Capability string
+}
+
+func (e *CapabilityError) Error() string {
+	return fmt.Sprintf("aimodel: provider %q does not support the %s capability", e.Provider, e.Capability)
+}
+
+func (e *CapabilityError) Unwrap() error {
+	return ErrCapabilityNotSupported
+}
+
 // APIError represents an error returned by an AI API.
 type APIError struct {
 	StatusCode int

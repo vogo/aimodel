@@ -29,7 +29,8 @@ This directory holds the design documentation. The root [README.md](../README.md
 | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: bidirectional translation, headers, SSE events |
 | [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
 | [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: provider mapping, field alignment, SSE |
-| [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI change log |
+| [openai/openai-response-api.md](./openai/openai-response-api.md) | OpenAI Responses API: dated wire baseline, items, typed SSE events, hosted tools, the native-type `Responder` capability |
+| [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI change log (Chat Completions and Responses) |
 
 ## Root documents
 
@@ -41,7 +42,8 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 | Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | `provider/openai/` |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
 
 ## Maintenance convention

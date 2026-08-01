@@ -24,12 +24,14 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 | Multi-model composition | [doc/design/compose.md](./doc/design/compose.md) |
 | Anthropic wire mapping | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 | OpenAI wire mapping | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
+| OpenAI Responses API | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) |
 
 Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
 | Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | `provider/openai/` |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
 
 ## Usage
@@ -159,6 +161,50 @@ resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
 The same `ChatCompletion` / `ChatCompletionStream` methods work for every provider — the client delegates to the resolved provider while the canonical types remain provider-neutral.
 
 Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md).
+
+### OpenAI Responses API
+
+`POST /v1/responses` is OpenAI's forward-looking interface — hosted tools, response chaining and server-side conversations live there. It is a separate capability (`aimodel.Responder`), not an extension of `ChatCompletion`, and because only OpenAI has this interaction form it uses OpenAI-native types rather than the canonical ones ([ADR 0006](./doc/adr/0006-responses-capability-on-provider-native-types.md)):
+
+```go
+import "github.com/vogo/aimodel/provider/openai"
+
+client, _ := aimodel.NewClient(
+    aimodel.WithAPIKey("sk-xxx"),
+    aimodel.WithBaseURL("https://api.openai.com/v1"),
+)
+
+resp, err := client.Responses(context.Background(), &openai.ResponsesRequest{
+    Model:        "gpt-5",
+    Instructions: "Answer in one sentence.",
+    Input:        openai.NewResponseTextInput("What changed in the Responses API?"),
+    Tools:        []openai.ResponseTool{{Type: openai.ResponseToolTypeWebSearch}},
+})
+
+fmt.Println(resp.OutputText) // aggregated from the output_text parts
+```
+
+Streaming yields one typed event at a time and ends with `io.EOF`:
+
+```go
+stream, _ := client.ResponsesStream(ctx, req)
+defer stream.Close()
+
+for {
+    event, err := stream.Recv()
+    if errors.Is(err, io.EOF) {
+        break
+    }
+    if err != nil {
+        return err
+    }
+    if event.Type == openai.ResponseEventOutputTextDelta {
+        fmt.Print(event.Delta)
+    }
+}
+```
+
+`openai.NewClient(apiKey, ...)` exposes the same two methods for callers who want the native client directly. Calling `Responses` on a client whose provider is not OpenAI returns `*ais.CapabilityError` (matching `ais.ErrCapabilityNotSupported`) without making a request. Full wire reference: [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md).
 
 ### Client Options
 

@@ -7,7 +7,7 @@
 
 ## 1. Sentinel errors
 
-`ErrNoAPIKey`, `ErrNoBaseURL`, `ErrStreamClosed`, `ErrEmptyResponse`, `ErrNoActiveModels` — match with `errors.Is`.
+`ErrNoAPIKey`, `ErrNoBaseURL`, `ErrStreamClosed`, `ErrEmptyResponse`, `ErrNoActiveModels`, `ErrCapabilityNotSupported` — match with `errors.Is`.
 
 ## 2. `APIError`
 
@@ -31,11 +31,23 @@ Two extra defences on the non-streaming OpenAI path: a **200 response whose body
 
 Errors surfaced from an SSE `error` event carry no HTTP status code (`StatusCode` is 0).
 
-## 3. `ModelError`
+## 3. `CapabilityError`
+
+```go
+type CapabilityError struct {
+    Provider, Capability string
+}
+```
+
+Returned when the client's resolved provider does not implement the capability being called — for example `Responses` on an Anthropic client. It names both sides and unwraps to `ErrCapabilityNotSupported`, so `errors.Is(err, ais.ErrCapabilityNotSupported)` is the general check and `errors.As` gets the specifics.
+
+This is a **local** failure: it is returned before any HTTP request is built, so an unsupported capability never reaches the network and never falls back to a different endpoint. See [ADR 0006](../adr/0006-responses-capability-on-provider-native-types.md).
+
+## 4. `ModelError`
 
 `{Model, Err}` — associates an error with the specific model name that produced it. Implements `Unwrap`, so `errors.Is` / `errors.As` reach the underlying error.
 
-## 4. `MultiError`
+## 5. `MultiError`
 
 The collection of errors from a multi-model attempt. It implements Go 1.20+ `Unwrap() []error`, so `errors.Is` / `errors.As` match **any** of the underlying model errors. An empty collection degrades to `ErrNoActiveModels`.
 

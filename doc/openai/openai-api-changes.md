@@ -1,12 +1,12 @@
-# OpenAI Chat Completions API — Change Log
+# OpenAI API — Change Log
 
 > Historical record: entries below describe the API surface when each change landed. OpenAI-only audio/file, log-probability, verbosity, storage/metadata, prompt-cache routing, generation-count and request-tier members were removed from the canonical schema in July 2026; they are not current `ais` capabilities. Entries dated before 2026-07-22 also predate the native wire model and the canonical translation layer — where they describe canonical types as the OpenAI wire shape, read that as the design at the time, not as a current invariant ([ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md)).
 
-This file records **how aimodel's OpenAI wrapper tracks the official Chat Completions API**: what changed upstream, and how the wrapper followed.
+This file records **how aimodel's OpenAI wrapper tracks the official OpenAI APIs**: what changed upstream, and how the wrapper followed.
 
-- **Official protocol**: OpenAI Chat Completions API (`POST /chat/completions`; no standalone version number — keyed by the endpoint)
-- **Official docs**: https://platform.openai.com/docs/api-reference/chat
-- **Implementation notes**: [openai-chat-api.md](./openai-chat-api.md)
+- **Official protocols**: Chat Completions (`POST /chat/completions`) and, since 2026-08-01, Responses (`POST /v1/responses`) — neither carries a standalone version number, both are keyed by the endpoint
+- **Official docs**: https://platform.openai.com/docs/api-reference/chat · https://platform.openai.com/docs/api-reference/responses
+- **Implementation notes**: [openai-chat-api.md](./openai-chat-api.md) · [openai-response-api.md](./openai-response-api.md)
 - **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
 **Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
@@ -16,6 +16,25 @@ Since 2026-07-22 the OpenAI path has its own native wire model, so an OpenAI-sid
 Newest first.
 
 ---
+
+## 2026-08-01 — Support the Responses API: native `/v1/responses` client and the root `Responder` capability
+
+**Official change**: OpenAI positions the Responses API (`POST /v1/responses`) as its primary interface. The Assistants API retires **2026-08-26**, and hosted tools (`web_search` / `file_search` / `code_interpreter`), `previous_response_id` chaining, server-side conversations, reasoning items with encrypted content, and the newer prompt-cache controls exist only on Responses. Chat Completions keeps working but receives no new capabilities.
+
+**Wire baseline verified 2026-08-01** — full inventory, official links and verification method in [openai-response-api.md](./openai-response-api.md).
+
+**Wrapper change**
+
+- **Native wire model** (`provider/openai/responses_wire.go`, `responses_events.go`, `responses_const.go`): `ResponsesRequest` and `Response` covering every documented field; the polymorphic `ResponseInput` (string or item array) and `ResponseMessageContent` (string or content parts); discriminated `ResponseInputItem` / `ResponseOutputItem` unions with dedicated payloads for `message`, `reasoning`, `function_call`, `function_call_output`, `web_search_call`, `file_search_call`, `code_interpreter_call` and `item_reference`; the flat `ResponseContent` part type with annotations and logprobs; `ResponseTool` with typed `function` / `web_search` / `file_search` / `code_interpreter` parameters; `ResponseUsage` with `input_tokens_details.{cached_tokens,cache_write_tokens}` and `output_tokens_details.reasoning_tokens`; the 53-type SSE event taxonomy on `ResponseStreamEvent`, listed by `ResponseStreamEventTypes()`.
+- **Forward compatibility**: an item, tool or event type outside the baseline keeps its verbatim payload on `Raw` and is re-encoded byte-for-byte. A **known** event that fails to decode is still an error, so drift on a modeled shape stays loud.
+- **Native client** (`provider/openai/responses.go`): `Client.Responses` and `Client.ResponsesStream`, both `POST {baseURL}/responses` with bearer auth, forcing the stream mode on a copy so the caller's request is never mutated. `ResponseStream.Recv` decodes the SSE event protocol (blank-line boundaries, comments, multi-line `data:`, payload `type` discriminator, no `[DONE]` sentinel), returns `io.EOF` at the end, turns an `error` event into `*HTTPError`, and closes the body exactly once on every terminal path. Non-2xx handling reuses the existing bounded reader and `*HTTPError` contract.
+- **`Response.OutputText`**: an SDK convenience tagged `json:"-"`, derived at decode time from the `output_text` parts in output order; the items themselves are untouched and it is never serialized.
+- **Root capability** (`responder.go`): `Responder` (`Responses` / `ResponsesStream`) with `*Client` implementing it. It delegates through the resolved provider using the client's API key, base URL, HTTP client and timeout. No default model, no canonical translation, no interception, no compose failover — the request's own `Model` is authoritative.
+- **Capability errors** (`ais/errors.go`): new `ErrCapabilityNotSupported` sentinel and `CapabilityError{Provider, Capability}`. A non-OpenAI provider (Anthropic today) fails locally with no network call.
+- **No canonical change**: no `ais` schema field was added, removed or remapped; `ChatCompleter`, `ais.ChatProvider`, the chat pipeline, `Stream`, interception and `composes` are untouched. `TestCanonicalNodeFieldCountsAreStable` and `ais/schema_vendor_test` are unaffected.
+- **Architecture consequence**: the unified client's public surface now uses provider types for this one capability. Recorded in [ADR 0006](../adr/0006-responses-capability-on-provider-native-types.md), which narrows [ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md)'s "canonical in, canonical out" to the chat capability; `doc/architecture.md` §2/§3.4/§5 and `CLAUDE.md` were reconciled at the same time.
+- **Tests**: offline throughout — request/response round-trip fixtures across every documented union, `httptest` non-streaming call, an SSE sweep over all 53 baseline events, typed payload dispatch, unknown-event preservation, `error` event, malformed known event, invalid JSON, oversized-line scan failure, idempotent close, and both structured and unstructured non-2xx bodies. Root tests cover delegation and the no-network capability error. Runnable native and unified examples added under `integrations/openai_tests/`.
+- **Out of scope**: canonical translation of Responses, `composes` dispatch, `GET`/`DELETE`/cancel on `/v1/responses`, conversation-resource CRUD, background-response polling, and the Assistants and Realtime APIs.
 
 ## 2026-07-26 — Remove `ais.Usage.UnmarshalJSON` (breaking for raw-wire decoding)
 
