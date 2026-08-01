@@ -15,6 +15,7 @@ The decisions behind this architecture are recorded in the [ADR index](./adr.md)
 | Sentinel errors, `APIError`, `MultiError` | [design/errors.md](./design/errors.md) |
 | Multi-model dispatch strategies and health tracking | [design/compose.md](./design/compose.md) |
 | Per-protocol wire mapping (implemented in `provider/anthropic` · `provider/openai`) | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) · [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
+| OpenAI Responses API (`Responder` capability, native types, no canonical translation) | [openai/openai-response-api.md](./openai/openai-response-api.md) |
 
 ---
 
@@ -58,10 +59,12 @@ Each provider owns its wire construction and response normalization. Provider-on
 
 | Entry point | Types | Translation | Reaches vendor-only features |
 |---|---|---|---|
-| Unified client `aimodel.Client` | canonical `ais` in and out | canonical ↔ native at the provider boundary | Only through the `Extensions` channel where a provider defines one |
+| Unified client `aimodel.Client`, **chat capability** | canonical `ais` in and out | canonical ↔ native at the provider boundary | Only through the `Extensions` channel where a provider defines one |
 | Native client (`openai.NewClient` / `anthropic.NewClient`) | that provider's native types end to end | none — canonical translation is bypassed | Yes, the native surface pursues full official-API coverage |
 
 Recorded in [ADR 0005](./adr/0005-canonical-shared-semantics-over-provider-native-wire.md), which supersedes ADR 0002's earlier "canonical *is* the OpenAI shape, so the OpenAI path serializes directly" decision.
+
+**Single-vendor interaction forms do not get a canonical shape.** The attribution rule cuts both ways: a whole *interaction form* only one provider has cannot be canonicalized either, because there is no second mapping to generalize from. Such a form is added as its own capability interface on the unified client, speaking that provider's native types, with **nothing** entering `ais`. Today that is the OpenAI Responses API: `aimodel.Responder` (`Responses` / `ResponsesStream`) takes and returns `provider/openai` types, and a client whose resolved provider lacks the capability returns `*ais.CapabilityError` (matching `ais.ErrCapabilityNotSupported`) before any network I/O. This is the documented exception to the "unified client is canonical in, canonical out" row above, recorded in [ADR 0006](./adr/0006-responses-capability-on-provider-native-types.md); it narrows ADR 0005 to the chat capability and leaves the rest of it in force. When a second provider ships an equivalent form, its shared semantics can be promoted into `ais` under the two-provider rule — through a new ADR, not by widening this one. Wire details: [openai/openai-response-api.md](./openai/openai-response-api.md).
 
 One consequence to keep in mind when adding fields: because both seams are hand-written, a new canonical field that is not wired into a provider's translation is **dropped silently** — Go does not require a composite literal to list every field, so the omission compiles, produces a valid request body with the field simply absent, and returns 200. There is deliberately **no field-coverage test**: canonical and native are not isomorphic contracts, and several unmapped fields are intended boundaries (see the tables above and each protocol document's mapping-boundary section), so asserting full coverage would contradict the admission rule. What guards the seam instead:
 
@@ -163,6 +166,17 @@ type ChatCompleter interface {
 }
 ```
 
+`Client` also implements `Responder`, the OpenAI Responses capability. It is the worked example of the rule: a second interaction form arrived and got its own interface rather than extra methods on `ChatCompleter`. Because only one provider has that form, it speaks native types (§2 and [ADR 0006](./adr/0006-responses-capability-on-provider-native-types.md)):
+
+```go
+type Responder interface {
+    Responses(ctx context.Context, req *openai.ResponsesRequest) (*openai.Response, error)
+    ResponsesStream(ctx context.Context, req *openai.ResponsesRequest) (*openai.ResponseStream, error)
+}
+```
+
+`Responder` does not go through the shared chat pipeline below and is not part of `ais.ChatProvider`: the client type-asserts the resolved provider to an internal Responses method set and hands it the configured API key, base URL, HTTP client and timeout. Providers without that method set — Anthropic today — fail locally with `*ais.CapabilityError`. The request's own `Model` stays authoritative there (no canonical default model), and neither interception nor `composes` failover applies.
+
 `chat.go` runs one shared execution pipeline for both paths and delegates the vendor-specific steps to the resolved `ais.ChatProvider`:
 
 1. `req.Clone()` — deep-copy the request so the SDK's own rewrites (`Stream`, default model) never mutate the caller's object ([design/data-model.md](./design/data-model.md) §1.10);
@@ -192,9 +206,9 @@ Plain string constants covering commonly used model names across OpenAI, DeepSee
 
 | Path | Contents |
 |---|---|
-| `ais/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
-| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types come from the `ais` package |
-| `provider/openai/` | OpenAI-compatible provider: public native wire types/client, bidirectional canonical translation, error parsing and SSE decoder. Registers `openai.Name` on import |
+| `ais/` | Vendor-neutral foundation: canonical schema (`schema.go`), error model incl. `CapabilityError` (`errors.go`), the provider contract (`provider.go`), and the registry (`registry.go`). No vendor dependencies |
+| Root package `aimodel` | `Client` facade + options (`client.go`), the shared execution pipeline and `ChatCompleter` capability interface (`chat.go`), the `Responder` capability (`responder.go`), `Stream` / interception (`stream.go` / `intercept.go`), model constants (`model.go`), env helpers (`util.go`). Canonical types come from the `ais` package; `responder.go` is the one place the root's public surface uses provider types ([ADR 0006](./adr/0006-responses-capability-on-provider-native-types.md)) |
+| `provider/openai/` | OpenAI-compatible provider: public native wire types/client for Chat Completions with bidirectional canonical translation, plus the native Responses surface (`responses*.go`, no canonical translation). Error parsing and SSE decoders. Registers `openai.Name` on import |
 | `provider/anthropic/` | Anthropic provider: native wire types, bidirectional translation, headers, SSE decoder, `anthropic.Options`, and the public extension surface (`extension.go`). Registers `anthropic.Name` on import |
 | `composes/` | Multi-model dispatch strategies and health tracking (depends only on the root capability interface) |
 | `examples/` / `integrations/` | Usage examples and integration tests |

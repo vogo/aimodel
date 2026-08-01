@@ -4,7 +4,8 @@ This file is the **index** of aimodel's sync status against the official API pro
 
 | Protocol | Official docs | Change log | Implementation notes |
 |---|---|---|---|
-| OpenAI (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [doc/openai/openai-api-changes.md](./doc/openai/openai-api-changes.md) | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [doc/openai/openai-api-changes.md](./doc/openai/openai-api-changes.md) | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [doc/openai/openai-api-changes.md](./doc/openai/openai-api-changes.md) | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [doc/anthropic/anthropic-api-changes.md](./doc/anthropic/anthropic-api-changes.md) | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 
 Each protocol's change log is ordered newest-first, and every entry records at least: the date, the official change, and the wrapper change summary.
@@ -36,10 +37,11 @@ Both protocols merged, newest first. Follow a link for the full entry.
 | 2026-06-02 | [Preserve mid-conversation `system` messages](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-06-02 | [Baseline](./doc/anthropic/anthropic-api-changes.md) |
 
-### OpenAI Chat Completions API
+### OpenAI (Chat Completions and Responses)
 
 | Date | Change |
 |---|---|
+| 2026-08-01 | [Support the Responses API: native `/v1/responses` client and the root `Responder` capability](./doc/openai/openai-api-changes.md) |
 | 2026-07-26 | [Remove `ais.Usage.UnmarshalJSON` (breaking for raw-wire decoding)](./doc/openai/openai-api-changes.md) |
 | 2026-07-22 | [Public native Chat Completions client and explicit canonical translation layer](./doc/openai/openai-api-changes.md) |
 | 2026-06-02 | [Multimodal input/output (`input_audio` / `file` parts, `modalities` / `audio`)](./doc/openai/openai-api-changes.md) |

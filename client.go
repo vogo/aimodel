@@ -40,9 +40,10 @@ const defaultTimeout = 60 * time.Second
 // OpenAI-compatible one; select another with WithProvider (e.g.
 // WithProvider(anthropic.Name)).
 type Client struct {
-	model      string
-	httpClient *http.Client
-	provider   ais.ChatProvider
+	model        string
+	providerName string
+	httpClient   *http.Client
+	provider     ais.ChatProvider
 }
 
 // clientConfig holds the construction-time configuration mutated by Options.
@@ -184,8 +185,9 @@ func NewClient(opts ...Option) (*Client, error) {
 	httpClient.Timeout = cfg.timeout
 
 	return &Client{
-		model:      cfg.model,
-		httpClient: httpClient,
-		provider:   prov,
+		model:        cfg.model,
+		providerName: cfg.providerName,
+		httpClient:   httpClient,
+		provider:     prov,
 	}, nil
 }

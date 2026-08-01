@@ -63,6 +63,18 @@ type provider struct {
 	baseURL string
 }
 
+// NativeResponsesClient exposes this provider's credentials and base URL as a
+// native client, so the unified client can delegate the Responses capability
+// without duplicating transport configuration. It is the method set the root
+// package type-asserts to decide whether the resolved provider supports
+// Responses; providers without it report the capability as unsupported.
+//
+// Responses has no canonical form (see doc/adr/0006), so the returned client
+// speaks native types end to end.
+func (p *provider) NativeResponsesClient(httpClient *http.Client) *Client {
+	return NewClient(p.apiKey, WithBaseURL(p.baseURL), WithHTTPClient(httpClient))
+}
+
 // NewChatRequest translates shared fields into the OpenAI wire body.
 func (p *provider) NewChatRequest(ctx context.Context, req *ais.ChatRequest) (*http.Request, error) {
 	body, err := json.Marshal(toOpenAIRequest(req))
