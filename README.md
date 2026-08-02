@@ -30,9 +30,9 @@ Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
 | Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
-| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | `provider/openai/` |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [`provider/openai/`](./provider/openai/README.md) |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [`provider/openai/`](./provider/openai/README.md) |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [`provider/anthropic/`](./provider/anthropic/README.md) |
 
 ## Usage
 
