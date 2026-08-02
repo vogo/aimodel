@@ -18,6 +18,7 @@
 package aimodel_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -135,28 +136,65 @@ func TestComposesDependsOnOpenAIOnly(t *testing.T) {
 	}
 }
 
-// TestRootProviderImportsAreBuiltInsOnly verifies the root package only imports
-// the two built-in provider subpackages (for default registration) and no other
-// vendor package — no third-party vendor translation leaks into the root.
-func TestRootProviderImportsAreBuiltInsOnly(t *testing.T) {
+// TestRootPackageExportsNothing verifies the root package stays empty. It has
+// no unified client, no shared schema and no provider imports: a caller reaches
+// a protocol by importing its own package, which is what makes the two
+// protocols independent (ADR 0007).
+func TestRootPackageExportsNothing(t *testing.T) {
 	imports := packageImports(t, ".")
 
-	allowed := map[string]bool{
-		"github.com/vogo/aimodel/provider/openai":    true,
-		"github.com/vogo/aimodel/provider/anthropic": true,
-	}
-
 	for path := range imports {
-		if strings.Contains(path, "/provider/") && !allowed[path] {
-			t.Errorf("root package imports unexpected provider package %q", path)
+		if strings.HasPrefix(path, "github.com/vogo/aimodel") {
+			t.Errorf("root package must import nothing from this module, found %q", path)
 		}
 	}
 
-	if !hasProviderImport(imports, "openai") {
-		t.Error("root should import provider/openai (default provider)")
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir with ImportsOnly is sufficient here.
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		name := fi.Name()
+
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse root package: %v", err)
 	}
 
-	if !hasProviderImport(imports, "anthropic") {
-		t.Error("root should import provider/anthropic (built-in registration)")
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				if name, ok := exportedDeclName(decl); ok {
+					t.Errorf("%s declares exported %s; the root package exports nothing", path, name)
+				}
+			}
+		}
 	}
+}
+
+// exportedDeclName reports the name of an exported top-level declaration.
+func exportedDeclName(decl ast.Decl) (string, bool) {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if d.Name.IsExported() {
+			return d.Name.Name, true
+		}
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				if s.Name.IsExported() {
+					return s.Name.Name, true
+				}
+			case *ast.ValueSpec:
+				for _, name := range s.Names {
+					if name.IsExported() {
+						return name.Name, true
+					}
+				}
+			}
+		}
+	}
+
+	return "", false
 }

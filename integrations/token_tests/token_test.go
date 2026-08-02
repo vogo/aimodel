@@ -20,368 +20,255 @@ package token_tests
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
-// Test 1a: Anthropic sync response with cache_read_input_tokens.
-// Sends a chat completion request to a mock Anthropic server that returns
-// known cache_read_input_tokens and verifies CacheReadTokens is populated.
-func TestIntegration_Anthropic_CacheReadTokens_Sync(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Anthropic response with cache_read_input_tokens.
-		_, _ = w.Write([]byte(`{
-			"id": "msg_01",
-			"type": "message",
-			"role": "assistant",
-			"model": "claude-sonnet-4",
-			"content": [{"type": "text", "text": "Hello"}],
-			"stop_reason": "end_turn",
-			"usage": {
-				"input_tokens": 50,
-				"cache_creation_input_tokens": 10,
-				"cache_read_input_tokens": 30,
-				"output_tokens": 20
-			}
-		}`))
+// Token accounting end to end against mock backends: both protocols report
+// prompt-cache activity, and each one reports it in its own shape. These run
+// offline, so they gate merges; the examples that need a real key live in the
+// provider example files.
+
+// mockBackend serves one canned body for every request.
+func mockBackend(t *testing.T, contentType, body string) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		_, _ = io.WriteString(w, body)
 	}))
-	defer srv.Close()
+	t.Cleanup(server.Close)
 
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	return server
+}
 
-	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    "claude-sonnet-4",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+func TestAnthropicCacheTokensSync(t *testing.T) {
+	server := mockBackend(t, "application/json", `{
+		"id": "msg_01",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-5",
+		"content": [{"type": "text", "text": "Hello"}],
+		"stop_reason": "end_turn",
+		"usage": {
+			"input_tokens": 50,
+			"cache_creation_input_tokens": 10,
+			"cache_read_input_tokens": 30,
+			"output_tokens": 20
+		}
+	}`)
+
+	client := anthropic.NewClient("sk-test", anthropic.WithBaseURL(server.URL), anthropic.WithHTTPClient(server.Client()))
+
+	response, err := client.Messages(context.Background(), &anthropic.MessagesRequest{
+		Model:     anthropic.ModelClaudeSonnet5,
+		MaxTokens: 64,
+		Messages:  []anthropic.MessagesMessage{{Role: "user", Content: []byte(`"Hi"`)}},
 	})
 	if err != nil {
-		t.Fatalf("ChatCompletion: %v", err)
+		t.Fatalf("Messages: %v", err)
 	}
 
-	// PromptTokens should be totalInputTokens() = input_tokens + cache_creation + cache_read = 50 + 10 + 30 = 90.
-	if resp.Usage.PromptTokens != 90 {
-		t.Errorf("PromptTokens = %d, want 90", resp.Usage.PromptTokens)
+	usage := response.Usage
+	if usage.InputTokens != 50 || usage.OutputTokens != 20 {
+		t.Errorf("input/output = %d/%d, want 50/20", usage.InputTokens, usage.OutputTokens)
 	}
 
-	if resp.Usage.CompletionTokens != 20 {
-		t.Errorf("CompletionTokens = %d, want 20", resp.Usage.CompletionTokens)
-	}
-
-	// CacheReadTokens should be 30.
-	if resp.Usage.CacheReadTokens != 30 {
-		t.Errorf("CacheReadTokens = %d, want 30", resp.Usage.CacheReadTokens)
+	// Anthropic reports the cache counts alongside input_tokens rather than
+	// inside it: the billable input is the sum of all three.
+	if usage.CacheCreationInputTokens != 10 || usage.CacheReadInputTokens != 30 {
+		t.Errorf("cache write/read = %d/%d, want 10/30", usage.CacheCreationInputTokens, usage.CacheReadInputTokens)
 	}
 }
 
-// Test 1b: Anthropic streaming response with cache_read_input_tokens.
-// Sends a streaming request to a mock Anthropic server and verifies
-// CacheReadTokens is propagated through the stream usage.
-func TestIntegration_Anthropic_CacheReadTokens_Stream(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
+func TestAnthropicCacheTokensStream(t *testing.T) {
+	server := mockBackend(t, "text/event-stream",
+		"event: message_start\n"+
+			`data: {"type":"message_start","message":{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":null,"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":30,"output_tokens":0}}}`+"\n\n"+
+			"event: content_block_start\n"+
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`+"\n\n"+
+			"event: content_block_delta\n"+
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`+"\n\n"+
+			"event: message_delta\n"+
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}`+"\n\n"+
+			"event: message_stop\n"+
+			`data: {"type":"message_stop"}`+"\n\n")
 
-		events := []string{
-			`event: message_start` + "\n" +
-				`data: {"type":"message_start","message":{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":30,"output_tokens":0}}}` + "\n\n",
-			`event: content_block_start` + "\n" +
-				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n",
-			`event: content_block_delta` + "\n" +
-				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}` + "\n\n",
-			`event: content_block_stop` + "\n" +
-				`data: {"type":"content_block_stop","index":0}` + "\n\n",
-			`event: message_delta` + "\n" +
-				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}` + "\n\n",
-			`event: message_stop` + "\n" +
-				`data: {"type":"message_stop"}` + "\n\n",
-		}
+	client := anthropic.NewClient("sk-test", anthropic.WithBaseURL(server.URL), anthropic.WithHTTPClient(server.Client()))
 
-		for _, event := range events {
-			_, _ = fmt.Fprint(w, event)
-			flusher.Flush()
-		}
-	}))
-	defer srv.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    "claude-sonnet-4",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+	stream, err := client.MessagesStream(context.Background(), &anthropic.MessagesRequest{
+		Model:     anthropic.ModelClaudeSonnet5,
+		MaxTokens: 64,
+		Messages:  []anthropic.MessagesMessage{{Role: "user", Content: []byte(`"Hi"`)}},
 	})
 	if err != nil {
-		t.Fatalf("ChatCompletionStream: %v", err)
+		t.Fatalf("MessagesStream: %v", err)
 	}
+	defer func() { _ = stream.Close() }()
 
-	// Drain stream.
 	for {
-		_, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
+		_, err = stream.Recv()
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		if recvErr != nil {
-			t.Fatalf("Recv: %v", recvErr)
+
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
 		}
 	}
 
 	usage := stream.Usage()
 	if usage == nil {
-		t.Fatal("stream.Usage() = nil, want non-nil")
+		t.Fatal("stream reported no usage")
 	}
 
-	// PromptTokens = totalInputTokens() = 50 + 10 + 30 = 90.
-	if usage.PromptTokens != 90 {
-		t.Errorf("PromptTokens = %d, want 90", usage.PromptTokens)
+	// The terminal event carries only output_tokens; the cache counts from
+	// message_start must survive the merge.
+	if usage.CacheReadInputTokens != 30 || usage.CacheCreationInputTokens != 10 {
+		t.Errorf("cache read/write = %d/%d, want 30/10", usage.CacheReadInputTokens, usage.CacheCreationInputTokens)
 	}
 
-	if usage.CompletionTokens != 20 {
-		t.Errorf("CompletionTokens = %d, want 20", usage.CompletionTokens)
-	}
-
-	// CacheReadTokens should be 30.
-	if usage.CacheReadTokens != 30 {
-		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
-	}
-
-	_ = stream.Close()
-}
-
-// Test 1c: OpenAI sync response with prompt_tokens_details.cached_tokens.
-// Sends a chat completion to a mock OpenAI server returning cached_tokens
-// in the nested prompt_tokens_details and verifies CacheReadTokens.
-func TestIntegration_OpenAI_CacheReadTokens_Sync(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "chatcmpl-01",
-			"object": "chat.completion",
-			"created": 1700000000,
-			"model": "gpt-4o",
-			"choices": [{
-				"index": 0,
-				"message": {"role": "assistant", "content": "Hello"},
-				"finish_reason": "stop"
-			}],
-			"usage": {
-				"prompt_tokens": 100,
-				"completion_tokens": 50,
-				"total_tokens": 150,
-				"prompt_tokens_details": {
-					"cached_tokens": 40
-				}
-			}
-		}`))
-	}))
-	defer srv.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    "gpt-4o",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
-	})
-	if err != nil {
-		t.Fatalf("ChatCompletion: %v", err)
-	}
-
-	if resp.Usage.PromptTokens != 100 {
-		t.Errorf("PromptTokens = %d, want 100", resp.Usage.PromptTokens)
-	}
-
-	if resp.Usage.CompletionTokens != 50 {
-		t.Errorf("CompletionTokens = %d, want 50", resp.Usage.CompletionTokens)
-	}
-
-	// CacheReadTokens should be extracted from prompt_tokens_details.cached_tokens.
-	if resp.Usage.CacheReadTokens != 40 {
-		t.Errorf("CacheReadTokens = %d, want 40", resp.Usage.CacheReadTokens)
+	if usage.InputTokens != 50 || usage.OutputTokens != 20 {
+		t.Errorf("input/output = %d/%d, want 50/20", usage.InputTokens, usage.OutputTokens)
 	}
 }
 
-// Test 1d: OpenAI streaming response with prompt_tokens_details.cached_tokens.
-// Sends a streaming request to a mock OpenAI server and verifies
-// CacheReadTokens is extracted from the final usage chunk.
-func TestIntegration_OpenAI_CacheReadTokens_Stream(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
+func TestAnthropicZeroCacheTokens(t *testing.T) {
+	server := mockBackend(t, "application/json", `{
+		"id": "msg_02",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-sonnet-5",
+		"content": [{"type": "text", "text": "Hello"}],
+		"stop_reason": "end_turn",
+		"usage": {"input_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 20}
+	}`)
 
-		chunks := []string{
-			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}`,
-			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":40}}}`,
-		}
+	client := anthropic.NewClient("sk-test", anthropic.WithBaseURL(server.URL), anthropic.WithHTTPClient(server.Client()))
 
-		for _, chunk := range chunks {
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
-			flusher.Flush()
-		}
-
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		flusher.Flush()
-	}))
-	defer srv.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	stream, err := client.ChatCompletionStream(context.Background(), &ais.ChatRequest{
-		Model:    "gpt-4o",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+	response, err := client.Messages(context.Background(), &anthropic.MessagesRequest{
+		Model:     anthropic.ModelClaudeSonnet5,
+		MaxTokens: 64,
+		Messages:  []anthropic.MessagesMessage{{Role: "user", Content: []byte(`"Hi"`)}},
 	})
 	if err != nil {
-		t.Fatalf("ChatCompletionStream: %v", err)
+		t.Fatalf("Messages: %v", err)
 	}
 
-	// Drain stream.
+	if response.Usage.CacheReadInputTokens != 0 || response.Usage.CacheCreationInputTokens != 0 {
+		t.Errorf("cache counts = %+v, want zeroes", response.Usage)
+	}
+
+	if response.Usage.CacheCreation != nil {
+		t.Errorf("cache_creation = %+v, want nil when the API omits it", response.Usage.CacheCreation)
+	}
+}
+
+func TestOpenAICacheTokensSync(t *testing.T) {
+	server := mockBackend(t, "application/json", `{
+		"id": "chatcmpl-1",
+		"object": "chat.completion",
+		"model": "gpt-4o",
+		"choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+		"usage": {
+			"prompt_tokens": 100,
+			"completion_tokens": 20,
+			"total_tokens": 120,
+			"prompt_tokens_details": {"cached_tokens": 40}
+		}
+	}`)
+
+	client := openai.NewClient("sk-test", openai.WithBaseURL(server.URL), openai.WithHTTPClient(server.Client()))
+
+	response, err := client.ChatCompletions(context.Background(), &openai.ChatCompletionRequest{
+		Model:    openai.ModelGPT4o,
+		Messages: []openai.ChatCompletionMessage{{Role: openai.RoleUser, Content: openai.NewTextContent("Hi")}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletions: %v", err)
+	}
+
+	usage := response.Usage
+	if usage.PromptTokens != 100 || usage.CompletionTokens != 20 || usage.TotalTokens != 120 {
+		t.Errorf("usage totals = %+v", usage)
+	}
+
+	// OpenAI reports cached tokens as a subset of prompt_tokens, the opposite
+	// of Anthropic's alongside-the-input accounting.
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 40 {
+		t.Errorf("cached tokens = %+v, want 40", usage.PromptTokensDetails)
+	}
+}
+
+func TestOpenAICacheTokensStream(t *testing.T) {
+	server := mockBackend(t, "text/event-stream",
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"}}]}`+"\n\n"+
+			`data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n"+
+			`data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}`+"\n\n"+
+			"data: [DONE]\n\n")
+
+	client := openai.NewClient("sk-test", openai.WithBaseURL(server.URL), openai.WithHTTPClient(server.Client()))
+
+	stream, err := client.ChatCompletionsStream(context.Background(), &openai.ChatCompletionRequest{
+		Model:         openai.ModelGPT4o,
+		Messages:      []openai.ChatCompletionMessage{{Role: openai.RoleUser, Content: openai.NewTextContent("Hi")}},
+		StreamOptions: &openai.StreamOptions{IncludeUsage: new(true)},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionsStream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
 	for {
-		_, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
+		_, err = stream.Recv()
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		if recvErr != nil {
-			t.Fatalf("Recv: %v", recvErr)
+
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
 		}
 	}
 
 	usage := stream.Usage()
 	if usage == nil {
-		t.Fatal("stream.Usage() = nil, want non-nil")
+		t.Fatal("stream reported no usage")
 	}
 
-	if usage.PromptTokens != 100 {
-		t.Errorf("PromptTokens = %d, want 100", usage.PromptTokens)
+	if usage.PromptTokens != 100 || usage.CompletionTokens != 20 {
+		t.Errorf("usage totals = %+v", usage)
 	}
 
-	if usage.CompletionTokens != 50 {
-		t.Errorf("CompletionTokens = %d, want 50", usage.CompletionTokens)
-	}
-
-	// CacheReadTokens should be 40.
-	if usage.CacheReadTokens != 40 {
-		t.Errorf("CacheReadTokens = %d, want 40", usage.CacheReadTokens)
-	}
-
-	_ = stream.Close()
-}
-
-// Test 1e: OpenAI sync response without prompt_tokens_details.
-// Verifies CacheReadTokens defaults to 0 when no cached_tokens present.
-func TestIntegration_OpenAI_NoCacheTokens_Sync(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "chatcmpl-02",
-			"object": "chat.completion",
-			"created": 1700000000,
-			"model": "gpt-4o",
-			"choices": [{
-				"index": 0,
-				"message": {"role": "assistant", "content": "Hello"},
-				"finish_reason": "stop"
-			}],
-			"usage": {
-				"prompt_tokens": 100,
-				"completion_tokens": 50,
-				"total_tokens": 150
-			}
-		}`))
-	}))
-	defer srv.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    "gpt-4o",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
-	})
-	if err != nil {
-		t.Fatalf("ChatCompletion: %v", err)
-	}
-
-	// No cache tokens present, should be 0.
-	if resp.Usage.CacheReadTokens != 0 {
-		t.Errorf("CacheReadTokens = %d, want 0", resp.Usage.CacheReadTokens)
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 40 {
+		t.Errorf("cached tokens = %+v, want 40", usage.PromptTokensDetails)
 	}
 }
 
-// Test 1f: Anthropic sync response with zero cache_read_input_tokens.
-// Verifies CacheReadTokens is 0 when no caching occurred.
-func TestIntegration_Anthropic_ZeroCacheTokens_Sync(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id": "msg_02",
-			"type": "message",
-			"role": "assistant",
-			"model": "claude-sonnet-4",
-			"content": [{"type": "text", "text": "Hello"}],
-			"stop_reason": "end_turn",
-			"usage": {
-				"input_tokens": 50,
-				"cache_creation_input_tokens": 0,
-				"cache_read_input_tokens": 0,
-				"output_tokens": 20
-			}
-		}`))
-	}))
-	defer srv.Close()
+func TestOpenAINoCacheTokens(t *testing.T) {
+	server := mockBackend(t, "application/json", `{
+		"id": "chatcmpl-2",
+		"object": "chat.completion",
+		"model": "gpt-4o",
+		"choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+		"usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+	}`)
 
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("sk-test"),
-		aimodel.WithBaseURL(srv.URL),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	client := openai.NewClient("sk-test", openai.WithBaseURL(server.URL), openai.WithHTTPClient(server.Client()))
 
-	resp, err := client.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Model:    "claude-sonnet-4",
-		Messages: []ais.Message{{Role: ais.RoleUser, Content: ais.NewTextContent("Hi")}},
+	response, err := client.ChatCompletions(context.Background(), &openai.ChatCompletionRequest{
+		Model:    openai.ModelGPT4o,
+		Messages: []openai.ChatCompletionMessage{{Role: openai.RoleUser, Content: openai.NewTextContent("Hi")}},
 	})
 	if err != nil {
-		t.Fatalf("ChatCompletion: %v", err)
+		t.Fatalf("ChatCompletions: %v", err)
 	}
 
-	if resp.Usage.CacheReadTokens != 0 {
-		t.Errorf("CacheReadTokens = %d, want 0", resp.Usage.CacheReadTokens)
+	if response.Usage.PromptTokensDetails != nil {
+		t.Errorf("prompt_tokens_details = %+v, want nil when the API omits it", response.Usage.PromptTokensDetails)
 	}
 }
