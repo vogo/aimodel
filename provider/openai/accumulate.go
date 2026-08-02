@@ -66,9 +66,12 @@ func (a *chatAccumulator) fold(chunk *ChatCompletionChunk) {
 	}
 
 	// The usage-bearing chunk is terminal and carries the totals for the whole
-	// completion, so it replaces rather than adds to what came before.
+	// completion, so it replaces rather than adds to what came before. Copy the
+	// value: the accumulator owns its usage and must not hold a pointer into the
+	// caller's chunk.
 	if chunk.Usage != nil {
-		a.response.Usage = chunk.Usage
+		usage := *chunk.Usage
+		a.response.Usage = &usage
 	}
 
 	for i := range chunk.Choices {
@@ -114,7 +117,8 @@ func (a *chatAccumulator) foldChoice(chunk *ChatCompletionChunkChoice) {
 	}
 
 	if delta.Audio != nil {
-		choice.Message.Audio = delta.Audio
+		audio := *delta.Audio
+		choice.Message.Audio = &audio
 	}
 
 	for i := range delta.ToolCalls {
@@ -122,7 +126,8 @@ func (a *chatAccumulator) foldChoice(chunk *ChatCompletionChunkChoice) {
 	}
 
 	if chunk.FinishReason != nil {
-		choice.FinishReason = chunk.FinishReason
+		finishReason := *chunk.FinishReason
+		choice.FinishReason = &finishReason
 	}
 
 	foldLogprobs(choice, chunk.Logprobs)

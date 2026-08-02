@@ -76,7 +76,15 @@ type HTTPError struct {
 	// StatusCode so the accessor below can carry that name: consumers match
 	// any provider's transport error with
 	// errors.As(err, &interface{ StatusCode() int }) without importing this
-	// package. Zero for an error reported inside a 2xx body or a stream.
+	// package.
+	//
+	// Its value depends on where the error surfaced:
+	//   - a non-2xx response: that response's status;
+	//   - an error object inside a body the HTTP layer accepted: the response's
+	//     own status (e.g. 200), since the transport itself succeeded;
+	//   - an error event delivered mid-stream: zero — there is no per-event
+	//     HTTP status. Consumers classifying 4xx/5xx must treat zero as "not an
+	//     HTTP-level rejection" (see ADR 0007).
 	Status              int
 	Code, Type, Message string
 	Body                json.RawMessage

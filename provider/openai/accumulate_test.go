@@ -206,3 +206,22 @@ data: [DONE]
 		t.Errorf("final content = %q", got)
 	}
 }
+
+// TestChatAccumulatorOwnsUsage is a regression test: the accumulator must copy
+// the terminal chunk's usage rather than hold a pointer into the caller's
+// chunk, so mutating the chunk afterwards cannot change the accumulated result.
+func TestChatAccumulatorOwnsUsage(t *testing.T) {
+	chunk := &ChatCompletionChunk{
+		ID:    "chat-1",
+		Usage: &ChatCompletionUsage{TotalTokens: 5},
+	}
+
+	var acc chatAccumulator
+	acc.fold(chunk)
+
+	chunk.Usage.TotalTokens = 999
+
+	if got := acc.result().Usage.TotalTokens; got != 5 {
+		t.Fatalf("accumulated usage = %d, want 5 (must not alias the chunk)", got)
+	}
+}

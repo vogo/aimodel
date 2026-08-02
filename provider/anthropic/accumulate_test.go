@@ -218,3 +218,35 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
 		t.Error("the polymorphic response-side content must be preserved verbatim")
 	}
 }
+
+// TestMessageAccumulatorOwnsMessageStartContent is a regression test: a backend
+// that pre-populates message_start content (a slice with spare capacity) must
+// not have its event corrupted by the in-place block assembly. The accumulator
+// must work on a private copy of the Content slice.
+func TestMessageAccumulatorOwnsMessageStartContent(t *testing.T) {
+	event := &StreamEvent{
+		MessageStart: &MessageStartEvent{
+			Message: MessagesResponse{
+				ID: "msg_1",
+				Content: []ResponseContentBlock{
+					{ContentBlock: ContentBlock{Type: ContentBlockTypeText, Text: "seed"}},
+				},
+			},
+		},
+	}
+
+	var acc messageAccumulator
+	acc.fold(event)
+	acc.fold(&StreamEvent{ContentBlockDelta: &ContentBlockDeltaEvent{
+		Index: 0,
+		Delta: ContentBlockDelta{Type: DeltaTypeText, Text: " more"},
+	}})
+
+	if got := event.MessageStart.Message.Content[0].Text; got != "seed" {
+		t.Fatalf("caller's message_start content mutated to %q", got)
+	}
+
+	if got := acc.result().Content[0].Text; got != "seed more" {
+		t.Fatalf("accumulated content = %q, want %q", got, "seed more")
+	}
+}

@@ -109,6 +109,8 @@ func NewClient(apiKey string, options ...ClientOption) *Client {
 }
 
 // HTTPError reports a non-2xx Anthropic response and retains its bounded body.
+// A mid-stream `error` event is not surfaced as an HTTPError — it arrives as
+// StreamEvent.Error — so every HTTPError carries a real non-2xx Status.
 type HTTPError struct {
 	// Status is the HTTP status code. It is named Status rather than
 	// StatusCode so the accessor below can carry that name: consumers match

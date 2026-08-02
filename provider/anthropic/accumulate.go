@@ -19,6 +19,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -45,7 +46,13 @@ func (a *messageAccumulator) fold(event *StreamEvent) {
 
 	switch {
 	case event.MessageStart != nil:
-		a.response = event.MessageStart.Message
+		// Copy the message and own a private Content slice. Block assembly
+		// below writes into response.Content in place, and must never touch the
+		// backing array of the caller's message_start event — even if a backend
+		// one day pre-populates content there instead of sending an empty array.
+		msg := event.MessageStart.Message
+		msg.Content = slices.Clone(msg.Content)
+		a.response = msg
 		a.started = true
 		a.toolInput = a.toolInput[:0]
 
@@ -158,16 +165,22 @@ func mergeAnthropicUsage(base, next *MessagesUsage) {
 		base.CacheReadInputTokens = next.CacheReadInputTokens
 	}
 
+	// Copy the pointed-to values rather than adopting the pointers: the
+	// accumulator owns its usage and must not share sub-structs with the
+	// caller's terminal message_delta event.
 	if next.CacheCreation != nil {
-		base.CacheCreation = next.CacheCreation
+		cacheCreation := *next.CacheCreation
+		base.CacheCreation = &cacheCreation
 	}
 
 	if next.OutputTokensDetails != nil {
-		base.OutputTokensDetails = next.OutputTokensDetails
+		details := *next.OutputTokensDetails
+		base.OutputTokensDetails = &details
 	}
 
 	if next.ServerToolUse != nil {
-		base.ServerToolUse = next.ServerToolUse
+		serverToolUse := *next.ServerToolUse
+		base.ServerToolUse = &serverToolUse
 	}
 
 	if next.InferenceGeo != "" {
