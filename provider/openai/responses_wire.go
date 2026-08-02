@@ -24,8 +24,8 @@ import "encoding/json"
 // doc/openai/openai-response-api.md for the dated inventory and the official
 // links behind every type below.
 //
-// These types are OpenAI-only: Responses is a single-vendor interaction form,
-// so nothing here is promoted into the canonical ais schema.
+// These types are OpenAI-only, like every type in this package: a protocol is
+// expressed where it is served.
 
 // ResponsesRequest is the native OpenAI POST /v1/responses body.
 type ResponsesRequest struct {

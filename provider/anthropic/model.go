@@ -39,10 +39,12 @@ const (
 	EffortMax    = "max"
 )
 
-// Message roles are deliberately not named here. The Messages API accepts
-// "user" and "assistant" only, and the migration-era translation tests still
-// bind those identifiers to the canonical constants; naming them in this
-// package would collide. Revisit once the canonical layer is gone.
+// Message roles on a Messages request. The API accepts these two; a system
+// prompt is not a role here but the top-level MessagesRequest.System field.
+const (
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+)
 
 // Thinking types for MessagesThinking.Type.
 const (

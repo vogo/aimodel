@@ -35,9 +35,9 @@ const (
 	StreamEventTypeError             = "error"
 )
 
-// Content block discriminators (`content[].type`). Only the values the
-// canonical translation understands are listed; any other block is carried
-// through as an extra block on the canonical side.
+// Content block discriminators (`content[].type`). The field is an open
+// string: a block type this list does not name still decodes, and its verbatim
+// JSON stays on ResponseContentBlock.Raw.
 const (
 	ContentBlockTypeText             = "text"
 	ContentBlockTypeThinking         = "thinking"
@@ -57,12 +57,7 @@ const (
 	DeltaTypeInputJSON = "input_json_delta"
 )
 
-// Message roles are not restated here: Anthropic's "user" / "assistant" are
-// the same wire strings as the canonical ais.RoleUser / ais.RoleAssistant.
-
-// Native stop_reason values on a response or a message_delta event. These are
-// the wire strings; for the canonical FinishReason values the pass-through
-// reasons map to, see the FinishReason constants in extension.go.
+// stop_reason values on a response or a message_delta event.
 const (
 	StopReasonEndTurn                    = "end_turn"
 	StopReasonStopSequence               = "stop_sequence"
@@ -73,8 +68,8 @@ const (
 	StopReasonPauseTurn                  = "pause_turn"
 )
 
-// tool_choice discriminators. Note "any" (Anthropic) is what the canonical
-// "required" translates to — see convertToolChoice.
+// tool_choice discriminators. "any" requires the model to call some tool;
+// "tool" pins it to the one named in ToolChoice.Name.
 const (
 	ToolChoiceTypeAuto = "auto"
 	ToolChoiceTypeAny  = "any"

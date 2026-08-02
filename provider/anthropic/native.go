@@ -32,7 +32,7 @@ import (
 
 const maxNativeBodySize = 1 << 20
 
-// Client calls Anthropic's Messages API without canonical translation.
+// Client calls Anthropic's Messages API over its own wire types.
 type Client struct {
 	apiKey, baseURL, version, userProfileID string
 	beta                                    []string

@@ -58,9 +58,9 @@ func drainNative(t *testing.T, stream *MessageStream) {
 }
 
 // fullStream carries every block kind the accumulator handles: text, thinking
-// and a tool_use whose input arrives as partial JSON. It is the same fixture
-// the canonical stream is replayed against, so both entry points are measured
-// on identical bytes.
+// and a tool_use whose input arrives as partial JSON. It is the fixture the
+// removed canonical stream was measured against too, so the numbers below are
+// a like-for-like baseline rather than freshly invented ones.
 func fullStream(t *testing.T) string {
 	t.Helper()
 
