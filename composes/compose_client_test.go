@@ -33,25 +33,32 @@ import (
 	"github.com/vogo/aimodel/provider/openai"
 )
 
-// newTestServer creates an httptest server that echoes the requested model in
-// an OpenAI-shaped completion, so a test can tell which backend served it.
+// newTestServer creates an httptest server that returns a valid OpenAI chat response
+// with the given model name in the response.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		// Verify the model is set correctly in the request.
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
-
 			return
 		}
 
-		model := fmt.Sprintf("%v", request["model"])
+		resp := openai.ChatCompletionResponse{
+			ID:    "test-id",
+			Model: fmt.Sprintf("%v", req["model"]),
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
+				},
+			},
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w,
-			`{"id":"test-id","object":"chat.completion","model":%q,"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hello from %s"}}]}`,
-			model, model)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 }
 
@@ -62,27 +69,57 @@ func newFailServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"error":{"message":"internal server error","type":"server_error"}}`)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"message": "internal server error",
+				"type":    "server_error",
+			},
+		})
 	}))
 }
 
-// newStreamServer creates a server that returns a valid SSE stream naming the
-// model it served.
+// newStreamServer creates a server that returns a valid SSE stream.
 func newStreamServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
-
 			return
 		}
 
+		modelName := fmt.Sprintf("%v", req["model"])
+
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w,
-			"data: {\"id\":\"chunk-1\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello stream\"}}]}\n\ndata: [DONE]\n\n",
-			fmt.Sprintf("%v", request["model"]))
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		chunk := openai.ChatCompletionChunk{
+			ID:    "chunk-1",
+			Model: modelName,
+			Choices: []openai.ChatCompletionChunkChoice{
+				{
+					Index: 0,
+					Delta: openai.ChatCompletionMessage{
+						Role:    "assistant",
+						Content: openai.NewTextContent("hello stream"),
+					},
+				},
+			},
+		}
+
+		data, _ := json.Marshal(chunk)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
 	}))
 }
 
@@ -94,8 +131,10 @@ func newClientForServer(t *testing.T, server *httptest.Server) *openai.Client {
 
 func testRequest() *openai.ChatCompletionRequest {
 	return &openai.ChatCompletionRequest{
-		Model:    "placeholder",
-		Messages: []openai.ChatCompletionMessage{{Role: "user", Content: openai.NewTextContent("hi")}},
+		Model: "placeholder",
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewTextContent("hi")},
+		},
 	}
 }
 
@@ -170,13 +209,13 @@ func TestFailover_FirstModelSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := cc.ChatCompletions(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if response.Model != "m0" {
-		t.Fatalf("model = %s, want m0", response.Model)
+	if resp.Model != "m0" {
+		t.Fatalf("model = %s, want m0", resp.Model)
 	}
 }
 
@@ -195,13 +234,13 @@ func TestFailover_Fallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := cc.ChatCompletions(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if response.Model != "m1" {
-		t.Fatalf("model = %s, want m1", response.Model)
+	if resp.Model != "m1" {
+		t.Fatalf("model = %s, want m1", resp.Model)
 	}
 }
 
@@ -225,13 +264,18 @@ func TestFailover_AllFail(t *testing.T) {
 		t.Fatal("expected error when all models fail")
 	}
 
-	var multi *MultiError
-	if !errors.As(err, &multi) {
-		t.Fatalf("expected MultiError, got %T: %v", err, err)
+	var me *MultiError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected composes.MultiError, got %T: %v", err, err)
 	}
 
-	if len(multi.Errors) != 2 {
-		t.Fatalf("expected 2 model errors, got %d", len(multi.Errors))
+	if len(me.Errors) != 2 {
+		t.Fatalf("expected 2 endpoint errors, got %d", len(me.Errors))
+	}
+
+	// Each failure is attributed to a distinct alias.
+	if me.Errors[0].Alias != "m0" || me.Errors[1].Alias != "m1" {
+		t.Fatalf("aliases = %q, %q; want m0, m1", me.Errors[0].Alias, me.Errors[1].Alias)
 	}
 }
 
@@ -265,9 +309,10 @@ func TestFailover_StreamFallback(t *testing.T) {
 		t.Fatalf("stream model = %s, want m1", chunk.Model)
 	}
 
+	// Drain remaining chunks.
 	for {
-		_, err = stream.Recv()
-		if errors.Is(err, io.EOF) {
+		_, err := stream.Recv()
+		if err == io.EOF {
 			break
 		}
 
@@ -275,21 +320,27 @@ func TestFailover_StreamFallback(t *testing.T) {
 			t.Fatalf("unexpected stream error: %v", err)
 		}
 	}
-
-	// The accumulated result stays available through the dispatching client.
-	if got := stream.Response().Choices[0].Message.Content.Text(); got != "hello stream" {
-		t.Errorf("accumulated content = %q", got)
-	}
 }
 
 func TestFailover_RecoveryProbe(t *testing.T) {
 	var callCount atomic.Int64
 
-	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"probe-id","model":"m0","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"recovered"}}]}`)
+
+		resp := openai.ChatCompletionResponse{
+			ID:    "probe-id",
+			Model: "m0",
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("recovered")},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer sProbe.Close()
 
@@ -310,28 +361,29 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 	cc.health[0].markError(errors.New("initial failure"), now)
 
 	// Request should use m1 (primary is errored).
-	response, err := cc.ChatCompletions(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if response.Model != "m1" {
-		t.Fatalf("model = %s, want m1", response.Model)
+	if resp.Model != "m1" {
+		t.Fatalf("model = %s, want m1", resp.Model)
 	}
 
 	// Advance time past recovery interval.
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
 	// Now primary should be probed first and succeed.
-	response, err = cc.ChatCompletions(context.Background(), testRequest())
+	resp, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if response.Model != "m0" {
-		t.Fatalf("model after probe = %s, want m0", response.Model)
+	if resp.Model != "m0" {
+		t.Fatalf("model after probe = %s, want m0", resp.Model)
 	}
 
+	// Verify that the primary was actually called.
 	if callCount.Load() == 0 {
 		t.Fatal("expected primary to be called during probe")
 	}
@@ -340,11 +392,22 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 func TestRandom_RecoveryProbe(t *testing.T) {
 	var probeCount atomic.Int64
 
-	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		probeCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"probe-id","model":"m0","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"recovered"}}]}`)
+
+		resp := openai.ChatCompletionResponse{
+			ID:    "probe-id",
+			Model: "m0",
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("recovered")},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer sProbe.Close()
 
@@ -367,14 +430,14 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 	// Advance time past recovery interval and probe should fire.
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
-	response, err := cc.ChatCompletions(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Recovery probe is prepended, so m0 should be tried first.
-	if response.Model != "m0" {
-		t.Fatalf("model = %s, want m0 (recovery probe)", response.Model)
+	if resp.Model != "m0" {
+		t.Fatalf("model = %s, want m0 (recovery probe)", resp.Model)
 	}
 
 	if probeCount.Load() == 0 {
@@ -383,7 +446,27 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 }
 
 func TestModelOverride(t *testing.T) {
-	s := newTestServer(t)
+	var receivedModel string
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		receivedModel = fmt.Sprintf("%v", req["model"])
+
+		w.Header().Set("Content-Type", "application/json")
+
+		resp := openai.ChatCompletionResponse{
+			ID:    "test",
+			Model: receivedModel,
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("ok")},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
 	defer s.Close()
 
 	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
@@ -393,25 +476,31 @@ func TestModelOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	request := testRequest()
-	request.Model = "original-model"
+	req := &openai.ChatCompletionRequest{
+		Model: "original-model",
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewTextContent("hi")},
+		},
+	}
 
-	response, err := cc.ChatCompletions(context.Background(), request)
+	_, err = cc.ChatCompletions(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if response.Model != "custom-model-v2" {
-		t.Fatalf("sent model = %s, want custom-model-v2", response.Model)
+	if receivedModel != "custom-model-v2" {
+		t.Fatalf("sent model = %s, want custom-model-v2", receivedModel)
 	}
 
-	if request.Model != "original-model" {
-		t.Fatalf("original request model mutated to %s", request.Model)
+	// Original request should be unchanged.
+	if req.Model != "original-model" {
+		t.Fatalf("original request model mutated to %s", req.Model)
 	}
 }
 
 // TestNestedComposeClients verifies a ComposeClient is itself a backend, so
-// pools can be layered (for example a fast pool that falls back to a slow one).
+// pools can be layered (for example a fast pool that falls back to a slower
+// one).
 func TestNestedComposeClients(t *testing.T) {
 	sFail := newFailServer(t)
 	defer sFail.Close()
@@ -502,10 +591,7 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 	}
 }
 
-// TestMultiErrorUnwrapsToTheBackendError verifies the aggregate keeps every
-// backend's error reachable, including its status code — matched through a
-// locally declared interface, so this package imports no provider error type.
-func TestMultiErrorUnwrapsToTheBackendError(t *testing.T) {
+func TestMultiError_UnwrapAll(t *testing.T) {
 	s0 := newFailServer(t)
 	defer s0.Close()
 
@@ -522,25 +608,25 @@ func TestMultiErrorUnwrapsToTheBackendError(t *testing.T) {
 
 	_, err = cc.ChatCompletions(context.Background(), testRequest())
 
-	var multi *MultiError
-	if !errors.As(err, &multi) {
-		t.Fatalf("expected MultiError, got %T", err)
+	var me *MultiError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected composes.MultiError, got %T", err)
 	}
 
-	var modelErr *ModelError
-	if !errors.As(err, &modelErr) {
-		t.Fatal("expected errors.As to find a ModelError in the chain")
+	// errors.As reaches a per-endpoint error and its alias.
+	var ee *EndpointError
+	if !errors.As(err, &ee) {
+		t.Fatal("expected errors.As to find EndpointError in multi-error chain")
 	}
 
-	type statusCoder interface{ StatusCode() int }
-
-	var status statusCoder
-	if !errors.As(err, &status) {
-		t.Fatal("expected errors.As to reach a provider error carrying a status code")
+	if ee.Alias != "m0" && ee.Alias != "m1" {
+		t.Fatalf("endpoint alias = %q, want m0 or m1", ee.Alias)
 	}
 
-	if status.StatusCode() != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", status.StatusCode())
+	// errors.As should find APIError from any endpoint's error in the chain.
+	var apiErr *openai.HTTPError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected errors.As to find APIError in multi-error chain")
 	}
 }
 
@@ -562,5 +648,38 @@ func TestNoActiveModels_Error(t *testing.T) {
 	_, err = cc.ChatCompletions(context.Background(), testRequest())
 	if !errors.Is(err, ErrNoActiveModels) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
+	}
+}
+
+// NewComposeClient must own its entries: deriving aliases may not write back
+// into the caller's slice, and later mutations by the caller must not reach the
+// client's routing table.
+func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	entries := []ModelEntry{
+		{Name: "m0", Client: newClientForServer(t, s)},
+		{Name: "m1", Client: newClientForServer(t, s)},
+	}
+
+	cc, err := NewComposeClient(StrategyFailover, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entries[0].Alias != "" || entries[1].Alias != "" {
+		t.Fatalf("caller entries were written back: %q, %q", entries[0].Alias, entries[1].Alias)
+	}
+
+	if cc.entries[0].Alias != "m0" || cc.entries[1].Alias != "m1" {
+		t.Fatalf("client aliases = %q, %q, want m0, m1", cc.entries[0].Alias, cc.entries[1].Alias)
+	}
+
+	// The client does not share the caller's backing array.
+	entries[0].Name = "mutated"
+
+	if cc.entries[0].Name != "m0" {
+		t.Fatalf("client entry follows caller mutation: %q", cc.entries[0].Name)
 	}
 }

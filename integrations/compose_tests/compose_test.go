@@ -42,6 +42,7 @@ func TestComposeClient(t *testing.T) {
 	testFailover(entries)
 	testWeight(entries)
 	testRandom(entries)
+	testCanary()
 }
 
 // buildComposeEntries configures one entry per fully-specified environment

@@ -17,67 +17,11 @@
 
 package composes
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
+import "errors"
 
-// ErrNoActiveModels reports that every backend is currently marked unhealthy
-// and none is due for a recovery probe.
+// ErrNoActiveModels reports that every endpoint is currently unavailable —
+// cooling or errored — and none is due for a recovery probe.
+//
+// The aggregate failure of a dispatch that did try endpoints is a *MultiError
+// (endpoint.go), not this sentinel.
 var ErrNoActiveModels = errors.New("aimodel/composes: no active models available")
-
-// ModelError associates a backend failure with the model that produced it.
-// The underlying error is whatever that backend's client returned — this
-// package does not classify it, so a caller inspecting a status code declares
-// its own interface{ StatusCode() int } and reaches it with errors.As.
-type ModelError struct {
-	Model string
-	Err   error
-}
-
-func (e *ModelError) Error() string {
-	return fmt.Sprintf("aimodel/composes: model %s: %v", e.Model, e.Err)
-}
-
-func (e *ModelError) Unwrap() error { return e.Err }
-
-// MultiError collects the failures of every backend tried for one request.
-type MultiError struct {
-	Errors []ModelError
-}
-
-func (e *MultiError) Error() string {
-	if len(e.Errors) == 0 {
-		return ErrNoActiveModels.Error()
-	}
-
-	var b strings.Builder
-
-	b.WriteString("aimodel/composes: all models failed: ")
-
-	for i := range e.Errors {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-
-		fmt.Fprintf(&b, "%s: %v", e.Errors[i].Model, e.Errors[i].Err)
-	}
-
-	return b.String()
-}
-
-// Unwrap returns every collected error so errors.Is and errors.As match any
-// backend's failure, including through to the provider's own error type.
-func (e *MultiError) Unwrap() []error {
-	if len(e.Errors) == 0 {
-		return []error{ErrNoActiveModels}
-	}
-
-	errs := make([]error, len(e.Errors))
-	for i := range e.Errors {
-		errs[i] = &e.Errors[i]
-	}
-
-	return errs
-}

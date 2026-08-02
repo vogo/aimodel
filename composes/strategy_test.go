@@ -18,10 +18,13 @@
 package composes
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 func newTestComposeClient(strategy Strategy, entries []ModelEntry) *ComposeClient {
@@ -30,14 +33,26 @@ func newTestComposeClient(strategy Strategy, entries []ModelEntry) *ComposeClien
 		health[i] = newModelHealth()
 	}
 
+	// Resolve aliases so ordering tie-breaks and sticky selection are stable.
+	_ = resolveAliases(entries)
+
 	return &ComposeClient{
 		entries:          entries,
 		health:           health,
 		strategy:         strategy,
+		stickyFallback:   StrategyFailover,
 		recoveryInterval: defaultRecoveryInterval,
+		coolingInterval:  defaultCoolingInterval,
 		nowFunc:          time.Now,
 		rng:              newRand(42),
 	}
+}
+
+// selectAll runs capability filtering + strategy selection for a bare request,
+// mirroring the dispatch path for tests that predate capability routing.
+func selectAll(c *ComposeClient) []int {
+	req := &openai.ChatCompletionRequest{}
+	return c.selectModels(context.Background(), req, c.capableIndices(req))
 }
 
 func TestSelectFailover_AllActive(t *testing.T) {
@@ -45,7 +60,7 @@ func TestSelectFailover_AllActive(t *testing.T) {
 		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
 	})
 
-	got := c.selectModels()
+	got := selectAll(c)
 	want := []int{0, 1, 2}
 
 	assertIntSlice(t, got, want)
@@ -57,7 +72,7 @@ func TestSelectFailover_SkipError(t *testing.T) {
 	})
 	c.health[1].markError(errors.New("fail"), time.Now())
 
-	got := c.selectModels()
+	got := selectAll(c)
 	want := []int{0, 2}
 
 	assertIntSlice(t, got, want)
@@ -71,7 +86,7 @@ func TestSelectFailover_AllError(t *testing.T) {
 	c.health[0].markError(errors.New("fail"), now)
 	c.health[1].markError(errors.New("fail"), now)
 
-	got := c.selectModels()
+	got := selectAll(c)
 	if len(got) != 0 {
 		t.Fatalf("expected empty list, got %v", got)
 	}
@@ -82,7 +97,7 @@ func TestSelectRandom_AllActive(t *testing.T) {
 		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
 	})
 
-	got := c.selectModels()
+	got := selectAll(c)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 indices, got %d", len(got))
 	}
@@ -106,7 +121,7 @@ func TestSelectRandom_SkipError(t *testing.T) {
 	})
 	c.health[0].markError(errors.New("fail"), time.Now())
 
-	got := c.selectModels()
+	got := selectAll(c)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 indices, got %d", len(got))
 	}
@@ -128,7 +143,7 @@ func TestSelectRandom_Distribution(t *testing.T) {
 	iterations := 3000
 
 	for range iterations {
-		got := c.selectModels()
+		got := selectAll(c)
 		counts[got[0]]++
 	}
 
@@ -153,7 +168,7 @@ func TestSelectWeighted_ProportionalDistribution(t *testing.T) {
 	iterations := 4000
 
 	for range iterations {
-		got := c.selectModels()
+		got := selectAll(c)
 		counts[got[0]]++
 	}
 
@@ -174,7 +189,7 @@ func TestSelectWeighted_ZeroWeightTreatedAsOne(t *testing.T) {
 	iterations := 2000
 
 	for range iterations {
-		got := c.selectModels()
+		got := selectAll(c)
 		counts[got[0]]++
 	}
 
@@ -192,7 +207,7 @@ func TestSelectWeighted_SkipError(t *testing.T) {
 	})
 	c.health[0].markError(errors.New("fail"), time.Now())
 
-	got := c.selectModels()
+	got := selectAll(c)
 	if len(got) != 1 || got[0] != 1 {
 		t.Fatalf("expected [1], got %v", got)
 	}
