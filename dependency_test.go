@@ -25,6 +25,26 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/provider/openai"
+)
+
+// These tests enforce ADR 0007 in CI rather than by convention, because the
+// failure mode it guards against — a shared semantic layer growing back one
+// helper at a time — is gradual and reads as reasonable at every step.
+
+// statusCoder is the interface a consumer declares locally to read a status
+// code off any provider's transport error. Declaring it here, rather than
+// importing an error type, is the pattern itself.
+type statusCoder interface{ StatusCode() int }
+
+// Guard: both providers' HTTP errors satisfy the structural error contract.
+// A compile-time assertion is the whole test — if either stops implementing
+// it, this file no longer builds.
+var (
+	_ statusCoder = (*openai.HTTPError)(nil)
+	_ statusCoder = (*anthropic.HTTPError)(nil)
 )
 
 // packageImports parses the non-test .go files in a package directory (relative
@@ -197,4 +217,99 @@ func exportedDeclName(decl ast.Decl) (string, bool) {
 	}
 
 	return "", false
+}
+
+// TestNoSharedSemanticPackage verifies the two providers share no package from
+// this module. A type both of them reach for is a canonical layer by another
+// name, whatever it is called.
+func TestNoSharedSemanticPackage(t *testing.T) {
+	openaiImports := packageImports(t, "provider/openai")
+	anthropicImports := packageImports(t, "provider/anthropic")
+
+	for path := range openaiImports {
+		if anthropicImports[path] && strings.HasPrefix(path, "github.com/vogo/aimodel") {
+			t.Errorf("both providers import %q; a package they share is a shared semantic layer", path)
+		}
+	}
+}
+
+// protocolSemanticWords name concepts that belong to a protocol, not to a
+// neutral utility. A package declared vendor-neutral that starts speaking them
+// has stopped being neutral.
+var protocolSemanticWords = []string{
+	"message", "content", "tool", "usage", "completion", "chat", "prompt", "token", "choice",
+}
+
+// neutralPackages are the packages this module declares vendor-neutral.
+// composes is deliberately absent: ADR 0007 states it is an OpenAI-wire tool,
+// and its dependency guard says so explicitly.
+var neutralPackages = []string{"."}
+
+// TestNeutralPackagesDeclareNoProtocolSemantics checks declared identifiers
+// over the AST, so a word inside a comment or a string literal cannot fail the
+// build and a real declaration cannot hide in one.
+func TestNeutralPackagesDeclareNoProtocolSemantics(t *testing.T) {
+	for _, dir := range neutralPackages {
+		for name, pos := range declaredIdentifiers(t, dir) {
+			lower := strings.ToLower(name)
+
+			for _, word := range protocolSemanticWords {
+				if strings.Contains(lower, word) {
+					t.Errorf("%s: %s declares %q, a protocol concept; it belongs in a provider package",
+						dir, pos, name)
+				}
+			}
+		}
+	}
+}
+
+// declaredIdentifiers returns the names a package declares — top-level
+// declarations, struct fields and interface methods — mapped to their position.
+func declaredIdentifiers(t *testing.T, dir string) map[string]string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir is sufficient here; this SDK stays zero-dependency.
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+		name := fi.Name()
+
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", dir, err)
+	}
+
+	names := map[string]string{}
+
+	record := func(ident *ast.Ident) {
+		if ident != nil && ident.Name != "_" {
+			names[ident.Name] = fset.Position(ident.Pos()).String()
+		}
+	}
+
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch n := node.(type) {
+				case *ast.FuncDecl:
+					record(n.Name)
+				case *ast.TypeSpec:
+					record(n.Name)
+				case *ast.ValueSpec:
+					for _, name := range n.Names {
+						record(name)
+					}
+				case *ast.Field:
+					for _, name := range n.Names {
+						record(name)
+					}
+				}
+
+				return true
+			})
+		}
+	}
+
+	return names
 }
