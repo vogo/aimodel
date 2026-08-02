@@ -114,7 +114,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 		}
 
 		switch eventType {
-		case "message_start":
+		case StreamEventTypeMessageStart:
 			var ms MessageStartEvent
 			if err := json.Unmarshal(data, &ms); err != nil {
 				return nil, fmt.Errorf("aimodel: decode message_start: %w", err)
@@ -140,14 +140,14 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 
 			continue
 
-		case "content_block_start":
+		case StreamEventTypeContentBlockStart:
 			var cbs ContentBlockStartEvent
 			if err := json.Unmarshal(data, &cbs); err != nil {
 				return nil, fmt.Errorf("aimodel: decode content_block_start: %w", err)
 			}
 
 			switch cbs.ContentBlock.Type {
-			case "tool_use":
+			case ContentBlockTypeToolUse:
 				toolIdx := d.nextToolIdx
 				d.blockToTool[cbs.Index] = toolIdx
 				d.nextToolIdx++
@@ -174,7 +174,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 						},
 					},
 				}, nil
-			case "text", "thinking":
+			case ContentBlockTypeText, ContentBlockTypeThinking:
 				continue
 			default:
 				// Unmodelled block (server_tool_use, a tool result, a
@@ -194,7 +194,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 				}, nil
 			}
 
-		case "content_block_delta":
+		case StreamEventTypeContentBlockDelta:
 			var cbd ContentBlockDeltaEvent
 			if err := json.Unmarshal(data, &cbd); err != nil {
 				return nil, fmt.Errorf("aimodel: decode content_block_delta: %w", err)
@@ -220,7 +220,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 			}
 
 			switch cbd.Delta.Type {
-			case "text_delta":
+			case DeltaTypeText:
 				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
@@ -229,7 +229,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 						},
 					},
 				}
-			case "thinking_delta":
+			case DeltaTypeThinking:
 				chunk.Choices = []ais.StreamChunkChoice{
 					{
 						Index: 0,
@@ -238,9 +238,9 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 						},
 					},
 				}
-			case "signature_delta":
+			case DeltaTypeSignature:
 				continue
-			case "input_json_delta":
+			case DeltaTypeInputJSON:
 				toolIdx, ok := d.blockToTool[cbd.Index]
 				if !ok {
 					continue
@@ -274,7 +274,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 
 			return chunk, nil
 
-		case "message_delta":
+		case StreamEventTypeMessageDelta:
 			var md MessageDeltaEvent
 			if err := json.Unmarshal(data, &md); err != nil {
 				return nil, fmt.Errorf("aimodel: decode message_delta: %w", err)
@@ -309,10 +309,10 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 
 			return chunk, nil
 
-		case "message_stop":
+		case StreamEventTypeMessageStop:
 			return nil, io.EOF
 
-		case "error":
+		case StreamEventTypeError:
 			var errResp MessagesErrorResponse
 			if err := json.Unmarshal(data, &errResp); err != nil {
 				return nil, fmt.Errorf("aimodel: decode stream error: %w", err)
@@ -323,7 +323,7 @@ func (d *streamDecoder) Next() (*ais.StreamChunk, error) {
 				Message: errResp.Error.Message,
 			}
 
-		case "ping", "content_block_stop":
+		case StreamEventTypePing, StreamEventTypeContentBlockStop:
 			continue
 		}
 	}

@@ -189,13 +189,20 @@ for {
         return err
     }
 
-    if event.Type == "content_block_delta" {
+    if event.Type == anthropic.StreamEventTypeContentBlockDelta {
         fmt.Print(event.ContentBlockDelta.Delta.Text)
     }
 }
 ```
 
 Every event also carries its verbatim payload in `event.Raw`.
+
+`const.go` names the Messages API discriminator values — SSE event types
+(`StreamEventType*`), content block types (`ContentBlockType*`), delta types
+(`DeltaType*`), native stop reasons (`StopReason*`), `tool_choice` types
+(`ToolChoiceType*`). Every one of those fields stays an open string on the
+wire, so a value this SDK does not list still decodes and reaches you through
+`Raw` — the constants are for readable comparisons, not a closed enum.
 
 ### Errors
 
