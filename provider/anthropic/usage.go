@@ -57,48 +57,7 @@ func anthropicCanonicalUsage(u *MessagesUsage) ais.Usage {
 	return cu
 }
 
-// mergeAnthropicUsage folds a later usage object (the terminal message_delta)
-// into the baseline captured at message_start. Only fields the later object
-// actually carries are applied — a terminal event that reports just
-// output_tokens must not blank out the input, cache, geo, tier or server-tool
-// information already established.
-func mergeAnthropicUsage(base, next *MessagesUsage) {
-	if next.InputTokens != 0 {
-		base.InputTokens = next.InputTokens
-	}
-
-	if next.OutputTokens != 0 {
-		base.OutputTokens = next.OutputTokens
-	}
-
-	if next.CacheCreationInputTokens != 0 {
-		base.CacheCreationInputTokens = next.CacheCreationInputTokens
-	}
-
-	if next.CacheReadInputTokens != 0 {
-		base.CacheReadInputTokens = next.CacheReadInputTokens
-	}
-
-	if next.CacheCreation != nil {
-		base.CacheCreation = next.CacheCreation
-	}
-
-	if next.OutputTokensDetails != nil {
-		base.OutputTokensDetails = next.OutputTokensDetails
-	}
-
-	if next.ServerToolUse != nil {
-		base.ServerToolUse = next.ServerToolUse
-	}
-
-	if next.InferenceGeo != "" {
-		base.InferenceGeo = next.InferenceGeo
-	}
-
-	if next.ServiceTier != "" {
-		base.ServiceTier = next.ServiceTier
-	}
-}
-
-// parseDataURI parses a data URI (e.g. "data:image/jpeg;base64,/9j...")
-// and returns the media type and base64-encoded data.
+// The stream usage merge that used to live here moved to accumulate.go: it is
+// native wire semantics (message_start baseline + message_delta terminal
+// counts), not canonical translation, and it is now observable through
+// MessageStream.Usage.

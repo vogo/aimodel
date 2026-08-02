@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxNativeBodySize = 1 << 20
@@ -47,6 +48,19 @@ func WithHTTPClient(client *http.Client) ClientOption {
 	return func(c *Client) { c.httpClient = client }
 }
 
+// WithTimeout bounds the total duration of each call, including reading a
+// streaming body. It copies the HTTP client configured so far and sets its
+// Timeout, so the caller's own *http.Client is never mutated and a transport
+// installed by an earlier WithHTTPClient is preserved. Apply it after
+// WithHTTPClient; the reverse order discards the timeout.
+func WithTimeout(d time.Duration) ClientOption {
+	return func(c *Client) {
+		client := *c.httpClient
+		client.Timeout = d
+		c.httpClient = &client
+	}
+}
+
 func NewClient(apiKey string, options ...ClientOption) *Client {
 	c := &Client{apiKey: apiKey, baseURL: "https://api.openai.com/v1", httpClient: http.DefaultClient}
 	for _, option := range options {
@@ -55,32 +69,38 @@ func NewClient(apiKey string, options ...ClientOption) *Client {
 	return c
 }
 
+// HTTPError reports a non-2xx OpenAI response, or an error object carried
+// inside a 2xx body, and retains the bounded raw body.
 type HTTPError struct {
-	StatusCode          int
+	// Status is the HTTP status code. It is named Status rather than
+	// StatusCode so the accessor below can carry that name: consumers match
+	// any provider's transport error with
+	// errors.As(err, &interface{ StatusCode() int }) without importing this
+	// package. Zero for an error reported inside a 2xx body or a stream.
+	Status              int
 	Code, Type, Message string
 	Body                json.RawMessage
 	Err                 error
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("openai: HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("openai: HTTP %d: %s", e.Status, e.Message)
 }
 func (e *HTTPError) Unwrap() error { return e.Err }
+
+// StatusCode returns the HTTP status code, satisfying the
+// interface{ StatusCode() int } a consumer can declare locally.
+func (e *HTTPError) StatusCode() int { return e.Status }
 
 func (c *Client) request(ctx context.Context, input *ChatCompletionRequest, stream bool) (*http.Response, error) {
 	if input == nil {
 		return nil, fmt.Errorf("openai: nil chat completions request")
 	}
-	body, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("openai: marshal chat completions request: %w", err)
-	}
-	var request ChatCompletionRequest
-	if err = json.Unmarshal(body, &request); err != nil {
-		return nil, fmt.Errorf("openai: copy chat completions request: %w", err)
-	}
+	// Force the stream mode on a copy so the caller's request is never
+	// mutated. A shallow copy is enough: only a scalar field is rewritten.
+	request := *input
 	request.Stream = stream
-	body, err = json.Marshal(&request)
+	body, err := json.Marshal(&request)
 	if err != nil {
 		return nil, fmt.Errorf("openai: marshal chat completions request: %w", err)
 	}
@@ -99,7 +119,7 @@ func (c *Client) request(ctx context.Context, input *ChatCompletionRequest, stre
 
 func parseNativeError(response *http.Response) error {
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxNativeBodySize))
-	result := &HTTPError{StatusCode: response.StatusCode, Body: append(json.RawMessage(nil), body...), Message: string(body), Err: err}
+	result := &HTTPError{Status: response.StatusCode, Body: append(json.RawMessage(nil), body...), Message: string(body), Err: err}
 	if err != nil {
 		result.Message = "failed to read error response"
 		return result
@@ -127,15 +147,23 @@ func (c *Client) ChatCompletions(ctx context.Context, request *ChatCompletionReq
 		return nil, fmt.Errorf("openai: decode chat completions response: %w", err)
 	}
 	if result.Error != nil {
-		return nil, &HTTPError{StatusCode: response.StatusCode, Code: result.Error.Code, Type: result.Error.Type, Message: result.Error.Message}
+		return nil, &HTTPError{Status: response.StatusCode, Code: result.Error.Code, Type: result.Error.Type, Message: result.Error.Message}
 	}
 	return &result, nil
 }
 
+// ChatCompletionStream reads an SSE chat completion stream. While the caller
+// reads chunks, the stream also folds each one into the completion it
+// reconstructs, so Response and Usage are available without the caller
+// tracking deltas. A stream has a single reader; Close may be called
+// concurrently with Recv and is idempotent.
 type ChatCompletionStream struct {
 	body io.ReadCloser
 	scan *bufio.Scanner
 	once sync.Once
+
+	mu  sync.Mutex // guards acc against concurrent Recv/Response/Usage
+	acc chatAccumulator
 }
 
 func (c *Client) ChatCompletionsStream(ctx context.Context, request *ChatCompletionRequest) (*ChatCompletionStream, error) {
@@ -172,6 +200,9 @@ func (s *ChatCompletionStream) Recv() (*ChatCompletionChunk, error) {
 			_ = s.Close()
 			return nil, &HTTPError{Code: chunk.Error.Code, Type: chunk.Error.Type, Message: chunk.Error.Message}
 		}
+		s.mu.Lock()
+		s.acc.fold(&chunk)
+		s.mu.Unlock()
 		return &chunk, nil
 	}
 	if err := s.scan.Err(); err != nil {
@@ -180,6 +211,28 @@ func (s *ChatCompletionStream) Recv() (*ChatCompletionChunk, error) {
 	}
 	_ = s.Close()
 	return nil, io.EOF
+}
+
+// Response returns the completion assembled from the chunks read so far:
+// content, reasoning content, refusals and tool-call arguments concatenated in
+// arrival order. Call it after Recv reports io.EOF for the final result; before
+// that it is a live snapshot, in which a tool call's Arguments may still be a
+// partial JSON fragment. It returns nil when no chunk has arrived.
+func (s *ChatCompletionStream) Response() *ChatCompletionResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.acc.result()
+}
+
+// Usage returns the token accounting reported by the stream, or nil when the
+// backend sent none. OpenAI only emits it when the request sets
+// stream_options.include_usage.
+func (s *ChatCompletionStream) Usage() *ChatCompletionUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.acc.response.Usage
 }
 
 func (s *ChatCompletionStream) Close() error {

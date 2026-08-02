@@ -461,7 +461,7 @@ func TestResponsesErrorBodies(t *testing.T) {
 			_, err := client.Responses(context.Background(), &ResponsesRequest{Model: "gpt-5"})
 
 			var httpErr *HTTPError
-			if !errors.As(err, &httpErr) || httpErr.StatusCode != tc.status || httpErr.Code != tc.wantCode || httpErr.Message != tc.wantMessage {
+			if !errors.As(err, &httpErr) || httpErr.StatusCode() != tc.status || httpErr.Code != tc.wantCode || httpErr.Message != tc.wantMessage {
 				t.Fatalf("error = %T %+v", err, err)
 			}
 
