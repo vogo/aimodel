@@ -17,84 +17,102 @@
 
 package composes
 
-import "math/rand"
+import (
+	"context"
+	"math/rand"
 
-// Strategy determines how models are selected for requests.
+	"github.com/vogo/aimodel/ais"
+)
+
+// Strategy determines how candidate endpoints are ordered for a request. Every
+// strategy returns a full ordered candidate list (not a single pick), so the
+// dispatch loop fails over uniformly regardless of strategy.
 type Strategy string
 
 const (
-	// StrategyFailover selects models in definition order, skipping errored ones.
+	// StrategyFailover selects endpoints in definition order, skipping unhealthy ones.
 	StrategyFailover Strategy = "failover"
-	// StrategyRandom selects a random active model for each request.
+	// StrategyRandom selects active endpoints in a shuffled order.
 	StrategyRandom Strategy = "random"
-	// StrategyWeight selects models based on their weight proportionally.
+	// StrategyWeight orders endpoints sampled without replacement in proportion
+	// to weight; Weight <= 0 counts as 1.
 	StrategyWeight Strategy = "weighted"
+	// StrategySticky pins a request stream to a stable endpoint by session id
+	// (see WithSessionID). It is non-default; without a session id it falls back
+	// to the configured sticky-fallback strategy.
+	StrategySticky Strategy = "sticky"
+	// StrategyCost orders endpoints by ascending static cost (EndpointCost).
+	StrategyCost Strategy = "cost"
+	// StrategyLatency orders endpoints by ascending injected latency.
+	StrategyLatency Strategy = "latency"
 )
 
-// selectModels returns an ordered list of model indices to try.
-// The caller iterates and attempts each until one succeeds.
-func (c *ComposeClient) selectModels() []int {
-	switch c.strategy {
+// selectModels returns the ordered list of endpoint indices to try. It first
+// narrows the capability-filtered set to the health-available endpoints, then
+// orders them according to the configured strategy.
+func (c *ComposeClient) selectModels(ctx context.Context, req *ais.ChatRequest, capable []int) []int {
+	now := c.nowFunc()
+
+	available := make([]int, 0, len(capable))
+
+	for _, idx := range capable {
+		if c.health[idx].available(now, c.coolingInterval) {
+			available = append(available, idx)
+		}
+	}
+
+	return c.orderByStrategy(ctx, req, c.strategy, available)
+}
+
+// orderByStrategy orders an already-available candidate slice per the given
+// strategy. The input slice is in definition order and is not mutated.
+func (c *ComposeClient) orderByStrategy(ctx context.Context, req *ais.ChatRequest, s Strategy, available []int) []int {
+	switch s {
 	case StrategyRandom:
-		return c.selectRandom()
+		return c.orderRandom(available)
 	case StrategyWeight:
-		return c.selectWeighted()
-	default:
-		return c.selectFailover()
+		return c.orderWeighted(available)
+	case StrategySticky:
+		return c.selectSticky(ctx, req, available)
+	case StrategyCost:
+		return c.sortByCost(append([]int(nil), available...), req)
+	case StrategyLatency:
+		return c.sortByLatency(append([]int(nil), available...))
+	default: // StrategyFailover and any unknown value.
+		return append([]int(nil), available...)
 	}
 }
 
-// selectFailover returns indices in definition order, skipping error models.
-func (c *ComposeClient) selectFailover() []int {
-	result := make([]int, 0, len(c.entries))
+// orderRandom returns a shuffled copy of the available indices.
+func (c *ComposeClient) orderRandom(available []int) []int {
+	result := append([]int(nil), available...)
 
-	for i := range c.entries {
-		if c.health[i].isActive() {
-			result = append(result, i)
-		}
-	}
+	c.mu.Lock()
+	c.rng.Shuffle(len(result), func(i, j int) {
+		result[i], result[j] = result[j], result[i]
+	})
+	c.mu.Unlock()
 
 	return result
 }
 
-// selectRandom returns a shuffled list of active model indices.
-func (c *ComposeClient) selectRandom() []int {
-	active := make([]int, 0, len(c.entries))
-
-	for i := range c.entries {
-		if c.health[i].isActive() {
-			active = append(active, i)
-		}
-	}
-
-	c.mu.Lock()
-	c.rng.Shuffle(len(active), func(i, j int) {
-		active[i], active[j] = active[j], active[i]
-	})
-	c.mu.Unlock()
-
-	return active
-}
-
-// selectWeighted selects from active models proportional to their weights.
-// Returns a full ordering: pick one by weight, then repeat with remaining.
-func (c *ComposeClient) selectWeighted() []int {
+// orderWeighted orders the available indices by sampling without replacement in
+// proportion to weight; Weight <= 0 counts as 1.
+func (c *ComposeClient) orderWeighted(available []int) []int {
 	type candidate struct {
 		idx    int
 		weight int
 	}
 
-	candidates := make([]candidate, 0, len(c.entries))
+	candidates := make([]candidate, 0, len(available))
 
-	for i := range c.entries {
-		if c.health[i].isActive() {
-			w := c.entries[i].Weight
-			if w <= 0 {
-				w = 1
-			}
-
-			candidates = append(candidates, candidate{idx: i, weight: w})
+	for _, idx := range available {
+		w := c.entries[idx].Weight
+		if w <= 0 {
+			w = 1
 		}
+
+		candidates = append(candidates, candidate{idx: idx, weight: w})
 	}
 
 	result := make([]int, 0, len(candidates))
@@ -126,7 +144,7 @@ func (c *ComposeClient) selectWeighted() []int {
 	return result
 }
 
-// randSource returns a new deterministic rand for testing or real rand.
+// newRand returns a deterministic rand for testing or a seeded real rand.
 func newRand(seed int64) *rand.Rand {
 	return rand.New(rand.NewSource(seed))
 }
