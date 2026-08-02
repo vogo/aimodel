@@ -18,52 +18,53 @@
 package compose_tests
 
 import (
+	"os"
 	"testing"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
+// Compose dispatches across backends that speak one wire format. These
+// examples use several OpenAI-compatible endpoints, which is the shape real
+// deployments have: one request body, many endpoints that can serve it.
+
+// backendPrefixes names the environment groups a backend is configured from:
+// <PREFIX>_API_KEY, <PREFIX>_BASE_URL and <PREFIX>_MODEL.
+var backendPrefixes = []string{"OPENAI", "DEEPSEEK", "QWEN"}
+
 func TestComposeClient(t *testing.T) {
-	clients, err := buildComposeClients()
-	if err != nil {
-		t.Logf("init compose clients error: %v", err)
-		return
+	entries := buildComposeEntries()
+	if len(entries) == 0 {
+		t.Skip("no OpenAI-compatible backend configured; set <PREFIX>_API_KEY and <PREFIX>_MODEL")
 	}
 
-	testFailover(clients)
-	testWeight(clients)
-	testRandom(clients)
+	testFailover(entries)
+	testWeight(entries)
+	testRandom(entries)
 }
 
-func buildComposeClients() ([]*aimodel.Client, error) {
-	openaiClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("OPENAI_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("OPENAI_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("OPENAI_MODEL")),
-	)
-	if err != nil {
-		return nil, err
+// buildComposeEntries configures one entry per fully-specified environment
+// group and skips the rest, so the examples run with whatever is available.
+func buildComposeEntries() []composes.ModelEntry {
+	var entries []composes.ModelEntry
+
+	for _, prefix := range backendPrefixes {
+		apiKey, model := os.Getenv(prefix+"_API_KEY"), os.Getenv(prefix+"_MODEL")
+		if apiKey == "" || model == "" {
+			continue
+		}
+
+		options := []openai.ClientOption{}
+		if baseURL := os.Getenv(prefix + "_BASE_URL"); baseURL != "" {
+			options = append(options, openai.WithBaseURL(baseURL))
+		}
+
+		entries = append(entries, composes.ModelEntry{
+			Name:   model,
+			Client: openai.NewClient(apiKey, options...),
+		})
 	}
 
-	anthropicClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("ANTHROPIC_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("ANTHROPIC_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("ANTHROPIC_MODEL")),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	deepseekClient, err := aimodel.NewClient(
-		aimodel.WithAPIKey(aimodel.GetEnv("DEEPSEEK_API_KEY")),
-		aimodel.WithBaseURL(aimodel.GetEnv("DEEPSEEK_BASE_URL")),
-		aimodel.WithDefaultModel(aimodel.GetEnv("DEEPSEEK_MODEL")),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return []*aimodel.Client{openaiClient, anthropicClient, deepseekClient}, nil
+	return entries
 }

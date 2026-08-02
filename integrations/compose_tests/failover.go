@@ -23,35 +23,26 @@ import (
 	"log"
 	"time"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/composes"
 )
 
-func testFailover(clients []*aimodel.Client) {
+func testFailover(entries []composes.ModelEntry) {
 	fmt.Println("=== Compose Failover ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
-		{Client: clients[0]},
-		{Client: clients[1]},
-		{Client: clients[2]},
-	}, composes.WithRecoveryInterval(30*time.Second))
+	cc, err := composes.NewComposeClient(composes.StrategyFailover, entries,
+		composes.WithRecoveryInterval(30*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("Say hello!")},
-		},
-	})
+	response, err := cc.ChatCompletions(context.Background(), helloRequest())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if len(resp.Choices) == 0 {
+	if len(response.Choices) == 0 {
 		log.Fatal("no choices in response")
 	}
 
-	fmt.Printf("[%s] %s\n", resp.Model, resp.Choices[0].Message.Content.Text())
+	fmt.Printf("[%s] %s\n", response.Model, response.Choices[0].Message.Content.Text())
 }

@@ -25,44 +25,33 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
-	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
-// newTestServer creates an httptest server that returns a valid OpenAI chat response
-// with the given model name in the response.
+// newTestServer creates an httptest server that echoes the requested model in
+// an OpenAI-shaped completion, so a test can tell which backend served it.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify the model is set correctly in the request.
-		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+
 			return
 		}
 
-		resp := ais.ChatResponse{
-			ID:    "test-id",
-			Model: fmt.Sprintf("%v", req["model"]),
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
+		model := fmt.Sprintf("%v", request["model"])
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_, _ = fmt.Fprintf(w,
+			`{"id":"test-id","object":"chat.completion","model":%q,"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hello from %s"}}]}`,
+			model, model)
 	}))
 }
 
@@ -73,80 +62,40 @@ func newFailServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{
-				"message": "internal server error",
-				"type":    "server_error",
-			},
-		})
+		_, _ = io.WriteString(w, `{"error":{"message":"internal server error","type":"server_error"}}`)
 	}))
 }
 
-// newStreamServer creates a server that returns a valid SSE stream.
+// newStreamServer creates a server that returns a valid SSE stream naming the
+// model it served.
 func newStreamServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+
 			return
 		}
-
-		modelName := fmt.Sprintf("%v", req["model"])
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		flusher, ok := w.(http.Flusher)
-
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
-		chunk := ais.StreamChunk{
-			ID:    "chunk-1",
-			Model: modelName,
-			Choices: []ais.StreamChunkChoice{
-				{
-					Index: 0,
-					Delta: ais.Message{
-						Role:    ais.RoleAssistant,
-						Content: ais.NewTextContent("hello stream"),
-					},
-				},
-			},
-		}
-
-		data, _ := json.Marshal(chunk)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-
-		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-		flusher.Flush()
+		_, _ = fmt.Fprintf(w,
+			"data: {\"id\":\"chunk-1\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello stream\"}}]}\n\ndata: [DONE]\n\n",
+			fmt.Sprintf("%v", request["model"]))
 	}))
 }
 
-func newClientForServer(t *testing.T, server *httptest.Server) *aimodel.Client {
+func newClientForServer(t *testing.T, server *httptest.Server) *openai.Client {
 	t.Helper()
 
-	c, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(server.URL),
-	)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-
-	return c
+	return openai.NewClient("test-key", openai.WithBaseURL(server.URL), openai.WithHTTPClient(server.Client()))
 }
 
-func testRequest() *ais.ChatRequest {
-	return &ais.ChatRequest{
-		Model: "placeholder",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
-		},
+func testRequest() *openai.ChatCompletionRequest {
+	return &openai.ChatCompletionRequest{
+		Model:    "placeholder",
+		Messages: []openai.ChatCompletionMessage{{Role: "user", Content: openai.NewTextContent("hi")}},
 	}
 }
 
@@ -166,59 +115,27 @@ func TestNewComposeClient_NilClient(t *testing.T) {
 	}
 }
 
-func TestNewComposeClient_EmptyName_UsesClientDefault(t *testing.T) {
-	var receivedModel string
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		receivedModel = fmt.Sprintf("%v", req["model"])
-
-		w.Header().Set("Content-Type", "application/json")
-
-		resp := ais.ChatResponse{
-			ID:    "test",
-			Model: receivedModel,
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+// TestEmptyEntryName_KeepsTheRequestModel verifies an entry without a name
+// leaves the request's own model alone. There is no client-level default model
+// to fall back to.
+func TestEmptyEntryName_KeepsTheRequestModel(t *testing.T) {
+	s := newTestServer(t)
 	defer s.Close()
 
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(s.URL),
-		aimodel.WithDefaultModel("my-default-model"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "", Client: client},
+		{Name: "", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Use empty model in request so the client default is applied.
-	_, err = cc.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
-		},
-	})
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if receivedModel != "my-default-model" {
-		t.Fatalf("model = %s, want my-default-model", receivedModel)
+	if response.Model != "placeholder" {
+		t.Fatalf("model = %s, want the request's own model", response.Model)
 	}
 }
 
@@ -253,13 +170,13 @@ func TestFailover_FirstModelSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if resp.Model != "m0" {
-		t.Fatalf("model = %s, want m0", resp.Model)
+	if response.Model != "m0" {
+		t.Fatalf("model = %s, want m0", response.Model)
 	}
 }
 
@@ -278,13 +195,13 @@ func TestFailover_Fallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if resp.Model != "m1" {
-		t.Fatalf("model = %s, want m1", resp.Model)
+	if response.Model != "m1" {
+		t.Fatalf("model = %s, want m1", response.Model)
 	}
 }
 
@@ -303,18 +220,18 @@ func TestFailover_AllFail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err == nil {
 		t.Fatal("expected error when all models fail")
 	}
 
-	var me *ais.MultiError
-	if !errors.As(err, &me) {
+	var multi *MultiError
+	if !errors.As(err, &multi) {
 		t.Fatalf("expected MultiError, got %T: %v", err, err)
 	}
 
-	if len(me.Errors) != 2 {
-		t.Fatalf("expected 2 model errors, got %d", len(me.Errors))
+	if len(multi.Errors) != 2 {
+		t.Fatalf("expected 2 model errors, got %d", len(multi.Errors))
 	}
 }
 
@@ -333,7 +250,7 @@ func TestFailover_StreamFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stream, err := cc.ChatCompletionStream(context.Background(), testRequest())
+	stream, err := cc.ChatCompletionsStream(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -348,10 +265,9 @@ func TestFailover_StreamFallback(t *testing.T) {
 		t.Fatalf("stream model = %s, want m1", chunk.Model)
 	}
 
-	// Drain remaining chunks.
 	for {
-		_, err := stream.Recv()
-		if err == io.EOF {
+		_, err = stream.Recv()
+		if errors.Is(err, io.EOF) {
 			break
 		}
 
@@ -359,28 +275,21 @@ func TestFailover_StreamFallback(t *testing.T) {
 			t.Fatalf("unexpected stream error: %v", err)
 		}
 	}
+
+	// The accumulated result stays available through the dispatching client.
+	if got := stream.Response().Choices[0].Message.Content.Text(); got != "hello stream" {
+		t.Errorf("accumulated content = %q", got)
+	}
 }
 
 func TestFailover_RecoveryProbe(t *testing.T) {
 	var callCount atomic.Int64
 
-	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/json")
-
-		resp := ais.ChatResponse{
-			ID:    "probe-id",
-			Model: "m0",
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		_, _ = io.WriteString(w, `{"id":"probe-id","model":"m0","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"recovered"}}]}`)
 	}))
 	defer sProbe.Close()
 
@@ -401,29 +310,28 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 	cc.health[0].markError(errors.New("initial failure"), now)
 
 	// Request should use m1 (primary is errored).
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if resp.Model != "m1" {
-		t.Fatalf("model = %s, want m1", resp.Model)
+	if response.Model != "m1" {
+		t.Fatalf("model = %s, want m1", response.Model)
 	}
 
 	// Advance time past recovery interval.
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
 	// Now primary should be probed first and succeed.
-	resp, err = cc.ChatCompletion(context.Background(), testRequest())
+	response, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if resp.Model != "m0" {
-		t.Fatalf("model after probe = %s, want m0", resp.Model)
+	if response.Model != "m0" {
+		t.Fatalf("model after probe = %s, want m0", response.Model)
 	}
 
-	// Verify that the primary was actually called.
 	if callCount.Load() == 0 {
 		t.Fatal("expected primary to be called during probe")
 	}
@@ -432,23 +340,11 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 func TestRandom_RecoveryProbe(t *testing.T) {
 	var probeCount atomic.Int64
 
-	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sProbe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		probeCount.Add(1)
 
 		w.Header().Set("Content-Type", "application/json")
-
-		resp := ais.ChatResponse{
-			ID:    "probe-id",
-			Model: "m0",
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		_, _ = io.WriteString(w, `{"id":"probe-id","model":"m0","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"recovered"}}]}`)
 	}))
 	defer sProbe.Close()
 
@@ -471,14 +367,14 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 	// Advance time past recovery interval and probe should fire.
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Recovery probe is prepended, so m0 should be tried first.
-	if resp.Model != "m0" {
-		t.Fatalf("model = %s, want m0 (recovery probe)", resp.Model)
+	if response.Model != "m0" {
+		t.Fatalf("model = %s, want m0 (recovery probe)", response.Model)
 	}
 
 	if probeCount.Load() == 0 {
@@ -487,28 +383,7 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 }
 
 func TestModelOverride(t *testing.T) {
-	var receivedModel string
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		receivedModel = fmt.Sprintf("%v", req["model"])
-
-		w.Header().Set("Content-Type", "application/json")
-
-		resp := ais.ChatResponse{
-			ID:    "test",
-			Model: receivedModel,
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+	s := newTestServer(t)
 	defer s.Close()
 
 	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
@@ -518,89 +393,54 @@ func TestModelOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := &ais.ChatRequest{
-		Model: "original-model",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
-		},
-	}
+	request := testRequest()
+	request.Model = "original-model"
 
-	_, err = cc.ChatCompletion(context.Background(), req)
+	response, err := cc.ChatCompletions(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if receivedModel != "custom-model-v2" {
-		t.Fatalf("sent model = %s, want custom-model-v2", receivedModel)
+	if response.Model != "custom-model-v2" {
+		t.Fatalf("sent model = %s, want custom-model-v2", response.Model)
 	}
 
-	// Original request should be unchanged.
-	if req.Model != "original-model" {
-		t.Fatalf("original request model mutated to %s", req.Model)
+	if request.Model != "original-model" {
+		t.Fatalf("original request model mutated to %s", request.Model)
 	}
 }
 
-func TestAnthropicChatCompletion(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that Anthropic headers are set.
-		if r.Header.Get("x-api-key") == "" {
-			http.Error(w, "missing api key", http.StatusUnauthorized)
-			return
-		}
+// TestNestedComposeClients verifies a ComposeClient is itself a backend, so
+// pools can be layered (for example a fast pool that falls back to a slow one).
+func TestNestedComposeClients(t *testing.T) {
+	sFail := newFailServer(t)
+	defer sFail.Close()
 
-		if !strings.Contains(r.URL.Path, "/v1/messages") {
-			http.Error(w, "wrong path", http.StatusNotFound)
-			return
-		}
+	sOK := newTestServer(t)
+	defer sOK.Close()
 
-		w.Header().Set("Content-Type", "application/json")
-
-		resp := map[string]any{
-			"id":    "msg-test",
-			"type":  "message",
-			"role":  "assistant",
-			"model": "claude-test",
-			"content": []map[string]any{
-				{"type": "text", "text": "hello from anthropic"},
-			},
-			"stop_reason": "end_turn",
-			"usage": map[string]any{
-				"input_tokens":  10,
-				"output_tokens": 5,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer s.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(s.URL),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "claude-test", Client: client},
+	inner, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "inner", Client: newClientForServer(t, sFail)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// ChatCompletion with the Anthropic provider should route via the Anthropic protocol.
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	outer, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "pool", Client: inner},
+		{Name: "m1", Client: newClientForServer(t, sOK)},
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 
-	if len(resp.Choices) == 0 {
-		t.Fatal("expected at least one choice")
+	response, err := outer.ChatCompletions(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if resp.Choices[0].Message.Content.Text() != "hello from anthropic" {
-		t.Fatalf("got content = %s", resp.Choices[0].Message.Content.Text())
+	if response.Model != "m1" {
+		t.Fatalf("model = %s, want the outer fallback m1", response.Model)
 	}
 }
 
@@ -621,7 +461,7 @@ func TestConcurrentRequests(t *testing.T) {
 
 	for range 50 {
 		wg.Go(func() {
-			_, err := cc.ChatCompletion(context.Background(), testRequest())
+			_, err := cc.ChatCompletions(context.Background(), testRequest())
 			if err != nil {
 				errCh <- err
 			}
@@ -651,7 +491,7 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = cc.ChatCompletion(ctx, testRequest())
+	_, err = cc.ChatCompletions(ctx, testRequest())
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -662,7 +502,10 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 	}
 }
 
-func TestMultiError_UnwrapAll(t *testing.T) {
+// TestMultiErrorUnwrapsToTheBackendError verifies the aggregate keeps every
+// backend's error reachable, including its status code — matched through a
+// locally declared interface, so this package imports no provider error type.
+func TestMultiErrorUnwrapsToTheBackendError(t *testing.T) {
 	s0 := newFailServer(t)
 	defer s0.Close()
 
@@ -677,17 +520,27 @@ func TestMultiError_UnwrapAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 
-	var me *ais.MultiError
-	if !errors.As(err, &me) {
+	var multi *MultiError
+	if !errors.As(err, &multi) {
 		t.Fatalf("expected MultiError, got %T", err)
 	}
 
-	// errors.As should find APIError from any model's error in the chain.
-	var apiErr *ais.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatal("expected errors.As to find APIError in multi-error chain")
+	var modelErr *ModelError
+	if !errors.As(err, &modelErr) {
+		t.Fatal("expected errors.As to find a ModelError in the chain")
+	}
+
+	type statusCoder interface{ StatusCode() int }
+
+	var status statusCoder
+	if !errors.As(err, &status) {
+		t.Fatal("expected errors.As to reach a provider error carrying a status code")
+	}
+
+	if status.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", status.StatusCode())
 	}
 }
 
@@ -703,11 +556,11 @@ func TestNoActiveModels_Error(t *testing.T) {
 	}
 
 	// First call fails and marks model as error.
-	_, _ = cc.ChatCompletion(context.Background(), testRequest())
+	_, _ = cc.ChatCompletions(context.Background(), testRequest())
 
 	// Second call should return ErrNoActiveModels since no active models remain.
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
-	if !errors.Is(err, ais.ErrNoActiveModels) {
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
+	if !errors.Is(err, ErrNoActiveModels) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
 	}
 }

@@ -24,26 +24,38 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 const defaultRecoveryInterval = 60 * time.Second
 
+// ChatCompleter is the method set a backend must provide to take part in
+// dispatch. *openai.Client satisfies it, and so does a ComposeClient, which is
+// what makes nesting work.
+//
+// This package dispatches within one wire format — OpenAI-compatible — rather
+// than across protocols (ADR 0007). Composing Anthropic backends is the same
+// loop written against that package's client; sharing one here would require a
+// request model both protocols agree on, which is the abstraction this SDK
+// removed.
+type ChatCompleter interface {
+	ChatCompletions(ctx context.Context, request *openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error)
+	ChatCompletionsStream(ctx context.Context, request *openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error)
+}
+
 // ModelEntry describes a single model backend in the compose client.
 type ModelEntry struct {
-	// Name is the model identifier sent in ChatRequest.Model.
-	// If empty, the underlying client's default model is used.
+	// Name is the model identifier sent in ChatCompletionRequest.Model.
+	// If empty, the request's own model is left in place.
 	Name string
-	// Client is the underlying API client for this model.
-	// Protocol routing is handled internally by each Client.
-	Client aimodel.ChatCompleter
+	// Client is the underlying API client for this backend.
+	Client ChatCompleter
 	// Weight is used by StrategyWeight. Zero is treated as 1.
 	Weight int
 }
 
 // ComposeClient dispatches chat requests across multiple model backends.
-// It implements aimodel.ChatCompleter and can be nested.
+// It implements ChatCompleter and can be nested.
 type ComposeClient struct {
 	entries          []ModelEntry
 	health           []*modelHealth
@@ -98,28 +110,35 @@ func NewComposeClient(strategy Strategy, entries []ModelEntry, opts ...ComposeOp
 	return c, nil
 }
 
-// ChatCompletion sends a non-streaming request, routing via the configured strategy.
-// Protocol routing is handled internally by each entry's Client.
-func (c *ComposeClient) ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *ais.ChatRequest) (*ais.ChatResponse, error) {
-		return client.ChatCompletion(ctx, r)
-	})
+// ChatCompletions sends a non-streaming request, routing via the configured
+// strategy.
+func (c *ComposeClient) ChatCompletions(
+	ctx context.Context, request *openai.ChatCompletionRequest,
+) (*openai.ChatCompletionResponse, error) {
+	return dispatch(ctx, c, request,
+		func(ctx context.Context, client ChatCompleter, r *openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error) {
+			return client.ChatCompletions(ctx, r)
+		})
 }
 
-// ChatCompletionStream sends a streaming request, routing via the configured strategy.
-// Protocol routing is handled internally by each entry's Client.
-func (c *ComposeClient) ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*aimodel.Stream, error) {
-	return dispatchUnary(ctx, c, req, func(ctx context.Context, client aimodel.ChatCompleter, r *ais.ChatRequest) (*aimodel.Stream, error) {
-		return client.ChatCompletionStream(ctx, r)
-	})
+// ChatCompletionsStream sends a streaming request, routing via the configured
+// strategy. Only the call that opens the stream is covered by failover: once a
+// backend has started streaming, a mid-stream error reaches the caller.
+func (c *ComposeClient) ChatCompletionsStream(
+	ctx context.Context, request *openai.ChatCompletionRequest,
+) (*openai.ChatCompletionStream, error) {
+	return dispatch(ctx, c, request,
+		func(ctx context.Context, client ChatCompleter, r *openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+			return client.ChatCompletionsStream(ctx, r)
+		})
 }
 
-// dispatchUnary is the generic dispatch loop shared by all public methods.
-func dispatchUnary[T any](
+// dispatch is the generic dispatch loop shared by all public methods.
+func dispatch[T any](
 	ctx context.Context,
 	c *ComposeClient,
-	req *ais.ChatRequest,
-	call func(context.Context, aimodel.ChatCompleter, *ais.ChatRequest) (T, error),
+	req *openai.ChatCompletionRequest,
+	call func(context.Context, ChatCompleter, *openai.ChatCompletionRequest) (T, error),
 ) (T, error) {
 	var zero T
 
@@ -129,10 +148,10 @@ func dispatchUnary[T any](
 	candidates = c.prependRecoveryProbes(candidates)
 
 	if len(candidates) == 0 {
-		return zero, ais.ErrNoActiveModels
+		return zero, ErrNoActiveModels
 	}
 
-	var errs []ais.ModelError
+	var errs []ModelError
 
 	for _, idx := range candidates {
 		// Return immediately if the context is cancelled to avoid
@@ -143,7 +162,8 @@ func dispatchUnary[T any](
 
 		entry := c.entries[idx]
 
-		// Clone the request and override the model name if specified.
+		// Copy the request and override the model name if specified, so the
+		// caller's request is untouched and each backend sees its own model.
 		r := *req
 		if entry.Name != "" {
 			r.Model = entry.Name
@@ -157,7 +177,7 @@ func dispatchUnary[T any](
 			}
 
 			c.health[idx].markError(err, c.nowFunc())
-			errs = append(errs, ais.ModelError{Model: entry.Name, Err: err})
+			errs = append(errs, ModelError{Model: entry.Name, Err: err})
 
 			continue
 		}
@@ -167,7 +187,7 @@ func dispatchUnary[T any](
 		return result, nil
 	}
 
-	return zero, &ais.MultiError{Errors: errs}
+	return zero, &MultiError{Errors: errs}
 }
 
 // prependRecoveryProbes prepends errored models that are eligible for recovery probing
@@ -200,5 +220,9 @@ func (c *ComposeClient) prependRecoveryProbes(candidates []int) []int {
 	return append(probes, candidates...)
 }
 
-// Compile-time check: ComposeClient implements aimodel.ChatCompleter.
-var _ aimodel.ChatCompleter = (*ComposeClient)(nil)
+// Compile-time checks: a ComposeClient is itself a backend, so compose
+// clients nest; and the native OpenAI client can be used as one directly.
+var (
+	_ ChatCompleter = (*ComposeClient)(nil)
+	_ ChatCompleter = (*openai.Client)(nil)
+)

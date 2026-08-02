@@ -104,24 +104,34 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	}
 }
 
-// TestComposesDependsOnlyOnCapability verifies composes depends on the root
-// capability surface plus the canonical api package, never on the registry or
-// any vendor provider.
-func TestComposesDependsOnlyOnCapability(t *testing.T) {
+// TestComposesDependsOnOpenAIOnly verifies composes is what ADR 0007 declares
+// it to be: a tool for the OpenAI-compatible wire format, not a vendor-neutral
+// package.
+//
+// The earlier rule — composes may import no provider at all — existed to keep
+// canonical dispatch vendor-neutral. ADR 0007 gives that constraint up
+// deliberately, and replaces it with this narrower one: exactly one provider,
+// and no canonical layer. Dispatching Anthropic backends means an isomorphic
+// loop in that package, never a shared request model here.
+func TestComposesDependsOnOpenAIOnly(t *testing.T) {
 	imports := packageImports(t, "composes")
 
 	for path := range imports {
-		if strings.Contains(path, "/provider/") {
-			t.Errorf("composes must not import a provider subpackage, found %q", path)
+		if strings.Contains(path, "/provider/") && path != "github.com/vogo/aimodel/provider/openai" {
+			t.Errorf("composes must import no provider other than openai, found %q", path)
 		}
 	}
 
-	if !imports["github.com/vogo/aimodel"] {
-		t.Error("composes should depend on the root capability interface")
+	if !hasProviderImport(imports, "openai") {
+		t.Error("composes dispatches over the OpenAI wire format and should import provider/openai")
 	}
 
-	if !imports["github.com/vogo/aimodel/ais"] {
-		t.Error("composes should take canonical types directly from the ais package")
+	if imports["github.com/vogo/aimodel"] {
+		t.Error("composes must not depend on the root package")
+	}
+
+	if imports["github.com/vogo/aimodel/ais"] {
+		t.Error("composes must not depend on the canonical package")
 	}
 }
 

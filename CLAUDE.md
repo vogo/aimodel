@@ -67,7 +67,8 @@ Consequences to apply directly:
   bodies are protocol facts and belong to the provider package that serves them.
 - **Errors are matched structurally.** There is no shared error type. Both `*HTTPError` types
   implement `interface { StatusCode() int }`; a consumer declares that interface locally and uses
-  `errors.As`. `composes` handles errors this way and imports no provider for it.
+  `errors.As`. `composes` does exactly this — it aggregates backend errors without naming any
+  provider's error type, even though it imports that provider for its wire types.
 - **`composes` is an OpenAI-wire tool, not a neutral package.** It dispatches across several
   OpenAI-compatible backends using `provider/openai` types. Composing Anthropic backends means an
   isomorphic loop in that package or in the caller's code — never a shared abstraction over both.
