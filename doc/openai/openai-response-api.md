@@ -18,16 +18,14 @@
 
 ## 1. Scope and the two entry points
 
-Responses is OpenAI's forward-looking interface: hosted tools, `previous_response_id` chaining, server-side conversations, reasoning items and cache controls land there, while Chat Completions stays supported but frozen. This SDK wraps it at **full fidelity on the native layer**, and exposes the same operation through a narrow root capability.
+Responses is OpenAI's forward-looking interface: hosted tools, `previous_response_id` chaining, server-side conversations, reasoning items and cache controls land there, while Chat Completions stays supported but frozen. This SDK wraps it at **full fidelity**, as a second method set on the same client:
 
-| Entry point | Types | Method |
+| Interaction form | Methods | Types |
 |---|---|---|
-| Native client `openai.NewClient(...)` | native Responses types end to end | `Responses` / `ResponsesStream` |
-| Unified client `aimodel.NewClient(...)` | the **same** native Responses types | `Responses` / `ResponsesStream` (the `Responder` capability) |
+| Chat Completions | `ChatCompletions` / `ChatCompletionsStream` | `ChatCompletionRequest` / `ChatCompletionResponse` |
+| Responses | `Responses` / `ResponsesStream` | `ResponsesRequest` / `Response` / `ResponseStreamEvent` |
 
-Both paths hit the same endpoint with the same body. The unified path only adds provider resolution: it reuses the client's API key, base URL, HTTP client and timeout, and fails with a `*ais.CapabilityError` before any network I/O when the resolved provider is not OpenAI.
-
-**Responses is not translated into canonical `ais` types.** It is a single-vendor interaction form, so under the "≥ 2 providers" attribution rule ([architecture.md](../architecture.md) §2) none of its fields are admitted to `ais`, and the root capability deliberately speaks provider-native types. That exception is recorded in [ADR 0006](../adr/0006-responses-capability-on-provider-native-types.md).
+A new interaction form gets its own methods rather than widening the existing ones — the surviving half of [ADR 0004](../adr/0004-model-capabilities-with-small-interfaces.md), as restated by [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md). Up to v0.5.x this operation was also reachable through a root `Responder` capability on the unified client; that client is gone, and the types it spoke were already these ones, so the migration is to call the same methods on `*openai.Client` directly ([MIGRATION.md](../../MIGRATION.md)).
 
 Out of scope for this change: the Assistants API (retired), the Realtime API, background-response polling helpers, `GET`/`DELETE`/`cancel` on `/v1/responses`, conversation-resource CRUD, and hosted execution of anything beyond OpenAI's three first-party tools.
 
@@ -39,14 +37,11 @@ Content-Type: application/json
 Authorization: Bearer {apiKey}
 ```
 
-`{baseURL}` is the native client's base URL (default `https://api.openai.com/v1`) or, on the unified path, the client's configured base URL. The caller's `*ResponsesRequest` is **never mutated**: `stream` is forced on a marshalled copy, so passing the same request value to `Responses` and then `ResponsesStream` is safe.
+`{baseURL}` is the client's base URL (default `https://api.openai.com/v1`). The caller's `*ResponsesRequest` is **never mutated**: `stream` is forced on a marshalled copy, so passing the same request value to `Responses` and then `ResponsesStream` is safe.
 
 ```mermaid
 flowchart LR
-    Caller -->|native request| Native[openai.Client]
-    Unified[aimodel.Client] -->|same native request| Cap{provider supports Responses?}
-    Cap -->|yes: OpenAI| Native
-    Cap -->|no| Err[*ais.CapabilityError, no network I/O]
+    Caller -->|ResponsesRequest| Native[openai.Client]
     Native --> Endpoint[POST /v1/responses]
     Endpoint -->|JSON| Resp[full native Response]
     Endpoint -->|SSE| Events[typed ResponseStreamEvent]
@@ -170,22 +165,19 @@ Non-2xx responses reuse the native client's bounded error reader and `*HTTPError
 
 SSE scanning is bounded the same way (1 MB per line). A line beyond that limit surfaces as `openai: read responses stream: ...` rather than a truncated, valid-looking event.
 
-## 9. Mapping boundary
+## 9. Protocol capability notes
 
-There is no canonical translation on this path, by design:
+What this wrapper deliberately does not do on this path:
 
-- **Nothing enters `ais`.** No Responses field is admitted to the canonical schema, `TestCanonicalNodeFieldCountsAreStable` and `ais/schema_vendor_test` are untouched, and the canonical JSON contract is unchanged.
-- **`ChatCompleter` does not widen.** Responses is a separate capability interface ([ADR 0004](../adr/0004-model-capabilities-with-small-interfaces.md)), so the chat contract, `ais.ChatProvider`, interception and `Stream` are all unchanged.
-- **`composes` gains nothing.** Multi-model dispatch stays on the narrow chat capability; routing Responses through it would force `composes` to import `provider/openai`.
-- **No client-side conveniences.** The default model is not applied, requests are not validated, background responses are not polled, and nothing is retried — consistent with [ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md).
-- **Endpoint support is the server's business.** An OpenAI-*compatible* base URL is not assumed to implement `/responses`; the capability is tied to the OpenAI provider implementation, and a backend without the endpoint fails with its own HTTP error.
-
-When a second provider ships an equivalent interaction form, the shared semantics can be promoted into `ais` under the two-provider rule — through a new ADR and a translation design, not by widening this one.
+- **The chat methods do not widen.** Responses is its own method set, so nothing about it changes the Chat Completions request, response or stream.
+- **`composes` does not dispatch it.** Multi-backend dispatch covers the chat method set; a Responses pool would be its own loop.
+- **No client-side conveniences.** Requests are not validated, background responses are not polled, and nothing is retried — consistent with [ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md).
+- **Endpoint support is the server's business.** An OpenAI-*compatible* base URL is not assumed to implement `/responses`; a backend without the endpoint fails with its own HTTP error.
 
 ## 10. Tests
 
 Offline only — no credentials, no network:
 
 - `provider/openai/responses_test.go` — request round-trip across every documented union (including unmodeled item and tool types), the complete-response fixture (ordered items, all three hosted tools, reasoning, function-call exchange, annotations, logprobs, usage details, derived `OutputText`), failed/incomplete preservation, `httptest` non-streaming call (path, headers, forced non-stream, caller immutability), the full 53-event SSE sweep, typed payload dispatch with multi-line data and comments, unknown-event preservation, terminal `io.EOF`, idempotent `Close`, `error` event, malformed known event, invalid JSON, oversized-line scan failure, and structured/unstructured non-2xx bodies.
-- `responder_test.go` (root) — compile-time `Responder` check, delegation through the resolved OpenAI provider with the configured transport, and the no-network `*ais.CapabilityError` for Anthropic.
-- `integrations/openai_tests/native_responses_test.go` · `responses_test.go` — runnable native and unified examples, non-streaming and streaming, skipped without `OPENAI_API_KEY` / `OPENAI_MODEL`.
+- `provider/openai/roundtrip_test.go` — every exported Responses wire type survives marshal → unmarshal → marshal unchanged, and no exported type is left unclassified.
+- `integrations/openai_tests/native_responses_test.go` — runnable examples, non-streaming and streaming, skipped without `OPENAI_API_KEY` / `OPENAI_MODEL`.

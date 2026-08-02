@@ -27,4 +27,4 @@ Provider-only controls that must not appear on the OpenAI wire use struct-local 
 
 - [ADR 0005 — the decision that supersedes this one](./0005-canonical-shared-semantics-over-provider-native-wire.md)
 - [Architecture §2](../architecture.md#2-canonical-representation-shared-provider-semantics)
-- [Canonical data model](../design/data-model.md)
+- `Canonical data model`

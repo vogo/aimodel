@@ -12,7 +12,7 @@ Each protocol's change log is ordered newest-first, and every entry records at l
 
 For the cross-cutting design behind those changes, start at [doc/architecture.md](./doc/architecture.md).
 
-**Maintenance convention**: when an official API changes, update the wrapper code, the relevant `doc/` design or protocol document, and that protocol's change log — see [doc/architecture.md](./doc/architecture.md) §6. If the change contradicts an invariant an accepted ADR states, supersede that ADR too ([ADR index](./doc/adr.md)).
+**Maintenance convention**: when an official API changes, update the provider's wire types and client, the relevant `doc/` document, and that protocol's change log — see [doc/architecture.md](./doc/architecture.md) §6. If the change contradicts an invariant an accepted ADR states, supersede that ADR too ([ADR index](./doc/adr.md)).
 
 ---
 
@@ -23,7 +23,7 @@ Protocol-independent changes to the SDK's own surface.
 | Version | Change |
 |---|---|
 | v0.5.1 | Deprecate the canonical API. Every symbol removed in v0.6.0 — package `ais`, the root canonical client / stream / interception / `Responder` surface, and both providers' registry and extension entry points — now carries a `Deprecated:` comment pointing at [MIGRATION.md](./MIGRATION.md). No behavior, signature or serialization change. |
-| v0.6.0 *(planned)* | Remove the canonical API. `provider/openai` and `provider/anthropic` native clients become the only public interface; `composes` narrows to dispatch within the OpenAI-compatible wire format. Migration table: [MIGRATION.md](./MIGRATION.md). |
+| v0.6.0 | Remove the canonical API. `provider/openai` and `provider/anthropic` are the only public interface, each expressing its protocol completely and independently; `composes` narrows to dispatch within the OpenAI-compatible wire format. Both `HTTPError` types implement `StatusCode() int` (the field is renamed `Status`), both native streams accumulate and report usage, and `openai.ChatCompletionRequest.ExtraBody` carries backend-private parameters. Migration table: [MIGRATION.md](./MIGRATION.md); reasoning: [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md). |
 
 ---
 
@@ -35,6 +35,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
+| 2026-08-02 | [Native-only public API: observable stream usage merging, timeouts, structural errors](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-07-22 | [Public native Messages client and exported 2026-07-21 baseline wire schema](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-07-22 | [Canonical de-vendoring: Anthropic-only surfaces move to the unified extension channel (breaking; migration table inside)](./doc/anthropic/anthropic-api-changes.md) |
 | 2026-07-21 | [`output_config`, usage extensions, `container`/`inference_geo`, tool fields, unknown-block preservation, profile header](./doc/anthropic/anthropic-api-changes.md) |
@@ -52,6 +53,7 @@ Both protocols merged, newest first. Follow a link for the full entry.
 
 | Date | Change |
 |---|---|
+| 2026-08-02 | [Native-only public API: `ExtraBody`, stream accumulation, timeouts, structural errors](./doc/openai/openai-api-changes.md) |
 | 2026-08-01 | [Support the Responses API: native `/v1/responses` client and the root `Responder` capability](./doc/openai/openai-api-changes.md) |
 | 2026-07-26 | [Remove `ais.Usage.UnmarshalJSON` (breaking for raw-wire decoding)](./doc/openai/openai-api-changes.md) |
 | 2026-07-22 | [Public native Chat Completions client and explicit canonical translation layer](./doc/openai/openai-api-changes.md) |

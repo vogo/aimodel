@@ -17,6 +17,22 @@ Newest first.
 
 ---
 
+## 2026-08-02 — Native-only public API: `ExtraBody`, stream accumulation, timeouts, structural errors
+
+**Official change**: none — this is a change to the wrapper's own surface, recorded here because it changes how every OpenAI-side capability is reached.
+
+**Wrapper change**
+
+- **The canonical layer is gone** (v0.6.0). `provider/openai` is now reached directly: `openai.NewClient(apiKey, ...)` with `ChatCompletions` / `ChatCompletionsStream` and `Responses` / `ResponsesStream`. The registered provider (`Name`, `New`), the canonical translation (`toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk`) and the canonical SSE decoder are deleted, along with the root `Responder` capability, which only forwarded to the native client. Migration table: [MIGRATION.md](../../MIGRATION.md); reasoning: [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md).
+- **`ChatCompletionRequest.ExtraBody`**: a controlled channel for the private top-level parameters OpenAI-*compatible* backends add (`enable_thinking`, `chat_template_kwargs`, …). Additive only — a key colliding with a modelled field, an empty key, or a value that is not valid JSON fails at marshal time, before any network I/O. Decoding fills it with every unmodelled key, so a request body round-trips losslessly. The modelled key set is derived from the struct tags and cannot drift.
+- **`ChatCompletionStream` accumulates while the caller reads**: `Response()` returns the assembled completion (text, reasoning content, refusals and tool-call arguments concatenated in arrival order; identity fields last-non-empty-wins; choices grown by index) and `Usage()` the token accounting. This replaces the canonical `Message.AppendDelta`.
+- **`WithTimeout(d)`**: bounds a whole call. It copies the client configured so far, so the caller's `*http.Client` is never mutated and a transport from an earlier `WithHTTPClient` survives.
+- **`HTTPError` implements `StatusCode() int`**. Go forbids a field and a method sharing a name, so the exported field is renamed `Status`. Consumers now match any provider's transport error through a locally declared `interface{ StatusCode() int }` without importing this package. **Breaking** for code reading the field directly.
+- **Model, role, finish-reason, reasoning-effort, content-part and tool constants** move into this package (`model.go`), covering OpenAI and the OpenAI-compatible backends addressed over this protocol. Model names are protocol facts, not a vendor-neutral contract.
+- **Request copying is shallow** rather than a JSON round trip when forcing the stream flag — faster, and it no longer erases `ExtraBody` in transit.
+
+---
+
 ## 2026-08-01 — Support the Responses API: native `/v1/responses` client and the root `Responder` capability
 
 **Official change**: OpenAI positions the Responses API (`POST /v1/responses`) as its primary interface. The Assistants API retires **2026-08-26**, and hosted tools (`web_search` / `file_search` / `code_interpreter`), `previous_response_id` chaining, server-side conversations, reasoning items with encrypted content, and the newer prompt-cache controls exist only on Responses. Chat Completions keeps working but receives no new capabilities.

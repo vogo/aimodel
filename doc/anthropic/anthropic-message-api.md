@@ -1,246 +1,256 @@
 # Anthropic Messages API — Wrapper Design & Implementation
 
-- **Official protocol**: Anthropic Messages API (`POST /v1/messages`)
-- **Official docs**: https://platform.claude.com/docs/en/api/messages
-- **Implementation** (all under `provider/anthropic/`): `anthropic.go` (native wire types and bidirectional translation), `provider.go` (request building, auth headers, response/error parsing, `Options`), `stream.go` (SSE parsing)
-- **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
+How `provider/anthropic` wraps `POST {baseURL}/v1/messages`.
 
-The core premise is in [../architecture.md](../architecture.md): canonical types contain only semantics mapped by at least two providers. This document records the Anthropic side of that mapping. Canonical type semantics live in [../design/data-model.md](../design/data-model.md).
+- **Official reference**: https://platform.claude.com/docs/en/api/messages
+- **Code**: `provider/anthropic/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly, usage merge), `model.go` / `const.go` (constants)
+- **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
 ---
 
-## 1. Overall structure
-
-```
-ChatRequest ──toAnthropicRequest()──▶ MessagesRequest ──JSON──▶ POST {base}/v1/messages
-                                                                        │
-ChatResponse ◀─fromAnthropicResponse()── MessagesResponse ◀─────────────┘   (non-streaming)
-
-Stream.Recv() ◀─anthropicRecvFunc()── SSE events (message_start / content_block_* / message_delta / …)
-
-Client.Messages() / Client.MessagesStream() ── public native wire types ──▶ POST /v1/messages
-```
-
-The Anthropic wire schema is public and fixed to the repository's 2026-07-21 audit baseline. The canonical adapter and native `Client` share `MessagesRequest`, `MessagesResponse`, content, usage, error, and SSE payload types; no private parallel wire structs exist. Native calls bypass canonical defaults and translation, preserve the caller request, and force only `stream:false` or `stream:true` on an internal copy.
-
-The native constructor is `anthropic.NewClient(apiKey, ...ClientOption)`. Options cover base URL, custom `http.Client`, version, beta values, and user profile ID. `MessagesStream` returns events in wire order through `Recv`; `Raw` preserves unknown event payloads, and `Close` is idempotent.
-
-## 2. Endpoint, auth & headers
+## 1. Client
 
 ```go
-const (
-    anthropicDefaultBaseURL   = "https://api.anthropic.com"
-    anthropicAPIVersion       = "2023-06-01"
-    anthropicDefaultMaxTokens = 4096
+client := anthropic.NewClient(apiKey,
+    anthropic.WithBaseURL("https://api.anthropic.com"),   // optional
+    anthropic.WithVersion("2023-06-01"),                  // optional
+    anthropic.WithBeta("context-1m-2025-08-07"),          // optional
+    anthropic.WithUserProfileID("user_abc123"),           // optional
+    anthropic.WithTimeout(90*time.Second),                // optional
 )
 ```
-
-- **Base URL**: the configured base URL when non-empty, otherwise the default — which is why the Anthropic factory allows construction without a base URL.
-- **Headers** (`provider.setHeaders`):
 
 | Header | Value |
 |---|---|
 | `Content-Type` | `application/json` |
-| `x-api-key` | the configured API key (note: **not** `Authorization: Bearer`) |
-| `anthropic-version` | `Options.Version`, else `2023-06-01` |
-| `anthropic-beta` | `Options.Beta` values comma-joined (empty strings dropped); **header omitted entirely when empty** |
-| `anthropic-user-profile-id` | `Options.UserProfileID`; **header omitted entirely when empty** |
+| `x-api-key` | the API key — note this protocol does **not** use `Authorization: Bearer` |
+| `anthropic-version` | `WithVersion`, else `2023-06-01` |
+| `anthropic-beta` | `WithBeta` values comma-joined, empty strings dropped; the header is omitted entirely when empty |
+| `anthropic-user-profile-id` | `WithUserProfileID`; omitted when empty |
 
-The Anthropic-specific configuration is passed as an `anthropic.Options` value through `aimodel.WithProviderOptions` at client construction.
+`anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context editing, structured outputs, fast mode, advisor, …). This SDK emits the header; it models no specific beta capability's fields.
 
-`anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context-editing, structured-outputs, fast-mode, advisor, …). The SDK only emits the header; it models no specific beta capability's fields.
+`WithTimeout` bounds a whole call, including reading a streaming body. It copies the client configured so far, so the caller's own `*http.Client` is never mutated and a transport installed by an earlier `WithHTTPClient` survives; apply it after `WithHTTPClient`.
 
-## 3. Request translation (`toAnthropicRequest`)
+## 2. Request
 
-### 3.1 Pass-through fields
-
-| Canonical field | Anthropic field |
-|---|---|
-| `Model` | `model` |
-| `Temperature` | `temperature` |
-| `TopP` | `top_p` |
-| `TopK` | `top_k` |
-| `Stop []string` | `stop_sequences` |
-| `Stream` | `stream` |
-| `Thinking` | `thinking` (struct reused directly) |
-| `ReasoningEffort` | `output_config.effort` |
-| `ResponseFormat` (JSON-schema shape) | `output_config.format` |
-| `anthropic.RequestExtension.Container` | `container` |
-| `anthropic.RequestExtension.InferenceGeo` | `inference_geo` |
-
-Anthropic-only request parameters arrive through the extension channel (`anthropic.ExtendRequest` / `ExtendMessage` / `ExtendTool`); a value of the wrong type in this provider's namespace fails `toAnthropicRequest` with a `*ais.ExtensionTypeError` naming the node — before any network I/O.
-
-### 3.2 `max_tokens` (required)
-
-Anthropic's `max_tokens` is **mandatory**, while the canonical request may omit it, so there is a three-level fallback:
-
-```
-MaxCompletionTokens (preferred) → MaxTokens (deprecated) → 4096 (anthropicDefaultMaxTokens)
+```go
+resp, err := client.Messages(ctx, &anthropic.MessagesRequest{
+    Model:     anthropic.ModelClaudeSonnet5,
+    MaxTokens: 1024,
+    Messages: []anthropic.MessagesMessage{
+        {Role: anthropic.RoleUser, Content: json.RawMessage(`"Hi"`)},
+    },
+})
 ```
 
-### 3.3 System messages: only the leading run is hoisted
+Two shapes in this protocol differ from what a Chat Completions user expects:
 
-This is a **position-sensitive** translation. Anthropic puts the system prompt in a top-level `system` field, but since Opus 4.8 (2026-05-28) `messages` may also contain **mid-conversation** `role:"system"` entries.
+- **`MaxTokens` is required.** The API rejects a request without it, and the wire type does not default it.
+- **`Content` is `json.RawMessage`.** The API accepts both a bare string and a content-block array in that position, so the field carries whichever the caller sends: a quoted string, or a marshalled `[]ContentBlock`. Nothing is reshaped on the way out.
 
-The rule:
+**System prompts are not a role.** They are the top-level `System` field, itself either a string or a block array — which is what makes a cache breakpoint on the system prompt expressible.
 
-- only the consecutive system messages **before the first non-system message** are hoisted into the top-level `system`;
-- any system message appearing later stays **in place** as a `role:"system"` Anthropic message.
+The stream flag is set on a copy of the request, so a call never mutates the caller's value.
 
-A `seenNonSystem` flag implements this. It preserves two things: the instruction's **position semantics**, and **prompt-cache hits** (lifting a mid-conversation instruction to the front invalidates the entire prefix).
+### 2.1 Content blocks
 
-The `system` field has two wire shapes, carried by `json.RawMessage`:
+`ContentBlock` covers the documented request-side kinds; `const.go` names the discriminators without closing the set:
 
-| Condition | Shape |
+| `Type` | Fields used |
 |---|---|
-| Plain text, no cache marker | String (multiple entries joined with `\n`) |
-| Contains multimodal parts, or any entry flagged via `anthropic.MessageExtension.CacheBreakpoint` | Block array `[{type:"text",text:…}]` |
+| `text` | `Text` |
+| `thinking` | `Thinking` |
+| `image` / `document` | `Source` — `base64` (with `MediaType` + `Data`), `url`, `text` or nested `content` |
+| `tool_use` | `ID`, `Name`, `Input` (raw JSON) |
+| `tool_result` | `ToolUseID`, `ResultContent` |
 
-When a cache marker is set, `cache_control` attaches to the **last** block — Anthropic caches everything "up to and including" that block.
+A **tool result is a `user` turn** in this protocol, not a role of its own:
 
-### 3.4 Message translation (`toAnthropicMessage`)
-
-The content shape is chosen per message type:
-
-| Input | Output |
-|---|---|
-| `RoleTool` | `role:"user"` + `[{type:"tool_result", tool_use_id, content}]`; a missing `ToolCallID` is an error |
-| `RoleAssistant` with thinking or tool calls | Block array: `thinking` block → `text` block → one `tool_use` block each (`Input` is `Function.Arguments` verbatim as `json.RawMessage`) |
-| Contains multimodal parts | Block array: `text` → `{type:"text"}`; `image_url` → `{type:"image", source:…}` |
-| Plain text + cache breakpoint (`anthropic.MessageExtension`) | Single-element block array (so there is a block to attach `cache_control` to) |
-| Plain text | String |
-
-**Image source discrimination**: `parseDataURI` recognizes the `data:<mediaType>;base64,<data>` form → `source{type:"base64", media_type, data}`; anything else is treated as a remote URL → `source{type:"url", url}`.
-
-In every block-array shape, the cache breakpoint attaches to the **last** block.
-
-### 3.5 Tools & `tool_choice`
-
-The base mapping is direct: `Function.Name/Description/Parameters` → `name/description/input_schema`; a true `anthropic.ToolExtension.CacheBreakpoint` attaches `cache_control` (Anthropic caches every tool definition up to and including it).
-
-The canonical `Strict` maps to `strict`; the `anthropic.ToolExtension` controls are copied verbatim: `DeferLoading` → `defer_loading`, `AllowedCallers` → `allowed_callers`, `EagerInputStreaming` → `eager_input_streaming`, `InputExamples` → `input_examples` (all `omitempty`).
-
-`Tool.Type` doubles as the Anthropic tool type, but in OpenAI semantics that canonical field is `"function"` for every ordinary tool, and sending that verbatim would be rejected — so **`"function"` and empty alike are treated as Anthropic's default custom tool and not sent**. Any other value (a versioned built-in such as `web_search_20260209`) passes through with no enumeration and no version-name validation.
-
-The `tool_choice` mapping and the `ParallelToolCalls` folding rules are documented in [../design/tool-use.md](../design/tool-use.md) §2, and the consecutive-`RoleTool` merge in §3.1 of that document.
-
-### 3.6 Reasoning & thinking
-
-- `ReasoningEffort` → `output_config.effort`; empty is omitted. It **supersedes** `thinking.budget_tokens` as the reasoning-depth control for new models. The top-level `anthropicRequest.Effort` is deprecated and no longer assigned, so the two are never sent together.
-- `ResponseFormat` → `output_config.format` (`{type:"json_schema", schema:…}`): both OpenAI's nested `json_schema.schema` and the flat `schema` are accepted; the schema passes through unvalidated and unrewritten; a shape with no extractable schema (e.g. `{type:"json_object"}`) yields **no** `format` rather than a fabricated one. When both `effort` and `format` are empty, the whole `output_config` is omitted.
-- `Thinking.Type`: `"enabled"` / `"disabled"` / `"adaptive"` (the model sizes its own thinking); kept a `string` for pass-through.
-- `Thinking.BudgetTokens`: **deprecated**, retained only for models / callers that still pin an explicit budget.
-- `Thinking.Display`: `"omitted"` (since 2026-03-16) suppresses thinking content to speed up streaming.
-
-### 3.7 Prompt caching
-
-Two coexisting modes — per-block breakpoints (`anthropic.MessageExtension` / `ToolExtension`) and request-root automatic caching (`anthropic.RequestExtension.AutoCache` / `AutoCacheTTL`). Both ride the `Extensions` channel (`json:"-"`) and never appear in another provider's wire body. See [../design/prompt-caching.md](../design/prompt-caching.md) §2.
-
-## 4. Response translation (`fromAnthropicResponse`)
-
-Content blocks are aggregated into a single assistant message:
-
-| Block type | Destination |
-|---|---|
-| `thinking` | Accumulated, joined with `\n` → `Message.Thinking` |
-| `text` | Accumulated, joined with `\n` → `Message.Content` |
-| `tool_use` | Appended as `ToolCall{Index, ID, Type:"function", Function{Name, Arguments:string(Input)}}` |
-| anything else (`server_tool_use`, `web_search_tool_result`, `code_execution_tool_result`, future types) | Raw JSON appended to the message extension's `ExtraBlocks` (`anthropic.MessageExtensionOf(&msg)`) |
-
-A `text` block carrying `citations` contributes its text as usual **and additionally** appends its whole original block to `ExtraBlocks` — the annotations are not promoted to canonical fields, but they are not lost either.
-
-Fidelity dictates the implementation: `anthropicResponse.Content`'s element type is `anthropicResponseBlock`, which decodes the known fields **while retaining each block's original bytes** (decoding into a known struct and re-marshalling would drop unmodelled fields). That type also shadows the request-side `ResultContent` (tagged `content` too) with a `json.RawMessage` — the response-side `content` is polymorphic (an array for server-tool results, an object for code-execution results), and decoding it as a `string` would fail the entire response.
-
-Remaining fields: `ID` → `ID`; `Object` is fixed at `"chat.completion"`; `Model` passes through; `container` → the response extension (`anthropic.ResponseExtensionOf(resp).Container`, a `*ResponseContainer{ID, ExpiresAt}` — the public type's JSON tags match the wire shape, so it deserializes directly; `ExpiresAt` stays the server string, with no expiry parsing and no auto-renewal); exactly **one `Choice`** is produced (Anthropic has no `n` concept).
-
-### 4.1 Stop-reason mapping (`mapAnthropicStopReason`)
-
-| Anthropic `stop_reason` | Canonical `FinishReason` |
-|---|---|
-| `end_turn`, `stop_sequence` | `stop` |
-| `max_tokens` | `length` |
-| `tool_use` | `tool_calls` |
-| `model_context_window_exceeded` | `anthropic.FinishReasonModelContextWindowExceeded` (**not** folded into `length` — it is a context-window overflow, not the requested `max_tokens` being hit) |
-| `refusal` | `anthropic.FinishReasonRefusal` (streaming classifiers aborted on a potential policy violation) |
-| `pause_turn` | `anthropic.FinishReasonPauseTurn` (a long-running / server-tool turn was paused; the client may replay it) |
-| anything else | Passed through verbatim as `FinishReason(reason)` |
-
-The last three keep Anthropic's semantics rather than being normalized into `content_filter` / `length` — deliberately, because normalizing destroys exactly the information a caller decides on (replay? switch model? change the prompt?). The constants are named in this package; the canonical `FinishReason` stays an open string.
-
-### 4.2 `stop_details`
-
-`anthropicResponse.StopDetails` is declared directly as the public `*anthropic.StopDetails` — the JSON tags match the wire shape (`type` / `category` / `explanation`), so it **deserializes with no conversion** and is attached to the choice extension (`anthropic.ChoiceExtensionOf(&choice).StopDetails`).
-
-### 4.3 Usage mapping (`anthropicCanonicalUsage`)
-
-Non-streaming and streaming **share** this helper:
-
-```
-PromptTokens       = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-CompletionTokens   = output_tokens
-TotalTokens        = PromptTokens + CompletionTokens
-CacheReadTokens    = cache_read_input_tokens
-ReasoningTokens    = output_tokens_details.thinking_tokens      (when present)
-ServiceTier        = service_tier
-
-anthropic.UsageExtension (attached when any member is present):
-  CacheWriteTokens   = cache_creation_input_tokens
-  CacheWrite5mTokens = cache_creation.ephemeral_5m_input_tokens   (when present)
-  CacheWrite1hTokens = cache_creation.ephemeral_1h_input_tokens   (when present)
-  ServerToolUse      = server_tool_use{web_search_requests, web_fetch_requests}  (when present)
-  InferenceGeo       = inference_geo
+```go
+{Role: anthropic.RoleUser, Content: blocks(
+    anthropic.ContentBlock{Type: anthropic.ContentBlockTypeToolResult,
+        ToolUseID: "toolu_1", ResultContent: `{"temp_c":18}`},
+)}
 ```
 
-Note that `PromptTokens` is the **total input including the cached portion** (`totalInputTokens()`); the cache read/write counts are subsets of it, surfaced separately purely for observability. `Usage.Add` accumulates the canonical counts and leaves `ServiceTier` and the extension alone — they describe one request, so neither concatenation nor summation is meaningful. Read the extension via `anthropic.UsageExtensionOf(&usage)`.
+Several parallel tool results belong in **one** user message as several blocks — the API rejects consecutive `user` turns.
 
-## 5. Streaming (`provider/anthropic/stream.go`)
+### 2.2 Tools
 
-Anthropic's SSE differs structurally from OpenAI's in two ways, both absorbed by `streamDecoder.Next`:
+```go
+req.Tools = []anthropic.MessagesTool{{
+    Name:        "get_weather",
+    Description: "Get the current weather in a city",
+    InputSchema: map[string]any{ /* JSON Schema, passed through as-is */ },
+    Strict:      new(true),
+}}
+req.ToolChoice = &anthropic.ToolChoice{Type: anthropic.ToolChoiceTypeAuto}
+```
 
-1. **Events come in pairs**: an `event: <type>` line followed by a `data: <json>` line. After reading `event:` the parser keeps scanning downward, skipping blank lines and `:` comments, until it finds the `data:`.
-2. **It is stateful**: `message_start` provides `id` / `model` / input-side usage that later chunks must carry.
+`Type` on a tool selects its *kind*: empty means the default custom tool, and a versioned built-in (`web_search_20260209`, `code_execution_20260521`, …) passes through unvalidated, so a newly released tool version works without an SDK update.
 
-Closure state: `msgID`, `model`, `startUsage`, `blockToTool map[int]int`, `nextToolIdx`, `unknownBlocks map[int]bool`.
-
-### 5.1 Event handling
-
-| Event | Behavior |
+| Field | Meaning |
 |---|---|
-| `message_start` | Record `msgID` / `model` / `startUsage`; **when a `container` is present, immediately emit a chunk carrying only the response extension** (`anthropic.ChunkExtensionOf`), otherwise emit nothing |
-| `content_block_start` (`tool_use`) | Allocate a tool index, record `blockToTool[block index] = tool index`, emit a tool-call chunk carrying `ID` / `Name` |
-| `content_block_start` (`text` / `thinking`) | Skip |
-| `content_block_start` (unknown type) | Record `unknownBlocks[block index] = true`, emit a delta whose message extension carries the raw `content_block` |
-| `content_block_delta` (block index in `unknownBlocks`) | Whatever the delta's own type, emit a delta whose message extension carries the raw `delta` |
-| `content_block_delta` / `text_delta` | Emit `Delta.Content` |
-| `content_block_delta` / `thinking_delta` | Emit `Delta.Thinking` |
-| `content_block_delta` / `input_json_delta` | Look the tool index up via `blockToTool`, emit a `Function.Arguments` fragment; skip when not found |
-| `content_block_delta` / `signature_delta` | Skip |
-| `content_block_delta` (unknown delta type on a **known** block) | Emit a delta whose message extension carries the raw `delta` |
-| `message_delta` | Emit the terminal chunk: `FinishReason` (via `mapAnthropicStopReason`) + the choice extension's `StopDetails`; when it carries `usage`, fold it into `startUsage` via `mergeAnthropicUsage` and produce the full `Usage` via `anthropicCanonicalUsage` |
-| `message_stop` | Return `io.EOF` |
-| `error` | Return `*APIError{Type, Message}` |
-| `ping` / `content_block_stop` | Skip |
+| `Strict` | Guarantee the tool input validates exactly against the declared schema |
+| `CacheControl` | Cache every tool definition up to and including this one (§4) |
+| `DeferLoading` | Keep this tool's schema out of the initial context for on-demand discovery by tool search. At least one tool must stay loaded |
+| `AllowedCallers` | Restrict who may invoke the tool, e.g. `["code_execution_20260120"]` for programmatic tool calling |
+| `EagerInputStreaming` | Stream this tool's input as partial JSON instead of buffering it |
+| `InputExamples` | Sample inputs demonstrating a complex schema |
 
-### 5.2 Index remapping
+`ToolChoice.DisableParallelToolUse` limits the model to one tool call per turn; `Type` is `auto`, `any` (some tool required), `tool` (the one named in `Name`) or `none`.
 
-Anthropic uses one monotonically increasing index across **all** content blocks (text, thinking, tool_use), whereas the canonical `Message.AppendDelta` expects indices scoped **to tool calls only**. `blockToTool` is that remapping table: it is populated when a `tool_use` `content_block_start` arrives, and later `input_json_delta` events use it to deliver argument fragments to the correct tool call.
+### 2.3 Reasoning
 
-### 5.3 Two-part usage assembly
+Two independent controls:
 
-Anthropic puts the input-side counts (including cache read/write, `inference_geo`, `service_tier`, `server_tool_use`) on `message_start` and the final `output_tokens` on `message_delta`. The parser therefore stashes the former in `startUsage`, merges the terminal event in via `mergeAnthropicUsage`, and only then converts — which is what guarantees streaming and non-streaming callers get a **structurally identical** `Usage`.
+- `Thinking` — `{Type: "enabled"|"disabled"|"adaptive", BudgetTokens, Display}`. `Display: "omitted"` suppresses thinking blocks in the response.
+- `OutputConfig.Effort` — `low`/`medium`/`high`/`xhigh`/`max`. This supersedes the former top-level `effort` parameter, which is no longer sent.
 
-Merging rather than replacing is the crucial part: the terminal event typically carries only `output_tokens`, so `mergeAnthropicUsage` updates only the fields that event **actually carries**. Otherwise zero values would wipe out the input, cache, geography, service-tier and server-tool information already established at `message_start`.
+`OutputConfig.Format` carries structured outputs; the caller's JSON Schema is passed through unvalidated.
 
-### 5.4 Container ID is emitted early
+## 3. Response
 
-See [../design/streaming.md](../design/streaming.md) §3.
+```go
+type MessagesResponse struct {
+    ID, Type, Role, Model string
+    Content               []ResponseContentBlock
+    StopReason            string
+    StopSequence          *string
+    StopDetails           *StopDetails       // structured stop classification, e.g. a refusal category
+    Usage                 MessagesUsage
+    Container             *ResponseContainer // server-side execution container, when one was used
+}
+```
 
-## 6. Error handling
+The response is a **content-block array**, not a single string: walk it by block type. `ResponseContentBlock` embeds the known fields and keeps the verbatim JSON of the whole block in `Raw`, so a block kind this SDK does not model — a server-tool result, a future type, a text block carrying citations — reaches the caller intact rather than being dropped.
 
-`provider.ParseErrorResponse`: the pipeline reads the body (capped at 1 MB) and hands the bytes to the provider, which decodes `{"type":"error","error":{"type":…,"message":…}}` → fill in `APIError{StatusCode, Type, Message}`. When the JSON fails to decode or `message` is empty, the **raw body goes into `Message` verbatim**, so diagnostics are never lost.
+`Content` on a response block is `json.RawMessage` rather than a string: server-tool results carry an array there, code-execution results an object.
 
-An `error` event on the streaming path likewise produces an `*APIError`, but without an HTTP status code (`StatusCode` is 0).
+`StopReason` values are named in `const.go` (`end_turn`, `stop_sequence`, `max_tokens`, `tool_use`, `model_context_window_exceeded`, `refusal`, `pause_turn`) and the field stays an open string.
 
-## 7. Mapping boundary
+## 4. Prompt caching
 
-Every retained `ChatRequest` field is consumed by this translation path or a helper it invokes. `ResponseFormat` maps only its JSON-schema shape (§3.6); other shapes produce no fabricated config. OpenAI-only request/response capabilities are absent from canonical types rather than silently ignored here. Response-side `Usage.ServiceTier` remains canonical because both providers report it.
+Anthropic caching is **explicit**: the request says where the cacheable prefix ends. Two mechanisms, independent and combinable:
+
+**Per-block breakpoint** — `cache_control` on a content block or a tool. Anthropic caches everything up to *and including* the marked block, so the marker belongs on the last block of the prefix you want cached:
+
+```go
+System: blocks(anthropic.ContentBlock{
+    Type: anthropic.ContentBlockTypeText, Text: longSystemPrompt,
+    CacheControl: &anthropic.CacheControl{Type: anthropic.CacheControlTypeEphemeral},
+})
+```
+
+**Request-root automatic caching** — one `cache_control` at the request root. The server places the breakpoint on the last cacheable block and advances it as the conversation grows, so the caller maintains nothing:
+
+```go
+req.CacheControl = &anthropic.CacheControl{
+    Type: anthropic.CacheControlTypeEphemeral,
+    TTL:  anthropic.CacheControlTTL1h,   // empty = the default 5-minute cache
+}
+```
+
+Accounting comes back on `MessagesUsage`:
+
+| Field | Meaning |
+|---|---|
+| `CacheReadInputTokens` | Tokens served from cache |
+| `CacheCreationInputTokens` | Tokens written to cache, across TTLs |
+| `CacheCreation.Ephemeral5mInputTokens` / `Ephemeral1hInputTokens` | The per-TTL split; the two sum to `CacheCreationInputTokens` |
+
+Unlike OpenAI, these counts are reported **alongside** `InputTokens` rather than inside it: `TotalInputTokens()` returns the billable sum.
+
+If cache reads stay 0 across requests that should share a prefix, something is invalidating it — a per-request timestamp or ID early in the prompt, a non-deterministic map serialization, or a changed tool list (tools serialize before messages, so any tool change invalidates everything after).
+
+## 5. Streaming
+
+`MessagesStream` returns a `*MessageStream`. `Recv` returns one `StreamEvent` per SSE event, in arrival order, with the decoded payload on the matching field and the verbatim JSON always on `Raw`:
+
+| `Type` | Payload field |
+|---|---|
+| `message_start` | `MessageStart` — the message envelope and the baseline usage |
+| `content_block_start` | `ContentBlockStart` |
+| `content_block_delta` | `ContentBlockDelta` — `text_delta`, `thinking_delta`, `signature_delta`, `input_json_delta` |
+| `message_delta` | `MessageDelta` — the stop reason and the terminal usage |
+| `error` | `Error` |
+| `ping`, `content_block_stop`, `message_stop`, anything else | none — the payload is on `Raw` |
+
+An event type this SDK does not model is delivered rather than skipped, so a new event kind is visible to the caller the day the API ships it.
+
+### 5.1 Accumulation
+
+The stream folds every event into the message it reconstructs while the caller reads:
+
+```go
+for {
+    event, err := stream.Recv()
+    if errors.Is(err, io.EOF) { break }
+    if err != nil { return err }
+    if event.ContentBlockDelta != nil { fmt.Print(event.ContentBlockDelta.Delta.Text) }
+}
+
+message := stream.Message()   // assembled message, the same shape as the unary one
+usage := stream.Usage()       // merged token accounting
+```
+
+| Delta | Rule |
+|---|---|
+| `text_delta` | concatenated onto the block's `Text` |
+| `thinking_delta` | concatenated onto the block's `Thinking` |
+| `input_json_delta` | concatenated into the block's `Input` — tool input arrives as partial JSON that is only valid once complete |
+| `message_delta` | supplies `StopReason`, `StopSequence` and `StopDetails` |
+
+Blocks grow by index, so an out-of-order or skipped index does not drop the earlier ones. `ResponseContentBlock.Raw` holds the block as it first arrived and is not rewritten by later deltas. Before `io.EOF`, `Message()` is a live snapshot in which a tool block's `Input` may still be incomplete.
+
+`Close` is idempotent and safe to call concurrently with `Recv`.
+
+### 5.2 Usage arrives in two parts
+
+Anthropic reports usage twice: a baseline on `message_start` (input, cache reads/writes, geography, service tier) and the final counts on the terminal `message_delta` (output tokens). `Usage()` merges them, and the merge is **field-wise**: a later event overwrites only what it actually carries, so a terminal event reporting just `output_tokens` does not blank out everything established at the start.
+
+```go
+usage := stream.Usage()
+// InputTokens, CacheReadInputTokens, InferenceGeo, ServiceTier — from message_start
+// OutputTokens                                                 — from message_delta
+```
+
+`Usage()` returns nil before the first `message_start`, and `Message().Usage` is the same value.
+
+## 6. Errors
+
+```go
+type HTTPError struct {
+    Status        int             // read it through StatusCode()
+    Type, Message string
+    Body          json.RawMessage // the bounded raw body, always retained
+    Err           error
+}
+
+func (e *HTTPError) StatusCode() int
+```
+
+Parsing: read the body under a 1 MB cap, try `{"type":"error","error":{type,message}}`, and if that fails or carries no message, keep the raw body as `Message`.
+
+`StatusCode()` is a method rather than a field so a consumer can match any provider's transport error structurally, without importing this package:
+
+```go
+type statusCoder interface{ StatusCode() int }
+
+var sc statusCoder
+if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests { /* back off */ }
+```
+
+An `error` event inside a stream is delivered as `StreamEvent.Error`, not as a Go error — it is part of the event sequence and the caller decides what to do with it.
+
+## 7. Protocol capability notes
+
+Facts about the protocol that this wrapper passes through rather than resolves:
+
+- **No `system` role.** A system prompt is the top-level `System` field. A conversation that tries to send one as a message will be rejected.
+- **No standalone tool role.** Tool results are `user` turns carrying `tool_result` blocks, and consecutive `user` turns are rejected — batch parallel results into one message.
+- **`top_k` is native here**, unlike on Chat Completions where it depends on the backend.
+- **Thinking blocks come back as content**, alongside text, rather than in a separate field.
+- **Unmodelled blocks and events are preserved verbatim** (`ResponseContentBlock.Raw`, `ContentBlockDelta.Raw`, `StreamEvent.Raw`), because this protocol adds block and event kinds faster than a wrapper can model them.
+- **Model names are strings.** `model.go` names the current Claude models; a model released tomorrow works without an SDK update.

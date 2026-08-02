@@ -1,37 +1,33 @@
 # provider/anthropic
 
-The Anthropic Messages API provider: the registered `anthropic` provider used by the unified
-`aimodel.Client`, plus a public **native** client over Anthropic's own wire types.
+A complete client for the Anthropic Messages API over Anthropic's own wire types. It imports no
+other package in this module.
 
-Importing this package registers the provider under `Name` (`"anthropic"`); select it from the
-root package with `aimodel.WithProvider(anthropic.Name)`.
-
-| Endpoint | Native client | Canonical translation |
-|---|---|---|
-| `POST {baseURL}/v1/messages` | `Client.Messages` / `MessagesStream` | yes — `ais.ChatRequest` ⇄ `MessagesRequest` |
+| Endpoint | Methods |
+|---|---|
+| `POST {baseURL}/v1/messages` | `Messages` / `MessagesStream` |
 
 The base URL defaults to `https://api.anthropic.com`, the API version header to `2023-06-01`.
-Wire mapping details: [doc/anthropic/anthropic-message-api.md](../../doc/anthropic/anthropic-message-api.md).
+Protocol details: [doc/anthropic/anthropic-message-api.md](../../doc/anthropic/anthropic-message-api.md).
 
 ## What this package exposes
 
-### Provider registration
+### Client
 
 | Symbol | Purpose |
 |---|---|
-| `Name` | Registered provider name |
-| `New(ais.Config) (ais.ChatProvider, error)` | Provider constructor called by the registry. Base URL is optional; `cfg.Options`, when set, must be `Options` |
-| `Options` | Client-level vendor options — `Beta` (`anthropic-beta` header), `Version` (`anthropic-version`), `UserProfileID` (`anthropic-user-profile-id`). Pass via `aimodel.WithProviderOptions` |
-
-### Native client
-
-| Symbol | Purpose |
-|---|---|
-| `NewClient(apiKey string, options ...ClientOption) *Client` | Native Messages client |
-| `WithBaseURL`, `WithHTTPClient`, `WithVersion`, `WithBeta`, `WithUserProfileID` | Client options |
+| `NewClient(apiKey string, options ...ClientOption) *Client` | Returns no error — there is nothing left to validate at construction |
+| `WithBaseURL(url)` | Override the default endpoint; trailing `/` stripped |
+| `WithHTTPClient(hc)` | Full transport control; `nil` panics |
+| `WithTimeout(d)` | Bounds a whole call. Copies the client configured so far, so the caller's `*http.Client` is untouched and an earlier transport survives. Apply after `WithHTTPClient` |
+| `WithVersion(v)` | `anthropic-version` header |
+| `WithBeta(values...)` | `anthropic-beta` header; empty values dropped, the rest comma-joined, header omitted when empty |
+| `WithUserProfileID(id)` | `anthropic-user-profile-id` header; omitted when empty |
 | `(*Client).Messages(ctx, *MessagesRequest) (*MessagesResponse, error)` | Non-streaming Messages call |
 | `(*Client).MessagesStream(ctx, *MessagesRequest) (*MessageStream, error)` | Streaming Messages call; `Recv()` returns `*StreamEvent`, ends with `io.EOF` |
-| `HTTPError` | Non-2xx error, retaining the bounded raw body |
+| `HTTPError` | Non-2xx error, retaining the bounded raw body. `StatusCode() int` is the accessor |
+
+Auth is the `x-api-key` header — this protocol does not use `Authorization: Bearer`.
 
 ### Wire types
 
@@ -42,142 +38,40 @@ Wire mapping details: [doc/anthropic/anthropic-message-api.md](../../doc/anthrop
 (`StreamEvent`, `MessageStartEvent`, `ContentBlockStartEvent`, `ContentBlockDeltaEvent`,
 `MessageDeltaEvent`).
 
+Constants for models, roles, effort levels, thinking types, block/delta/event discriminators, stop
+reasons, tool-choice types and cache control live in `model.go` and `const.go`. Every one of those
+fields stays an open string.
+
 Fidelity guarantee: every response block and stream delta keeps its verbatim JSON in `Raw`, so
 server-tool results, citations and future block types survive without a lossy round trip.
-
-### Extension channel (canonical requests / responses)
-
-Anthropic-only semantics never enter `ais`; they ride the `ais.Extensions` channel through
-typed helpers owned by this package.
-
-Request side — attach with `Extend*`, read back with `*Of`:
-
-| Type | Attach / read | Carries |
-|---|---|---|
-| `RequestExtension` | `ExtendRequest` / `RequestExtensionOf` | `AutoCache`, `AutoCacheTTL`, `Container`, `InferenceGeo` |
-| `MessageExtension` | `ExtendMessage` / `MessageExtensionOf` | `CacheBreakpoint`; on the response side, unmodelled content blocks in `ExtraBlocks` |
-| `ToolExtension` | `ExtendTool` / `ToolExtensionOf` | `CacheBreakpoint`, `DeferLoading`, `AllowedCallers`, `EagerInputStreaming`, `InputExamples` |
-
-Response side — written by this provider, read with:
-
-| Reader | Returns |
-|---|---|
-| `ResponseExtensionOf(*ais.ChatResponse)` / `ChunkExtensionOf(*ais.StreamChunk)` | `*ResponseExtension` — the server-side execution `Container` |
-| `ChoiceExtensionOf(*ais.Choice)` / `ChunkChoiceExtensionOf(*ais.StreamChunkChoice)` | `*ChoiceExtension` — the structured `StopDetails` |
-| `UsageExtensionOf(*ais.Usage)` | `*UsageExtension` — cache-write tokens (with 5m/1h split), `ServerToolUse`, `InferenceGeo` |
-
-### Pass-through finish reasons
-
-`FinishReasonModelContextWindowExceeded`, `FinishReasonRefusal`, `FinishReasonPauseTurn` — Anthropic
-stop reasons with no canonical equivalent, surfaced verbatim instead of folded into
-`stop` / `length` / `content_filter`. Treat any non-canonical `ais.FinishReason` as opaque.
+`TestWireTypesRoundTripLosslessly` checks every exported wire type.
 
 ## Usage
 
-### Unified client (canonical types)
-
 ```go
-import (
-    "github.com/vogo/aimodel"
-    "github.com/vogo/aimodel/ais"
-    "github.com/vogo/aimodel/provider/anthropic"
-)
+client := anthropic.NewClient(apiKey)
 
-client, _ := aimodel.NewClient(
-    aimodel.WithProvider(anthropic.Name),
-    aimodel.WithAPIKey(apiKey),
-)
-
-resp, _ := client.ChatCompletion(ctx, &ais.ChatRequest{
-    Model: ais.ModelAnthropicClaudeSonnet5,
-    Messages: []ais.Message{
-        {Role: ais.RoleUser, Content: ais.NewTextContent("Hello!")},
+response, err := client.Messages(ctx, &anthropic.MessagesRequest{
+    Model:     anthropic.ModelClaudeSonnet5,
+    MaxTokens: 1024,
+    Messages: []anthropic.MessagesMessage{
+        {Role: anthropic.RoleUser, Content: json.RawMessage(`"Hello!"`)},
     },
 })
 
-fmt.Println(resp.Choices[0].Message.Content.Text())
+fmt.Println(response.Content[0].Text)
 ```
 
-Client-level vendor headers:
+`MaxTokens` is required by the API. `MessagesMessage.Content` is `json.RawMessage` because the
+protocol accepts both a bare string and a content-block array there — pass a quoted string, or a
+marshalled `[]anthropic.ContentBlock`. A system prompt is the top-level `System` field, not a role.
+
+### Streaming
+
+The stream accumulates while you read:
 
 ```go
-client, _ := aimodel.NewClient(
-    aimodel.WithProvider(anthropic.Name),
-    aimodel.WithAPIKey(apiKey),
-    aimodel.WithProviderOptions(anthropic.Options{Beta: []string{"context-1m-2025-08-07"}}),
-)
-```
-
-### Prompt caching and other vendor-only parameters
-
-```go
-req := &ais.ChatRequest{Model: model, Messages: messages}
-
-// Automatic caching: one cache_control at the request root; the server advances the breakpoint.
-anthropic.ExtendRequest(req, &anthropic.RequestExtension{AutoCache: true, AutoCacheTTL: "1h"})
-
-// Or an explicit per-message breakpoint.
-anthropic.ExtendMessage(&req.Messages[0], &anthropic.MessageExtension{CacheBreakpoint: true})
-
-resp, _ := client.ChatCompletion(ctx, req)
-
-if usage := anthropic.UsageExtensionOf(&resp.Usage); usage != nil {
-    fmt.Println(usage.CacheWriteTokens, usage.CacheWrite1hTokens)
-}
-```
-
-See [doc/design/prompt-caching.md](../../doc/design/prompt-caching.md) for the full caching API.
-
-### Reading unmodelled response blocks
-
-Server-tool blocks and text blocks carrying citations are preserved verbatim:
-
-```go
-if ext := anthropic.MessageExtensionOf(&resp.Choices[0].Message); ext != nil {
-    for _, block := range ext.ExtraBlocks {
-        fmt.Printf("extra block: %s\n", block)
-    }
-}
-```
-
-### Native Messages call
-
-```go
-client := anthropic.NewClient(apiKey) // add anthropic.WithBaseURL(...) for a proxy
-
-resp, err := client.Messages(ctx, &anthropic.MessagesRequest{
-    Model:     model,
-    MaxTokens: 1024,
-    Messages: []anthropic.MessagesMessage{{
-        Role:    "user",
-        Content: json.RawMessage(`"Hello!"`),
-    }},
-})
-if err != nil {
-    return err
-}
-
-for _, block := range resp.Content {
-    if block.Type == "text" {
-        fmt.Println(block.Text)
-    }
-}
-```
-
-`MessagesMessage.Content` is raw JSON, so it accepts both wire forms: a bare string, or a content
-block array (`json.Marshal([]anthropic.ContentBlock{...})`).
-
-### Native streaming
-
-```go
-stream, err := client.MessagesStream(ctx, &anthropic.MessagesRequest{
-    Model:     model,
-    MaxTokens: 64,
-    Messages:  []anthropic.MessagesMessage{{Role: "user", Content: json.RawMessage(`"Count to three."`)}},
-})
-if err != nil {
-    return err
-}
+stream, err := client.MessagesStream(ctx, request)
 defer func() { _ = stream.Close() }()
 
 for {
@@ -188,43 +82,63 @@ for {
     if err != nil {
         return err
     }
-
-    if event.Type == anthropic.StreamEventTypeContentBlockDelta {
+    if event.ContentBlockDelta != nil {
         fmt.Print(event.ContentBlockDelta.Delta.Text)
     }
 }
+
+message := stream.Message()   // content blocks assembled, tool inputs reassembled from partial JSON
+usage := stream.Usage()       // message_start baseline merged with the terminal counts
 ```
 
-Every event also carries its verbatim payload in `event.Raw`.
+`Usage()` merges field-wise: the terminal `message_delta` carries only `output_tokens`, and must
+not blank out the input, cache, geography, tier and server-tool numbers established at
+`message_start`.
 
-`const.go` names the Messages API discriminator values — SSE event types
-(`StreamEventType*`), content block types (`ContentBlockType*`), delta types
-(`DeltaType*`), native stop reasons (`StopReason*`), `tool_choice` types
-(`ToolChoiceType*`). Every one of those fields stays an open string on the
-wire, so a value this SDK does not list still decodes and reaches you through
-`Raw` — the constants are for readable comparisons, not a closed enum.
+### Prompt caching
+
+Explicit in this protocol. Mark where the cacheable prefix ends:
+
+```go
+System: systemBlocks,   // last block carries CacheControl{Type: CacheControlTypeEphemeral}
+```
+
+…or let the server maintain the breakpoint for you:
+
+```go
+request.CacheControl = &anthropic.CacheControl{
+    Type: anthropic.CacheControlTypeEphemeral,
+    TTL:  anthropic.CacheControlTTL1h,   // empty = the default 5-minute cache
+}
+```
+
+Accounting comes back on `MessagesUsage`: `CacheReadInputTokens`, `CacheCreationInputTokens` and
+the per-TTL `CacheCreation` split. These are reported **alongside** `InputTokens`, not inside it —
+`TotalInputTokens()` returns the billable sum.
 
 ### Errors
 
 ```go
 var httpErr *anthropic.HTTPError
 if errors.As(err, &httpErr) {
-    fmt.Println(httpErr.StatusCode, httpErr.Type, httpErr.Message)
+    log.Printf("HTTP %d %s: %s", httpErr.StatusCode(), httpErr.Type, httpErr.Message)
 }
 ```
 
-The unified client maps the same failures to `*ais.APIError`; see
-[doc/design/errors.md](../../doc/design/errors.md).
+To stay protocol-agnostic, match the structural interface instead:
 
-## Notes
+```go
+type statusCoder interface{ StatusCode() int }
+```
 
-- `MaxTokens` is required by the Messages API; the canonical path supplies a default of 4096 when
-  the request sets none.
-- Reasoning depth and structured output travel in `output_config` (`OutputConfig.Effort` /
-  `OutputConfig.Format`), mapped from canonical `ReasoningEffort` / `ResponseFormat`. The
-  top-level `Effort` field is deprecated and no longer sent.
-- Extension values of the wrong type are rejected with `*ais.ExtensionTypeError` before any
-  network I/O — they can never silently take effect.
-- Runnable examples live in [`integrations/anthropic_tests`](../../integrations/anthropic_tests) and
-  run against a real endpoint when `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` (and optionally
-  `ANTHROPIC_BASE_URL`) are set.
+An `error` event inside a stream arrives as `StreamEvent.Error`, not as a Go error — it is part of
+the event sequence.
+
+## Boundaries
+
+- This package imports nothing else from this module, and nothing in this module sits between it
+  and `provider/openai`. Duplication between the two is expected — see
+  [ADR 0007](../../doc/adr/0007-provider-native-as-the-only-public-interface.md).
+- Tool results are `user` turns carrying `tool_result` blocks; batch parallel results into one
+  message, because consecutive `user` turns are rejected.
+- Requests are never mutated: the stream flag is set on a copy.

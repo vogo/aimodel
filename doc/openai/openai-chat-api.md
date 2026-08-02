@@ -1,130 +1,188 @@
 # OpenAI Chat Completions — Wrapper Design & Implementation
 
-- **Official protocol**: OpenAI Chat Completions API (`POST {baseURL}/chat/completions`)
-- **Official docs**: https://platform.openai.com/docs/api-reference/chat
-- **Implementation**: `provider/openai/wire.go` (native wire types), `provider/openai/native.go` (native client), `provider/openai/translate.go` (canonical translation), `provider/openai/openai.go` and `stream.go` (provider boundary)
-- **Change log**: [openai-api-changes.md](./openai-api-changes.md)
+How `provider/openai` wraps `POST {baseURL}/chat/completions`, for OpenAI and for every OpenAI-compatible backend.
 
-Canonical type semantics live in [../design/data-model.md](../design/data-model.md); this document covers what is specific to the OpenAI path.
+- **Official reference**: https://platform.openai.com/docs/api-reference/chat
+- **Code**: `provider/openai/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly), `model.go` (constants)
+- **Change log**: [openai-api-changes.md](./openai-api-changes.md)
+- **Responses API**: [openai-response-api.md](./openai-response-api.md) — a separate interaction form on the same client
 
 ---
 
-## 1. Provider mapping
+## 1. Client
 
-The OpenAI provider explicitly translates shared canonical fields into its independent Chat Completions wire model:
-
-```
-ChatRequest ──toOpenAIRequest──▶ ChatCompletionRequest ──▶ POST {baseURL}/chat/completions
-ChatResponse ◀─fromOpenAIResponse─ ChatCompletionResponse ◀── response body
-StreamChunk  ◀─fromOpenAIChunk──── ChatCompletionChunk    ◀── SSE data line
-```
-
-There is **no zero-translation path**: the canonical types are the provider-neutral shared semantic layer, not the OpenAI wire shape, so every unified-client call crosses this seam exactly as the Anthropic path crosses its own ([ADR 0005](../adr/0005-canonical-shared-semantics-over-provider-native-wire.md), superseding ADR 0002).
-
-Two entry points reach this protocol:
-
-| Entry point | Types | Path |
-|---|---|---|
-| `aimodel.Client` (unified) | canonical `ais` in and out | canonical ↔ native translation, then the shared pipeline in `chat.go` |
-| `openai.Client` (native, §1.1) | `ChatCompletionRequest` / `ChatCompletionResponse` / `ChatCompletionChunk` | native types end to end; canonical translation is bypassed |
-
-New OpenAI-only parameters must be added to the provider's native surface, not `ais.ChatRequest`. Canonical admission still requires a verified mapping in at least two providers.
-
-### 1.1 Native client
-
-`openai.NewClient(apiKey, ...ClientOption)` returns a native `Client`. `WithBaseURL` and `WithHTTPClient` configure it; the default base URL is `https://api.openai.com/v1`. `ChatCompletions` returns `*ChatCompletionResponse`, while `ChatCompletionsStream` returns a stream whose `Recv` exposes every `*ChatCompletionChunk` in wire order and whose `Close` is idempotent. Both methods copy the request before forcing the appropriate `stream` value, so caller state is unchanged. These calls bypass canonical translation and are the entry point for logprobs, audio, file input, metadata, storage, prompt-cache routing and other OpenAI-only features.
-
-## 2. Sending the request (`doRequest`)
-
-```
-POST {baseURL}/chat/completions
-Content-Type: application/json
-Authorization: Bearer {apiKey}
+```go
+client := openai.NewClient(apiKey,
+    openai.WithBaseURL("https://api.openai.com/v1"),
+    openai.WithTimeout(90*time.Second),
+)
 ```
 
-- An empty `baseURL` returns `ErrNoBaseURL` immediately — unlike Anthropic, there are far too many OpenAI-compatible backends to pick a default.
-- `baseURL` already had its trailing `/` stripped by `WithBaseURL` / the environment reader, so joining never produces `//`.
-- The endpoint path is fixed at `/chat/completions`, so the caller's `baseURL` is expected to include the version segment (e.g. `https://api.openai.com/v1`).
+| Option | Purpose |
+|---|---|
+| `WithBaseURL(string)` | API base URL, trailing `/` stripped. Defaults to `https://api.openai.com/v1`; point it at any compatible backend |
+| `WithHTTPClient(*http.Client)` | Full transport control. `nil` panics — that is a programming error, not a runtime condition |
+| `WithTimeout(time.Duration)` | Bounds a whole call, including reading a streaming body. Copies the client configured so far, so the caller's `*http.Client` is never mutated and an earlier transport survives. Apply it *after* `WithHTTPClient` |
 
-## 3. Non-streaming
+`NewClient` returns no error. Auth is `Authorization: Bearer <key>`; the body is `application/json`.
 
-The shared pipeline (`chat.go`) drives every call; the OpenAI provider supplies the vendor steps:
+## 2. Request
 
-1. `req.Clone()`, forcing `Stream = false` (pipeline);
-2. fill in the default model (pipeline);
-3. `provider.NewChatRequest` builds the request; the pipeline sends it;
-4. **non-2xx status** → `provider.ParseErrorResponse` (§6);
-5. `provider.ParseChatResponse` decodes `ChatCompletionResponse` and translates it into `ChatResponse`;
-6. **2xx but the body contains `error`** → still build an `APIError`;
-7. empty `Choices` → `ErrEmptyResponse`.
+`ChatCompletionRequest` models the documented body field for field. `Model` and `Messages` are required; everything else is `omitempty`, and pointer types (`*float64`, `*int`, `*bool`) exist so an explicit zero — `temperature: 0`, `logprobs: false` — is distinguishable from "unset" and reaches the backend.
 
-Step 6 is a necessary defence: OpenAI-compatible implementations are not consistent about how they report errors.
+`Content` is polymorphic in the protocol, so it is a small type rather than a bare string:
+
+```go
+openai.NewTextContent("hello")                       // "content": "hello"
+openai.NewPartsContent(                              // "content": [ … ]
+    openai.ChatCompletionContentPart{Type: openai.ContentPartTypeText, Text: "what is this?"},
+    openai.ChatCompletionContentPart{Type: openai.ContentPartTypeImageURL,
+        ImageURL: &openai.ImageURL{URL: "https://example.com/cat.png", Detail: "high"}},
+)
+```
+
+`Text()` returns the string form, or the concatenation of the text parts. Multimodal parts cover `text`, `image_url`, `input_audio` and `file`.
+
+The stream flag is set on a copy of the request, so a call never mutates the caller's value.
+
+### 2.1 `ExtraBody` — backend-private parameters
+
+OpenAI-compatible backends add their own top-level parameters (`enable_thinking`, `chat_template_kwargs`, …). `ExtraBody` carries them:
+
+```go
+req.ExtraBody = map[string]json.RawMessage{
+    "enable_thinking": json.RawMessage(`true`),
+}
+```
+
+Entries are merged into the top level of the body verbatim. The channel is **additive only**:
+
+- a key that collides with a modelled field is an error at marshal time, before any network I/O — it can add parameters, never override or duplicate one this package models;
+- an empty key, or a value that is not valid JSON, is an error too;
+- the modelled key set is derived from the struct tags, so it cannot drift as fields are added.
+
+Decoding a request body fills `ExtraBody` with every key the package does not model, which is what makes a request round-trip losslessly (`TestWireTypesRoundTripLosslessly`).
+
+### 2.2 Tools
+
+```go
+req.Tools = []openai.ChatCompletionTool{{
+    Type: openai.ToolTypeFunction,
+    Function: openai.ChatCompletionFunction{
+        Name:        "get_weather",
+        Description: "Get the current weather in a city",
+        Parameters:  map[string]any{ /* JSON Schema, passed through as-is */ },
+        Strict:      new(true),
+    },
+}}
+req.ToolChoice = "auto"                  // or {"type":"function","function":{"name":…}}
+req.ParallelToolCalls = new(false)
+```
+
+`Parameters` is `any` and is never validated or rewritten — a JSON Schema is the caller's contract with the model, not with this SDK. `ToolChoice` is `any` for the same reason: it is a string in one form and an object in another.
+
+A tool result is a message with `Role: openai.RoleTool` and the originating `ToolCallID`.
+
+## 3. Non-streaming response
+
+`ChatCompletions` decodes into `ChatCompletionResponse`. Two behaviors are worth knowing:
+
+- A **2xx response whose body carries an `error` object** becomes an `*HTTPError` anyway. Compatible backends are inconsistent about the status code they use for a rejected request.
+- An empty `Choices` array is **not** an error. The response is returned as-is; check `len(resp.Choices)` if your call site requires one.
+
+`FinishReason` is a `*string`: the protocol distinguishes "not finished yet" (`null`, on a streaming chunk) from a finish reason. The constants in `model.go` name the documented values without closing the set.
 
 ## 4. Streaming
 
-Same flow as non-streaming, with two differences:
+`ChatCompletionsStream` returns a `*ChatCompletionStream`. `Recv` returns one `ChatCompletionChunk` per SSE `data:` line; `[DONE]` becomes `io.EOF`. Comment lines (`:`) and non-`data:` lines are skipped, and the scanner's line cap is 1 MB.
 
-1. `Stream = true` is forced by the pipeline;
-2. `provider.NewChatRequest` always adds the wire-only `stream_options.include_usage=true` for a streaming request, so the terminal usage-only chunk remains observable. Non-streaming requests omit it.
+An `error` object inside a chunk closes the stream and surfaces as an `*HTTPError` with no status code — it did not come from the HTTP layer.
 
-On success the pipeline wraps the body in a `Stream` backed by `provider.NewStreamDecoder`; on failure it closes the body before returning the error.
+### 4.1 Accumulation
 
-### 4.1 SSE parsing (`streamDecoder.Next`)
+The stream folds every chunk into the completion it reconstructs while the caller reads:
 
-OpenAI's SSE is a **stateless line-by-line `data:` stream**:
+```go
+for {
+    chunk, err := stream.Recv()
+    if errors.Is(err, io.EOF) { break }
+    if err != nil { return err }
+    fmt.Print(chunk.Choices[0].Delta.Content.Text())
+}
 
-| Line | Handling |
+response := stream.Response()   // assembled message, the same shape as the unary one
+usage := stream.Usage()         // nil unless stream_options.include_usage was set
+```
+
+Merge rules:
+
+| Field | Rule |
 |---|---|
-| Empty | Skip |
-| Starts with `:` (SSE comment / heartbeat) | Skip |
-| Not prefixed `data: ` | Skip |
-| `data: [DONE]` | Return `io.EOF` |
-| `data: {json}` | Parse and emit a chunk |
+| `content`, `reasoning_content`, `refusal` | concatenated in arrival order |
+| `tool_calls[].function.arguments` | concatenated — the model streams the JSON in fragments that are only valid once complete |
+| `tool_calls[].id` / `.type` / `.function.name` | last non-empty value wins |
+| `logprobs` | appended |
+| `finish_reason`, `usage`, `service_tier`, `system_fingerprint` | last value wins; the usage-bearing chunk is terminal and reports totals for the whole completion |
 
-Each chunk is decoded into `ChatCompletionChunk`, checked for a body-level error, and translated by `fromOpenAIChunk`. An error becomes `*APIError` (with no HTTP status code); a JSON failure returns a wrapped `decode stream chunk` error.
+Choices grow by index, so a backend that emits them out of order or skips one does not drop the earlier ones. Before `io.EOF`, `Response()` is a live snapshot in which a tool call's `Arguments` may still be an incomplete JSON fragment.
 
-After the scan ends: return the `Scanner`'s error if it has one, otherwise `io.EOF` — which tolerates compatible backends that never send `[DONE]`.
+`Close` is idempotent and safe to call concurrently with `Recv`.
 
-Line cap `maxStreamLineSize = 1 MB`, buffer starting at 64 KB.
+## 5. Usage and prompt caching
 
-### 4.2 Delta merging
+OpenAI caching is **automatic**: prefixes over roughly 1024 tokens are cached with no request-side marker, and the accounting comes back on the response.
 
-Streaming deltas accumulate through the canonical `Message.AppendDelta` / `ToolCall.Merge` — see [../design/streaming.md](../design/streaming.md) §2.
-
-## 5. OpenAI-specific field notes
-
-Canonical field semantics are in [../design/data-model.md](../design/data-model.md). Two details are specific to this path:
-
-### 5.1 Nested usage fields are promoted
-
-OpenAI puts two breakdown counts inside nested objects. The native `ChatCompletionUsage` keeps them nested, exactly as the wire has them, and `fromOpenAIUsage` **promotes them to the top-level canonical fields**:
-
-| OpenAI wire path (native `ChatCompletionUsage`) | Canonical field |
+| Field | Meaning |
 |---|---|
-| `prompt_tokens_details.cached_tokens` | `CacheReadTokens` |
-| `completion_tokens_details.reasoning_tokens` | `ReasoningTokens` |
+| `Usage.PromptTokens` / `CompletionTokens` / `TotalTokens` | The totals |
+| `Usage.PromptTokensDetails.CachedTokens` | Prompt tokens served from cache — a **subset** of `PromptTokens`, not an addition to it |
+| `Usage.PromptTokensDetails.AudioTokens` | Audio input tokens |
+| `Usage.CompletionTokensDetails.ReasoningTokens` | Internal reasoning tokens — a subset of `CompletionTokens` |
+| `Usage.CompletionTokensDetails.{Accepted,Rejected}PredictionTokens` | Predicted-outputs accounting |
 
-`ServiceTier` comes from the response root, not from `usage`. The remaining native breakdown members (`prompt_tokens_details.audio_tokens`, `completion_tokens_details.audio_tokens` / `accepted_prediction_tokens` / `rejected_prediction_tokens`) have no canonical counterpart and stay readable only on the native surface.
+`ServiceTier` is reported at the response root, not inside `usage`. OpenAI has no cache-*write* accounting; that is an Anthropic concept.
 
-This translation is the **only** place the nested shape is understood. `ais.Usage` is a plain struct decode: it carries the canonical counts and knows nothing about `prompt_tokens_details` or any other wire breakdown. Feeding a raw Chat Completions `usage` object straight into `ais.Usage` therefore yields zeroes for the cache and reasoning counts — decode it as the native `ChatCompletionUsage` instead, or let the provider do it.
+`PromptCacheKey` on the request routes requests to the same cache partition. If `CachedTokens` stays 0 across requests that should share a prefix, something is invalidating it — a per-request timestamp or ID early in the prompt, a non-deterministic map serialization, or a changed tool list (tools serialize before messages, so any tool change invalidates everything after).
 
-OpenAI has no notion of cache-write billing, so the `CacheWrite*` fields are always 0 (omitted) on this path.
+Usage is only reported on a stream when the request asks for it:
 
-### 5.2 Prompt caching
+```go
+req.StreamOptions = &openai.StreamOptions{IncludeUsage: new(true)}
+```
 
-OpenAI caches prefixes automatically, with no canonical request-side control. Anthropic cache controls live in its extension API and never appear in an OpenAI request body. See [../design/prompt-caching.md](../design/prompt-caching.md).
+This is deliberately not set for you: it changes the event sequence the backend sends.
 
-## 6. Error handling (`provider.ParseErrorResponse`)
+## 6. Errors
 
-1. The pipeline reads the response body, capped at `maxErrorBodySize = 1 MB` (`io.LimitReader`), and hands the bytes to the provider (a read failure yields `APIError{StatusCode, Message:"failed to read error response", Err}` before the provider is called);
-2. the provider decodes as `{"error":{code,message,param,type}}`;
-3. **decode failure or missing `error` → put the raw body into `Message`**, so diagnostics are never lost;
-4. success → `APIError{StatusCode, Code, Message, Type}`.
+```go
+type HTTPError struct {
+    Status              int             // read it through StatusCode()
+    Code, Type, Message string
+    Body                json.RawMessage // the bounded raw body, always retained
+    Err                 error
+}
 
-## 7. Mapping boundary
+func (e *HTTPError) StatusCode() int
+```
 
-OpenAI-only request fields, log probabilities, audio/file payloads and generated-audio response data are intentionally absent from canonical types. Use the OpenAI native API for those capabilities — they are fully represented in `wire.go` and reachable through `openai.Client` (§1.1). `ResponseFormat` is shared only in its JSON-schema shape; unsupported shapes do not produce an Anthropic output format.
+Parsing: read the body under a 1 MB cap, try `{"error":{code,message,param,type}}`, and if that fails or carries no message, keep the raw body as `Message`. Diagnostic information is never discarded.
 
-Because canonical and native are deliberately **not** isomorphic, this boundary cannot be checked mechanically: a canonical field with no entry in `translate.go` may be an intended boundary or an oversight, and no test can tell them apart. There is therefore no field-*coverage* guard — when a canonical field is added, wiring it into `toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk` (or recording here why it is out of scope) is part of the change, per the four-way sync in [../architecture.md](../architecture.md) §6.
+`StatusCode()` is a method rather than a field so a consumer can match any provider's transport error structurally, without importing this package:
 
-What does exist is a *count* sentinel, `TestCanonicalNodeFieldCountsAreStable` in `ais/schema_sentinel_test.go`. It fails whenever a canonical node gains or loses a field and points at the translation layers. It does not judge the mapping — it just makes the omission impossible to commit without noticing. Updating the count is the last step of the change, not the first.
+```go
+type statusCoder interface{ StatusCode() int }
+
+var sc statusCoder
+if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests { /* back off */ }
+```
+
+## 7. Protocol capability notes
+
+Facts about the protocol that this wrapper passes through rather than resolves:
+
+- **`max_tokens` is deprecated by OpenAI** and rejected outright by reasoning models (the o-series, GPT-5.x, …), which require `max_completion_tokens`. Both fields exist here; pick per model.
+- **`top_k` is not an OpenAI parameter.** It is modelled because several OpenAI-compatible backends accept it. Against OpenAI itself it is an unknown field.
+- **`thinking` is not an OpenAI parameter either.** It is the shared reasoning control of several compatible backends (Qwen, GLM, DeepSeek-style). OpenAI's own control is `reasoning_effort`.
+- **`functions` / `function_call` are the deprecated pre-tools API**, retained for backends that still serve them.
+- **Unmodelled response fields are not preserved on this path.** Chat Completions is a closed object shape. The Responses API, which is item-based and still evolving, keeps the raw payload of an unmodelled item instead ([openai-response-api.md](./openai-response-api.md)).
+- **Model names are strings.** `model.go` names the common ones across OpenAI and the compatible backends this SDK is used with; a model released tomorrow works without an SDK update.

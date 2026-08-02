@@ -15,6 +15,24 @@ Newest first.
 
 ---
 
+## 2026-08-02 — Native-only public API: observable stream usage merging, timeouts, structural errors
+
+**Official change**: none — this is a change to the wrapper's own surface, recorded here because it changes how every Anthropic-side capability is reached.
+
+**Wrapper change**
+
+- **The canonical layer is gone** (v0.6.0). `provider/anthropic` is now reached directly: `anthropic.NewClient(apiKey, ...)` with `Messages` / `MessagesStream`. The registered provider (`Name`, `New`, `Options`), the request/response/stream/usage translation and the whole `Extend*` / `*Of` extension surface are deleted. What the extension channel carried are ordinary fields of the native request and response — `MessagesRequest.CacheControl` / `Container` / `InferenceGeo`, per-block and per-tool `cache_control`, `MessagesResponse.StopDetails` / `Container`, and the cache/server-tool/geography counts on `MessagesUsage`. Migration table: [MIGRATION.md](../../MIGRATION.md); reasoning: [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md).
+- **`MessageStream.Usage()` makes the two-part usage merge observable.** Anthropic reports a baseline on `message_start` and the final counts on the terminal `message_delta`; the merge is field-wise, so a terminal event carrying only `output_tokens` does not blank out the input, cache, geography, tier or server-tool numbers. This was a private helper inside the canonical stream decoder.
+- **`MessageStream.Message()`** returns the assembled message: content blocks in index order, text and thinking deltas concatenated, tool inputs reassembled from their partial-JSON fragments. `ResponseContentBlock.Raw` still holds each block as it first arrived.
+- **Unmodelled blocks are the response's own blocks.** They no longer travel through a side channel: a server-tool result or a future block type is an element of `MessagesResponse.Content` with its verbatim JSON in `Raw`.
+- **`WithTimeout(d)`**: bounds a whole call, copying the client configured so far so the caller's `*http.Client` is never mutated.
+- **`HTTPError` implements `StatusCode() int`**; the exported field is renamed `Status`. **Breaking** for code reading the field directly.
+- **`MessagesUsage.TotalInputTokens()`** is exported: this protocol reports cache counts *alongside* `input_tokens` rather than inside it, so the billable input is their sum.
+- **`MessagesRequest.Effort` is removed** — superseded upstream by `output_config.effort`, and only kept until now so internal callers compiled.
+- **Model, role, effort, thinking, content-source and cache-TTL constants** move into this package (`model.go`).
+
+---
+
 ## 2026-07-22 — Public native Messages client
 
 **Official change**
