@@ -83,8 +83,8 @@ var modelledRequestFields = sync.OnceValue(func() map[string]bool {
 	requestType := reflect.TypeFor[ChatCompletionRequest]()
 	fields := make(map[string]bool, requestType.NumField())
 
-	for i := range requestType.NumField() {
-		name, _, _ := strings.Cut(requestType.Field(i).Tag.Get("json"), ",")
+	for field := range requestType.Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name != "" && name != "-" {
 			fields[name] = true
 		}
