@@ -23,6 +23,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -56,50 +58,22 @@ func drainNative(t *testing.T, stream *MessageStream) {
 }
 
 // fullStream carries every block kind the accumulator handles: text, thinking
-// and a tool_use whose input arrives as partial JSON.
-const fullStream = `event: message_start
-data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":null,"usage":{"input_tokens":100,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"inference_geo":"us","service_tier":"standard"}}}
+// and a tool_use whose input arrives as partial JSON. It is the same fixture
+// the canonical stream is replayed against, so both entry points are measured
+// on identical bytes.
+func fullStream(t *testing.T) string {
+	t.Helper()
 
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+	body, err := os.ReadFile(filepath.Join("testdata", "golden", "stream_usage.sse"))
+	if err != nil {
+		t.Fatalf("read stream fixture: %v", err)
+	}
 
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me "}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"check"}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hel"}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"lo"}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"ci"}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ty\":\"SF\"}"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":2}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":25}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-`
+	return string(body)
+}
 
 func TestMessageStreamAccumulatesEveryBlockKind(t *testing.T) {
-	stream, err := nativeStreamServer(t, fullStream).
+	stream, err := nativeStreamServer(t, fullStream(t)).
 		MessagesStream(context.Background(), &MessagesRequest{Model: "claude-sonnet-5", MaxTokens: 64})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +126,7 @@ func TestMessageStreamAccumulatesEveryBlockKind(t *testing.T) {
 // reports only output_tokens and must not blank out what message_start
 // established.
 func TestMessageStreamUsageMergesStartAndTerminalEvents(t *testing.T) {
-	stream, err := nativeStreamServer(t, fullStream).
+	stream, err := nativeStreamServer(t, fullStream(t)).
 		MessagesStream(context.Background(), &MessagesRequest{Model: "claude-sonnet-5", MaxTokens: 64})
 	if err != nil {
 		t.Fatal(err)

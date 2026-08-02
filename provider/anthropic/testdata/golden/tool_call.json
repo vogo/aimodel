@@ -1,0 +1,55 @@
+{
+  "model": "claude-sonnet-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather in SF?"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_1",
+          "name": "get_weather",
+          "input": {
+            "city": "SF"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_1",
+          "content": "{\"temp_c\":18}"
+        }
+      ]
+    }
+  ],
+  "max_tokens": 4096,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather in a city",
+      "input_schema": {
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "strict": true
+    }
+  ],
+  "tool_choice": {
+    "type": "auto",
+    "disable_parallel_tool_use": true
+  }
+}
