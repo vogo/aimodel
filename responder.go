@@ -26,6 +26,10 @@ import (
 )
 
 // CapabilityResponses names the Responses capability in a *ais.CapabilityError.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const CapabilityResponses = "responses"
 
 // Responder is the OpenAI Responses capability contract — a second capability
@@ -38,6 +42,10 @@ const CapabilityResponses = "responses"
 // not translated through ais. This is the documented exception to
 // "the unified client is canonical in, canonical out" — see
 // doc/adr/0006-responses-capability-on-provider-native-types.md.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Responder interface {
 	Responses(ctx context.Context, req *openai.ResponsesRequest) (*openai.Response, error)
 	ResponsesStream(ctx context.Context, req *openai.ResponsesRequest) (*openai.ResponseStream, error)
@@ -69,6 +77,10 @@ func (c *Client) responsesClient() (*openai.Client, error) {
 // is not applied (the request's own Model is authoritative, matching the native
 // client), no canonical translation runs, and chat interception and compose
 // failover do not apply.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c *Client) Responses(ctx context.Context, req *openai.ResponsesRequest) (*openai.Response, error) {
 	client, err := c.responsesClient()
 	if err != nil {
@@ -81,6 +93,10 @@ func (c *Client) Responses(ctx context.Context, req *openai.ResponsesRequest) (*
 // ResponsesStream sends a streaming Responses request through the resolved
 // provider and returns the native event stream. The same boundaries as
 // Responses apply.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c *Client) ResponsesStream(ctx context.Context, req *openai.ResponsesRequest) (*openai.ResponseStream, error) {
 	client, err := c.responsesClient()
 	if err != nil {

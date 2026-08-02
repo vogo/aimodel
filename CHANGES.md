@@ -16,6 +16,17 @@ For the cross-cutting design behind those changes, start at [doc/architecture.md
 
 ---
 
+## Releases
+
+Protocol-independent changes to the SDK's own surface.
+
+| Version | Change |
+|---|---|
+| v0.5.1 | Deprecate the canonical API. Every symbol removed in v0.6.0 — package `ais`, the root canonical client / stream / interception / `Responder` surface, and both providers' registry and extension entry points — now carries a `Deprecated:` comment pointing at [MIGRATION.md](./MIGRATION.md). No behavior, signature or serialization change. |
+| v0.6.0 *(planned)* | Remove the canonical API. `provider/openai` and `provider/anthropic` native clients become the only public interface; `composes` narrows to dispatch within the OpenAI-compatible wire format. Migration table: [MIGRATION.md](./MIGRATION.md). |
+
+---
+
 ## Timeline
 
 Both protocols merged, newest first. Follow a link for the full entry.

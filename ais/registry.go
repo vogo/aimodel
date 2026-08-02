@@ -34,6 +34,10 @@ var (
 // Registration is monotonic and deterministic: an empty name, a nil factory,
 // or a duplicate name is a programming error and panics immediately —
 // silent overwrites would make dispatch depend on import order.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func Register(name string, factory Factory) {
 	if name == "" {
 		panic("aimodel: Register called with empty provider name")
@@ -55,6 +59,10 @@ func Register(name string, factory Factory) {
 
 // Lookup resolves a registered provider factory by name. It is safe for
 // concurrent use.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func Lookup(name string) (Factory, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()

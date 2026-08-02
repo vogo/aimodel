@@ -23,9 +23,17 @@ import (
 )
 
 // Role represents the role of a chat message participant.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Role string
 
 // Role constants for chat messages.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
@@ -34,6 +42,10 @@ const (
 )
 
 // FinishReason represents the reason a model stopped generating.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type FinishReason string
 
 // FinishReason constants cover the values with a cross-provider consensus
@@ -41,6 +53,10 @@ type FinishReason string
 // this set through verbatim (naming vendor-specific convenience constants is
 // the provider package's job — e.g. anthropic.FinishReasonRefusal), and
 // callers should treat any non-canonical value as opaque.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	FinishReasonStop          FinishReason = "stop"
 	FinishReasonLength        FinishReason = "length"
@@ -56,6 +72,10 @@ const (
 // defaults to ReasoningEffortNone. ChatRequest.ReasoningEffort stays a plain
 // string so callers can pass through values these constants don't cover (other
 // OpenAI-compatible backends may define their own).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ReasoningEffortNone    = "none"
 	ReasoningEffortMinimal = "minimal"
@@ -66,6 +86,10 @@ const (
 )
 
 // Thinking configures extended thinking (Anthropic) or reasoning (OpenAI-compatible) behavior.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Thinking struct {
 	// Type selects the thinking mode. Anthropic accepts "enabled", "disabled",
 	// and (since the effort GA) "adaptive"; kept a plain string for pass-through.
@@ -87,6 +111,10 @@ type Thinking struct {
 }
 
 // ChatRequest represents a request to the chat completions API.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ChatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
@@ -142,6 +170,10 @@ type ChatRequest struct {
 }
 
 // ChatResponse represents a response from the chat completions API.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ChatResponse struct {
 	ID      string   `json:"id"`
 	Object  string   `json:"object"`
@@ -158,6 +190,10 @@ type ChatResponse struct {
 }
 
 // Choice represents a single completion choice.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Choice struct {
 	Index        int          `json:"index"`
 	Message      Message      `json:"message"`
@@ -169,6 +205,10 @@ type Choice struct {
 
 // Content represents chat message content that can be either a plain string
 // or an array of content parts (text, image_url, etc.) for multimodal input.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Content struct {
 	text  string
 	parts []ContentPart
@@ -177,6 +217,10 @@ type Content struct {
 // ContentPart represents a single part in a multimodal content array.
 // Exactly one of the payload fields is set, selected by Type:
 // "text" → Text, "image_url" → ImageURL.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ContentPart struct {
 	Type     string    `json:"type"`
 	Text     string    `json:"text,omitempty"`
@@ -184,25 +228,45 @@ type ContentPart struct {
 }
 
 // ImageURL represents an image URL in a content part.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ImageURL struct {
 	URL    string `json:"url"`
 	Detail string `json:"detail,omitempty"`
 }
 
 // NewTextContent creates a Content from a plain string.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func NewTextContent(text string) Content {
 	return Content{text: text}
 }
 
 // NewPartsContent creates a Content from multiple content parts.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func NewPartsContent(parts ...ContentPart) Content {
 	return Content{parts: parts}
 }
 
 // Parts returns the content parts for multimodal content, or nil for plain text content.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c Content) Parts() []ContentPart { return c.parts }
 
 // Text returns the text content. For multimodal content, it concatenates all text parts.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c Content) Text() string {
 	if c.parts == nil {
 		return c.text
@@ -221,6 +285,10 @@ func (c Content) Text() string {
 
 // MarshalJSON implements json.Marshaler.
 // Outputs a plain string when content is text-only, or an array for multimodal.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c Content) MarshalJSON() ([]byte, error) {
 	if c.parts != nil {
 		return json.Marshal(c.parts)
@@ -231,6 +299,10 @@ func (c Content) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler.
 // Accepts both a plain string and an array of content parts.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c *Content) UnmarshalJSON(data []byte) error {
 	if len(data) > 0 && data[0] == '"' {
 		return json.Unmarshal(data, &c.text)
@@ -248,6 +320,10 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 }
 
 // Message represents a chat message.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    Content    `json:"content"`
@@ -266,6 +342,10 @@ type Message struct {
 // AppendDelta merges a streaming delta message into this message. Provider
 // extension namespaces are merged through the ExtensionMerger contract; the
 // canonical layer does not interpret the values.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (m *Message) AppendDelta(delta *Message) {
 	m.Content.text += delta.Content.text
 	m.Thinking += delta.Thinking
@@ -284,6 +364,10 @@ func (m *Message) AppendDelta(delta *Message) {
 }
 
 // ToolCall represents a function call requested by the model.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ToolCall struct {
 	Index    int          `json:"index"`
 	ID       string       `json:"id,omitempty"`
@@ -292,6 +376,10 @@ type ToolCall struct {
 }
 
 // Merge appends delta data into this tool call.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (tc *ToolCall) Merge(delta *ToolCall) {
 	if delta.ID != "" {
 		tc.ID = delta.ID
@@ -309,12 +397,20 @@ func (tc *ToolCall) Merge(delta *ToolCall) {
 }
 
 // FunctionCall contains the function name and arguments.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type FunctionCall struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 }
 
 // Tool represents a tool definition for the API.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Tool struct {
 	// Type is OpenAI's tool kind — "function" for every tool OpenAI defines.
 	// For Anthropic it doubles as the tool type: "function" (and empty) means
@@ -336,6 +432,10 @@ type Tool struct {
 }
 
 // FunctionDefinition describes a function available to the model.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type FunctionDefinition struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -348,6 +448,10 @@ type FunctionDefinition struct {
 // copy to a provider, so providers may rewrite the copy without touching
 // caller state. Extension maps are copied at every node (request, messages,
 // tools); the extension values themselves are shared read-only configuration.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (r *ChatRequest) Clone() ChatRequest {
 	c := *r
 
@@ -380,6 +484,10 @@ func (r *ChatRequest) Clone() ChatRequest {
 }
 
 // StreamChunk represents a single chunk in a streaming response.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type StreamChunk struct {
 	ID      string              `json:"id"`
 	Object  string              `json:"object"`
@@ -395,6 +503,10 @@ type StreamChunk struct {
 }
 
 // StreamChunkChoice represents a choice within a stream chunk.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type StreamChunkChoice struct {
 	Index        int     `json:"index"`
 	Delta        Message `json:"delta"`
@@ -406,6 +518,10 @@ type StreamChunkChoice struct {
 }
 
 // Usage tracks token usage for a request.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -435,6 +551,10 @@ type Usage struct {
 // Add accumulates token counts from another Usage into this one. Counts are
 // summed; ServiceTier and Extensions describe a single request and are left
 // untouched.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (u *Usage) Add(other *Usage) {
 	u.PromptTokens += other.PromptTokens
 	u.CompletionTokens += other.CompletionTokens
@@ -444,6 +564,10 @@ func (u *Usage) Add(other *Usage) {
 }
 
 // Error represents an error in the API response body.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

@@ -27,6 +27,10 @@ import (
 
 // Stream reads streaming chat completion responses using SSE.
 // Stream is safe for concurrent use between a single Recv caller and Close.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Stream struct {
 	mu      sync.Mutex
 	reader  io.ReadCloser
@@ -48,6 +52,10 @@ func newStream(body io.ReadCloser, decoder ais.StreamDecoder) *Stream {
 
 // Recv reads the next chunk from the stream.
 // Returns io.EOF when the stream is done.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (s *Stream) Recv() (*ais.StreamChunk, error) {
 	if s.closed.Load() {
 		return nil, ais.ErrStreamClosed
@@ -71,6 +79,10 @@ func (s *Stream) Recv() (*ais.StreamChunk, error) {
 // Usage returns the accumulated usage from the stream, if available.
 // This is typically populated from the final chunk when stream_options.include_usage is set,
 // or from Anthropic's message_delta event.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (s *Stream) Usage() *ais.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,6 +92,10 @@ func (s *Stream) Usage() *ais.Usage {
 
 // Close closes the stream and releases resources.
 // Close is safe to call concurrently with Recv and is idempotent.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (s *Stream) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
@@ -96,6 +112,10 @@ func (s *Stream) Close() error {
 
 // WrapStream wraps an existing stream with a callback that fires on close with usage data.
 // If s is nil, onClose is called immediately with nil usage and nil is returned.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WrapStream(s *Stream, onClose func(*ais.Usage)) *Stream {
 	if s == nil {
 		if onClose != nil {

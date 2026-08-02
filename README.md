@@ -9,6 +9,13 @@ This SDK is a **thin API wrapper** — it translates requests, manages connectio
 
 The SDK is layered. The **canonical layer** exposes only semantics with verified mappings in at least two providers, so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Architecture details: [doc/architecture.md](./doc/architecture.md).
 
+> **Deprecated as of v0.5.1 — the canonical layer is removed in v0.6.0.**
+> `aimodel` is moving to provider-native clients as its only public interface: use
+> [`provider/openai`](./provider/openai/README.md) or
+> [`provider/anthropic`](./provider/anthropic/README.md) directly. v0.5.1 changes no behavior; it
+> only marks what goes away, so `staticcheck` flags the call sites. Symbol-by-symbol migration
+> table: [MIGRATION.md](./MIGRATION.md).
+
 ## Documentation
 
 This README covers usage. The design lives under [`doc/`](./doc/):

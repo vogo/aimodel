@@ -18,6 +18,10 @@
 package ais
 
 // OpenAI model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelOpenaiGPT56      = "gpt-5.6"
 	ModelOpenaiGPT56Sol   = "gpt-5.6-sol"
@@ -35,12 +39,20 @@ const (
 )
 
 // DeepSeek model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelDeepseekV4Pro   = "deepseek-v4-pro"
 	ModelDeepseekV4Flash = "deepseek-v4-flash"
 )
 
 // Google Gemini model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelGemini36Flash     = "gemini-3.6-flash"
 	ModelGemini35FlashLite = "gemini-3.5-flash-lite"
@@ -52,6 +64,10 @@ const (
 )
 
 // Anthropic Claude model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelAnthropicClaudeFable5  = "claude-fable-5"
 	ModelAnthropicClaudeOpus48  = "claude-opus-4-8"
@@ -60,6 +76,10 @@ const (
 )
 
 // MiniMax model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelMinimaxM27          = "MiniMax-M2.7"
 	ModelMinimaxM27Highspeed = "MiniMax-M2.7-highspeed"
@@ -71,18 +91,34 @@ const (
 )
 
 // Moonshot Kimi model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelKimiK26 = "kimi-k2.6"
 	ModelKimiK25 = "kimi-k2.5"
 )
 
 // Zhipu GLM model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const ModelGLM52 = "glm-5.2"
 
 // ByteDance Doubao model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const ModelDoubaoSeed20Lite = "doubao-seed-2-0-lite-260215"
 
 // Alibaba Qwen model name constants.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	ModelQwen37Max   = "qwen3.7-max"
 	ModelQwen37Plus  = "qwen3.7-plus"

@@ -30,6 +30,10 @@ import (
 //
 // InterceptStream is additive: callers using Recv/Close see no behavior
 // change. The callbacks must be cheap and must not call Recv/Close on s.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func InterceptStream(s *Stream, onChunk func(*ais.StreamChunk), onDone func(err error)) *Stream {
 	if s == nil {
 		if onDone != nil {

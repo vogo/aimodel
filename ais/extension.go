@@ -39,15 +39,27 @@ import (
 // Values are treated as read-only configuration once attached: Clone copies
 // the map but shares the values, so a provider must not mutate a stored value
 // in place.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Extensions map[string]any
 
 // Value returns the extension value stored under the provider name, or nil
 // when the namespace is empty.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e Extensions) Value(provider string) any {
 	return e[provider]
 }
 
 // Set stores value under the provider name, allocating the map on first use.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *Extensions) Set(provider string, value any) {
 	if *e == nil {
 		*e = Extensions{}
@@ -58,6 +70,10 @@ func (e *Extensions) Set(provider string, value any) {
 
 // Clone returns a copy of the extension map. Values are shared, not copied —
 // they are read-only configuration by contract.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e Extensions) Clone() Extensions {
 	if len(e) == 0 {
 		return nil
@@ -93,6 +109,10 @@ func (e *Extensions) mergeDelta(delta Extensions) {
 // The canonical layer knows nothing about the value's vendor semantics; a
 // stored value that does not implement this interface is simply replaced by
 // the delta.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ExtensionMerger interface {
 	MergeExtension(delta any) any
 }
@@ -101,6 +121,10 @@ type ExtensionMerger interface {
 // type the owning provider does not recognize. Providers return it from
 // request translation — before any network I/O — so a mis-typed extension
 // fails the call instead of being silently dropped.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ExtensionTypeError struct {
 	// Provider is the extension namespace (registered provider name).
 	Provider string
@@ -113,6 +137,10 @@ type ExtensionTypeError struct {
 }
 
 // Error implements the error interface.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *ExtensionTypeError) Error() string {
 	return fmt.Sprintf("aimodel: %s extension on %s has type %T, want %s",
 		e.Provider, e.Node, e.Value, e.Want)

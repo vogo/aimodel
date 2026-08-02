@@ -19,6 +19,9 @@ package aimodel
 
 import "os"
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func GetEnv(key ...string) string {
 	for _, k := range key {
 		if value := os.Getenv(k); value != "" {

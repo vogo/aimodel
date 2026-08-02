@@ -31,6 +31,10 @@ import (
 // introducing a new capability interface (and a matching client method),
 // never by changing this one. Both *Client and composes.ComposeClient
 // implement it.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ChatCompleter interface {
 	ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error)
 	ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*Stream, error)
@@ -51,6 +55,10 @@ func (c *Client) applyDefaultModel(r *ais.ChatRequest) {
 
 // ChatCompletion sends a non-streaming chat completion request, delegating the
 // protocol-specific work to the client's resolved provider.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c *Client) ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais.ChatResponse, error) {
 	r := req.Clone()
 	r.Stream = false
@@ -72,6 +80,10 @@ func (c *Client) ChatCompletion(ctx context.Context, req *ais.ChatRequest) (*ais
 
 // ChatCompletionStream sends a streaming chat completion request and returns a
 // Stream backed by the provider's SSE decoder.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (c *Client) ChatCompletionStream(ctx context.Context, req *ais.ChatRequest) (*Stream, error) {
 	r := req.Clone()
 	r.Stream = true

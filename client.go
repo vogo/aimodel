@@ -39,6 +39,10 @@ const defaultTimeout = 60 * time.Second
 // single shared execution pipeline. The default provider is the
 // OpenAI-compatible one; select another with WithProvider (e.g.
 // WithProvider(anthropic.Name)).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Client struct {
 	model        string
 	providerName string
@@ -61,9 +65,17 @@ type clientConfig struct {
 }
 
 // Option configures a Client.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Option func(*clientConfig)
 
 // WithAPIKey sets the API key.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithAPIKey(key string) Option {
 	return func(c *clientConfig) {
 		c.apiKey = key
@@ -72,6 +84,10 @@ func WithAPIKey(key string) Option {
 
 // WithDefaultModel sets the default model name.
 // If a ais.ChatRequest has an empty Model field, this default is used.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithDefaultModel(model string) Option {
 	return func(c *clientConfig) {
 		c.model = model
@@ -79,6 +95,10 @@ func WithDefaultModel(model string) Option {
 }
 
 // WithBaseURL sets the API base URL.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithBaseURL(url string) Option {
 	return func(c *clientConfig) {
 		c.baseURL = strings.TrimRight(url, "/")
@@ -87,6 +107,10 @@ func WithBaseURL(url string) Option {
 
 // WithHTTPClient sets a custom HTTP client.
 // Panics if hc is nil — passing nil indicates a programming error.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithHTTPClient(hc *http.Client) Option {
 	if hc == nil {
 		panic("aimodel: WithHTTPClient called with nil *http.Client")
@@ -101,6 +125,10 @@ func WithHTTPClient(hc *http.Client) Option {
 // The default (unset) is the OpenAI-compatible provider (openai.Name). Import
 // a provider subpackage (e.g. provider/anthropic) to register its name, then
 // pass it here.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithProvider(name string) Option {
 	return func(c *clientConfig) {
 		if name != "" {
@@ -113,6 +141,10 @@ func WithProvider(name string) Option {
 // verbatim to the selected provider's factory. The concrete type is defined by
 // the provider package (e.g. anthropic.Options); passing a type the provider
 // does not recognize fails construction.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithProviderOptions(opts any) Option {
 	return func(c *clientConfig) {
 		c.providerOptions = opts
@@ -121,6 +153,10 @@ func WithProviderOptions(opts any) Option {
 
 // WithTimeout sets the HTTP client timeout.
 // The timeout is applied after all options, so it works regardless of option ordering.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func WithTimeout(d time.Duration) Option {
 	return func(c *clientConfig) {
 		c.timeout = d
@@ -135,6 +171,10 @@ func WithTimeout(d time.Duration) Option {
 // default model to AI_MODEL. The selected provider's factory validates its own
 // required fields (e.g. a base URL for OpenAI, none for Anthropic) and vendor
 // options, so those failures surface here at construction time.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func NewClient(opts ...Option) (*Client, error) {
 	cfg := &clientConfig{
 		timeout:      defaultTimeout,

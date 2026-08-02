@@ -39,6 +39,10 @@ import (
 // canonical equivalent, so mapAnthropicStopReason passes them through instead
 // of folding them into stop/length/content_filter. Named here for
 // readability; callers should treat any non-canonical FinishReason as opaque.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const (
 	// FinishReasonModelContextWindowExceeded maps Anthropic's
 	// "model_context_window_exceeded" (input + output exceeded the model's
@@ -57,6 +61,10 @@ const (
 
 // RequestExtension carries the Anthropic-only request parameters. Attach it
 // with ExtendRequest; the translator reads it before building the wire body.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type RequestExtension struct {
 	// AutoCache enables Anthropic's automatic prompt caching: a single
 	// cache_control at the request root. The server places the cache
@@ -85,6 +93,10 @@ type RequestExtension struct {
 // request side, CacheBreakpoint marks a prompt-cache boundary. On the
 // response side, this provider stores the content blocks the canonical layer
 // does not model in ExtraBlocks.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type MessageExtension struct {
 	// CacheBreakpoint asks the translator to emit a cache boundary at the end
 	// of this message's content blocks (cache_control on the last block).
@@ -109,6 +121,10 @@ type MessageExtension struct {
 // accumulate: ExtraBlocks concatenate in arrival order and the breakpoint
 // flag sticks. It returns a fresh value — neither the receiver nor the delta
 // is mutated, so previously delivered chunks stay intact.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *MessageExtension) MergeExtension(delta any) any {
 	d, ok := delta.(*MessageExtension)
 	if !ok || d == nil {
@@ -128,6 +144,10 @@ func (e *MessageExtension) MergeExtension(delta any) any {
 
 // ToolExtension carries the Anthropic-only per-tool parameters. Attach it
 // with ExtendTool.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ToolExtension struct {
 	// CacheBreakpoint marks this tool as the end of a cacheable prefix:
 	// Anthropic caches every tool up to and including the one flagged.
@@ -157,6 +177,9 @@ type ToolExtension struct {
 // alongside stop_reason "refusal". All fields are best-effort and may be
 // empty; Explanation in particular is not guaranteed stable across model
 // versions.
+//
+// It is a native wire type (MessagesResponse.StopDetails decodes into it) and
+// survives the v0.6.0 removal of the canonical layer.
 type StopDetails struct {
 	// Type discriminates the stop classification, e.g. "refusal".
 	Type string `json:"type,omitempty"`
@@ -171,6 +194,10 @@ type StopDetails struct {
 // ChoiceExtension carries the Anthropic-only per-choice response metadata,
 // written by this provider on ais.Choice (unary) and on the terminal
 // ais.StreamChunkChoice (streaming).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ChoiceExtension struct {
 	// StopDetails is the structured stop classification (e.g. the refusal
 	// category); nil when the response carries none.
@@ -180,6 +207,9 @@ type ChoiceExtension struct {
 // ResponseContainer is the server-side execution container returned
 // alongside a response. ExpiresAt is kept as the server-supplied string —
 // this wrapper neither parses nor acts on the expiry.
+//
+// It is a native wire type (MessagesResponse.Container decodes into it) and
+// survives the v0.6.0 removal of the canonical layer.
 type ResponseContainer struct {
 	ID        string `json:"id"`
 	ExpiresAt string `json:"expires_at,omitempty"`
@@ -188,6 +218,10 @@ type ResponseContainer struct {
 // ResponseExtension carries the Anthropic-only response-level metadata,
 // written by this provider on ais.ChatResponse (unary) and on the
 // ais.StreamChunk that reports the message_start information (streaming).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ResponseExtension struct {
 	// Container identifies the server-side execution container this response
 	// used. Pass its ID back via RequestExtension.Container to reuse the
@@ -196,6 +230,9 @@ type ResponseExtension struct {
 }
 
 // ServerToolUse counts server-side tool invocations billed with a request.
+//
+// It is a native wire type (MessagesUsage.ServerToolUse decodes into it) and
+// survives the v0.6.0 removal of the canonical layer.
 type ServerToolUse struct {
 	WebSearchRequests int `json:"web_search_requests"`
 	WebFetchRequests  int `json:"web_fetch_requests"`
@@ -204,6 +241,10 @@ type ServerToolUse struct {
 // UsageExtension carries the Anthropic-only usage accounting, written by this
 // provider on ais.Usage. The cross-provider counts (prompt/completion/cache
 // read/reasoning tokens, service tier) stay on ais.Usage itself.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type UsageExtension struct {
 	// CacheWriteTokens reports tokens written to the prompt cache
 	// (cache_creation_input_tokens, the total across TTLs). Like the
@@ -230,18 +271,30 @@ type UsageExtension struct {
 
 // ExtendRequest attaches the Anthropic request extension to a canonical
 // request. Passing nil removes a previously attached extension.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ExtendRequest(r *ais.ChatRequest, ext *RequestExtension) {
 	setExtension(&r.Extensions, ext)
 }
 
 // ExtendMessage attaches the Anthropic message extension to a canonical
 // message. Passing nil removes a previously attached extension.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ExtendMessage(m *ais.Message, ext *MessageExtension) {
 	setExtension(&m.Extensions, ext)
 }
 
 // ExtendTool attaches the Anthropic tool extension to a canonical tool.
 // Passing nil removes a previously attached extension.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ExtendTool(t *ais.Tool, ext *ToolExtension) {
 	setExtension(&t.Extensions, ext)
 }
@@ -264,6 +317,10 @@ func setExtension[T any](exts *ais.Extensions, ext *T) {
 // or nil when absent. A value of any other type also yields nil — the
 // translator rejects such a value with a *ais.ExtensionTypeError before any
 // network I/O, so it cannot silently take effect.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func RequestExtensionOf(r *ais.ChatRequest) *RequestExtension {
 	ext, _ := extensionOf[RequestExtension](r.Extensions, "")
 
@@ -272,6 +329,10 @@ func RequestExtensionOf(r *ais.ChatRequest) *RequestExtension {
 
 // MessageExtensionOf returns the Anthropic message extension attached to m,
 // or nil when absent (same type contract as RequestExtensionOf).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func MessageExtensionOf(m *ais.Message) *MessageExtension {
 	ext, _ := extensionOf[MessageExtension](m.Extensions, "")
 
@@ -280,6 +341,10 @@ func MessageExtensionOf(m *ais.Message) *MessageExtension {
 
 // ToolExtensionOf returns the Anthropic tool extension attached to t, or nil
 // when absent (same type contract as RequestExtensionOf).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ToolExtensionOf(t *ais.Tool) *ToolExtension {
 	ext, _ := extensionOf[ToolExtension](t.Extensions, "")
 
@@ -288,6 +353,10 @@ func ToolExtensionOf(t *ais.Tool) *ToolExtension {
 
 // ChoiceExtensionOf returns the Anthropic per-choice response metadata of a
 // unary choice, or nil when the response carries none.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ChoiceExtensionOf(c *ais.Choice) *ChoiceExtension {
 	ext, _ := extensionOf[ChoiceExtension](c.Extensions, "")
 
@@ -296,6 +365,10 @@ func ChoiceExtensionOf(c *ais.Choice) *ChoiceExtension {
 
 // ChunkChoiceExtensionOf returns the Anthropic per-choice response metadata
 // of a stream chunk choice (populated on the terminal chunk), or nil.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ChunkChoiceExtensionOf(c *ais.StreamChunkChoice) *ChoiceExtension {
 	ext, _ := extensionOf[ChoiceExtension](c.Extensions, "")
 
@@ -304,6 +377,10 @@ func ChunkChoiceExtensionOf(c *ais.StreamChunkChoice) *ChoiceExtension {
 
 // ResponseExtensionOf returns the Anthropic response-level metadata of a
 // unary response, or nil when the response carries none.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ResponseExtensionOf(r *ais.ChatResponse) *ResponseExtension {
 	ext, _ := extensionOf[ResponseExtension](r.Extensions, "")
 
@@ -313,6 +390,10 @@ func ResponseExtensionOf(r *ais.ChatResponse) *ResponseExtension {
 // ChunkExtensionOf returns the Anthropic chunk-level metadata of a stream
 // chunk (populated on the chunk carrying the message_start information), or
 // nil.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func ChunkExtensionOf(c *ais.StreamChunk) *ResponseExtension {
 	ext, _ := extensionOf[ResponseExtension](c.Extensions, "")
 
@@ -321,6 +402,10 @@ func ChunkExtensionOf(c *ais.StreamChunk) *ResponseExtension {
 
 // UsageExtensionOf returns the Anthropic usage accounting attached to u, or
 // nil when the response carries none.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func UsageExtensionOf(u *ais.Usage) *UsageExtension {
 	ext, _ := extensionOf[UsageExtension](u.Extensions, "")
 

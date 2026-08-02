@@ -38,6 +38,10 @@ import (
 
 // Name is the registered provider name. Select it via the root package's
 // WithProvider(anthropic.Name).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const Name = "anthropic"
 
 func init() {
@@ -47,6 +51,10 @@ func init() {
 // Options carries Anthropic-specific configuration. Pass it to the root
 // package's client through WithProviderOptions; leaving it unset selects the
 // documented defaults (API version 2023-06-01, no beta features, no profile).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Options struct {
 	// Beta enables one or more Anthropic beta features via the
 	// "anthropic-beta" request header. Empty strings are ignored; on the wire
@@ -64,6 +72,10 @@ type Options struct {
 
 // New constructs an Anthropic provider. The base URL is optional (it defaults
 // to the public endpoint). cfg.Options, when set, must be Options.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func New(cfg ais.Config) (ais.ChatProvider, error) {
 	p := &provider{
 		apiKey:  cfg.APIKey,

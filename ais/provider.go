@@ -15,11 +15,16 @@
  * limitations under the License.
  */
 
-// Package api holds the vendor-neutral foundation of aimodel: the canonical
+// Package ais holds the vendor-neutral foundation of aimodel: the canonical
 // chat types, the error model, the provider contract, and the provider
 // registry. It has no vendor dependencies; provider subpackages implement
 // against it, and callers use its canonical types directly alongside the
 // root aimodel client facade.
+//
+// Deprecated: this package is removed in v0.6.0. aimodel no longer ships a
+// shared request/response model; use the native client and wire types of
+// provider/openai or provider/anthropic instead. MIGRATION.md maps every
+// symbol in this package to its native counterpart.
 package ais
 
 import (
@@ -30,6 +35,10 @@ import (
 
 // MaxStreamLineSize limits the maximum SSE line size read by provider stream
 // decoders to 1 MB.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const MaxStreamLineSize = 1 << 20
 
 // ChatProvider is the vendor boundary for one chat capability call. It covers
@@ -42,6 +51,10 @@ const MaxStreamLineSize = 1 << 20
 // and the Stream lifecycle. A provider must not retain or mutate caller
 // state; the *ChatRequest it receives is a per-call working copy that it may
 // rewrite (e.g. to default protocol-specific fields).
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ChatProvider interface {
 	// NewChatRequest builds the complete HTTP request for the given canonical
 	// request. req is the pipeline's working copy: already cloned, with the
@@ -66,6 +79,10 @@ type ChatProvider interface {
 // response body. It returns io.EOF when the stream is complete. The root
 // Stream owns the close state and the underlying reader; a decoder only
 // translates events.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type StreamDecoder interface {
 	Next() (*StreamChunk, error)
 }
@@ -73,6 +90,10 @@ type StreamDecoder interface {
 // Config carries the common construction-time configuration handed to a
 // provider factory. Vendor-specific configuration travels in Options as a
 // value defined by the provider's own package.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Config struct {
 	// APIKey is the credential for the vendor API. Never empty: the root
 	// pipeline rejects key-less clients before resolving a provider.
@@ -92,4 +113,8 @@ type Config struct {
 // Factory constructs a ready-to-use provider instance from its
 // configuration. It validates required fields and vendor options up front so
 // every failure surfaces at client construction, not at call time.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type Factory func(cfg Config) (ChatProvider, error)

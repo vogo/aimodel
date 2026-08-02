@@ -34,6 +34,10 @@ import (
 
 // Name is the registered provider name and the default provider selected when
 // a client names none.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 const Name = "openai"
 
 func init() {
@@ -43,6 +47,10 @@ func init() {
 // New constructs an OpenAI-compatible provider. It requires a non-empty base
 // URL (OpenAI-compatible endpoints have no universal default) and accepts no
 // vendor options.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func New(cfg ais.Config) (ais.ChatProvider, error) {
 	if cfg.BaseURL == "" {
 		return nil, ais.ErrNoBaseURL

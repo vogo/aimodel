@@ -24,6 +24,10 @@ import (
 )
 
 // Sentinel errors for common failure conditions.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 var (
 	ErrNoAPIKey       = errors.New("aimodel: API key is required")
 	ErrNoBaseURL      = errors.New("aimodel: base URL is required")
@@ -35,24 +39,42 @@ var (
 // ErrCapabilityNotSupported reports that the client's resolved provider does
 // not implement the requested capability. Match it with errors.Is; the wrapping
 // CapabilityError names the provider and the capability.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 var ErrCapabilityNotSupported = errors.New("aimodel: capability not supported by provider")
 
 // CapabilityError says which provider was selected and which capability it does
 // not implement. It is returned before any network I/O.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type CapabilityError struct {
 	Provider   string
 	Capability string
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *CapabilityError) Error() string {
 	return fmt.Sprintf("aimodel: provider %q does not support the %s capability", e.Provider, e.Capability)
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *CapabilityError) Unwrap() error {
 	return ErrCapabilityNotSupported
 }
 
 // APIError represents an error returned by an AI API.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type APIError struct {
 	StatusCode int
 	Code       string
@@ -61,33 +83,56 @@ type APIError struct {
 	Err        error
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *APIError) Error() string {
 	return fmt.Sprintf("aimodel: API error (status %d): %s - %s", e.StatusCode, e.Code, e.Message)
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *APIError) Unwrap() error {
 	return e.Err
 }
 
 // ModelError associates an error with a specific model name.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type ModelError struct {
 	Model string
 	Err   error
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *ModelError) Error() string {
 	return fmt.Sprintf("aimodel: model %s: %v", e.Model, e.Err)
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *ModelError) Unwrap() error {
 	return e.Err
 }
 
 // MultiError collects errors from multiple model attempts.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 type MultiError struct {
 	Errors []ModelError
 }
 
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *MultiError) Error() string {
 	if len(e.Errors) == 0 {
 		return ErrNoActiveModels.Error()
@@ -110,6 +155,10 @@ func (e *MultiError) Error() string {
 
 // Unwrap returns all wrapped errors for Go 1.20+ multi-error unwrapping.
 // This allows errors.Is and errors.As to match any model's error.
+//
+// Deprecated: the canonical layer is removed in v0.6.0. Use the native
+// client and wire types of provider/openai or provider/anthropic instead;
+// see MIGRATION.md for the symbol-by-symbol migration table.
 func (e *MultiError) Unwrap() []error {
 	if len(e.Errors) == 0 {
 		return []error{ErrNoActiveModels}
