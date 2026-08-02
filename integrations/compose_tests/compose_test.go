@@ -34,6 +34,7 @@ func TestComposeClient(t *testing.T) {
 	testFailover(clients)
 	testWeight(clients)
 	testRandom(clients)
+	testCanary()
 }
 
 func buildComposeClients() ([]*aimodel.Client, error) {

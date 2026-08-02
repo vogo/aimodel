@@ -308,13 +308,18 @@ func TestFailover_AllFail(t *testing.T) {
 		t.Fatal("expected error when all models fail")
 	}
 
-	var me *ais.MultiError
+	var me *MultiError
 	if !errors.As(err, &me) {
-		t.Fatalf("expected MultiError, got %T: %v", err, err)
+		t.Fatalf("expected composes.MultiError, got %T: %v", err, err)
 	}
 
 	if len(me.Errors) != 2 {
-		t.Fatalf("expected 2 model errors, got %d", len(me.Errors))
+		t.Fatalf("expected 2 endpoint errors, got %d", len(me.Errors))
+	}
+
+	// Each failure is attributed to a distinct alias.
+	if me.Errors[0].Alias != "m0" || me.Errors[1].Alias != "m1" {
+		t.Fatalf("aliases = %q, %q; want m0, m1", me.Errors[0].Alias, me.Errors[1].Alias)
 	}
 }
 
@@ -679,12 +684,22 @@ func TestMultiError_UnwrapAll(t *testing.T) {
 
 	_, err = cc.ChatCompletion(context.Background(), testRequest())
 
-	var me *ais.MultiError
+	var me *MultiError
 	if !errors.As(err, &me) {
-		t.Fatalf("expected MultiError, got %T", err)
+		t.Fatalf("expected composes.MultiError, got %T", err)
 	}
 
-	// errors.As should find APIError from any model's error in the chain.
+	// errors.As reaches a per-endpoint error and its alias.
+	var ee *EndpointError
+	if !errors.As(err, &ee) {
+		t.Fatal("expected errors.As to find EndpointError in multi-error chain")
+	}
+
+	if ee.Alias != "m0" && ee.Alias != "m1" {
+		t.Fatalf("endpoint alias = %q, want m0 or m1", ee.Alias)
+	}
+
+	// errors.As should find APIError from any endpoint's error in the chain.
 	var apiErr *ais.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatal("expected errors.As to find APIError in multi-error chain")
@@ -709,5 +724,38 @@ func TestNoActiveModels_Error(t *testing.T) {
 	_, err = cc.ChatCompletion(context.Background(), testRequest())
 	if !errors.Is(err, ais.ErrNoActiveModels) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
+	}
+}
+
+// NewComposeClient must own its entries: deriving aliases may not write back
+// into the caller's slice, and later mutations by the caller must not reach the
+// client's routing table.
+func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	entries := []ModelEntry{
+		{Name: "m0", Client: newClientForServer(t, s)},
+		{Name: "m1", Client: newClientForServer(t, s)},
+	}
+
+	cc, err := NewComposeClient(StrategyFailover, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entries[0].Alias != "" || entries[1].Alias != "" {
+		t.Fatalf("caller entries were written back: %q, %q", entries[0].Alias, entries[1].Alias)
+	}
+
+	if cc.entries[0].Alias != "m0" || cc.entries[1].Alias != "m1" {
+		t.Fatalf("client aliases = %q, %q, want m0, m1", cc.entries[0].Alias, cc.entries[1].Alias)
+	}
+
+	// The client does not share the caller's backing array.
+	entries[0].Name = "mutated"
+
+	if cc.entries[0].Name != "m0" {
+		t.Fatalf("client entry follows caller mutation: %q", cc.entries[0].Name)
 	}
 }
