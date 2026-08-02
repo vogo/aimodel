@@ -15,11 +15,15 @@ canonical layer (`ais`) on top of per-vendor native wire models, and [ADR
 it. Reviewing the result against actual use, the canonical layer costs more than it returns:
 
 1. **Its one differentiating capability was never used.** A shared request model exists so the
-   same request can be delivered to different protocols. No caller in this repository does that:
-   `composes/compose_client_test.go` imports only `anthropic`, and all three strategies in
-   `integrations/compose_tests` pass `WithProvider(anthropic.Name)`. There is no mixed
-   OpenAI/Anthropic dispatch anywhere. The real requirement is failover across several backends
-   speaking *one* wire format.
+   same request can be delivered to different protocols. At the time this analysis was written, no
+   caller in this repository did that: `composes/compose_client_test.go` imported only `anthropic`,
+   and all three strategies in `integrations/compose_tests` passed `WithProvider(anthropic.Name)`.
+   There was no mixed OpenAI/Anthropic dispatch anywhere; the real requirement was failover across
+   several backends speaking *one* wire format. (v0.6.0 later shipped a cross-protocol endpoint
+   capability — see the note after "The constraint this decision gives up". It was built on exactly
+   the shared model this decision removes, and it did not change the assessment: the documented
+   real-world need remained same-wire failover, and the capability rode the canonical request
+   rather than expressing either protocol faithfully.)
 
 2. **It is lossy by construction, and the loss grows.** The "≥ 2 providers share a mappable
    semantic" admission rule (ADR 0005) is correct for a shared type and, precisely because it is
@@ -80,6 +84,14 @@ vendor-neutral request/response model, no canonical translation, and no provider
    locally and matches with `errors.As`. This is how `composes` stays free of any provider import
    for error handling.
 
+   One gap, stated so it is not mistaken for a bug: the structural match only classifies
+   errors that carry an HTTP status. An error surfaced *mid-stream* (OpenAI delivers a chunk-level
+   `error` object as an `*HTTPError` with status 0; Anthropic delivers it as `StreamEvent.Error`,
+   not a Go error at all) is not an HTTP-level rejection, and `StatusCode()` returns 0 there. A
+   consumer testing `sc.StatusCode() == 429` will not match a mid-stream failure — that is
+   intentional. Connection-establishment failures and non-2xx responses do carry their real status,
+   so the 4xx/5xx classification works for the cases `composes` acts on (failover, 429 cooling).
+
 6. **Vendor parameters are ordinary fields.** `ais.Extensions` and the Anthropic `Extend*` / `*Of`
    helpers are removed; what they carried are fields of the native types. The single escape hatch
    is `openai.ChatCompletionRequest.ExtraBody`, for private top-level parameters of
@@ -94,6 +106,37 @@ vendor-neutral. With canonical dispatch gone, the rule protects nothing, and its
 is rewritten as "`composes` depends on `provider/openai` and on no other provider". This is the
 one pre-existing architectural constraint deliberately abandoned here; it is recorded so a future
 reader does not mistake it for an oversight.
+
+### Relationship to v0.6.0's cross-protocol endpoint dispatch (PR #17)
+
+Between this analysis being written and it being implemented, v0.6.0 (PR #17) shipped a
+declarative endpoint API for `composes`: `EndpointSpec` carried a `Provider` field (a registry
+protocol name), and `NewFromEndpoints` built one `aimodel.Client` per spec, so a single compose
+client could mix OpenAI-compatible and Anthropic endpoints behind one `ChatCompletion` call.
+
+That mixing is realized **only** through the canonical request model — one `ais.ChatRequest`
+translated differently per endpoint. Remove the model and the mixing has nothing to stand on: a
+`ChatCompletionRequest` is an OpenAI-wire value and cannot be handed to an Anthropic endpoint. So
+this decision deliberately reverses the cross-protocol dimension of PR #17, one release after it
+shipped:
+
+- **Dropped**: the `EndpointSpec.Provider` field and the ability to mix protocols in one compose
+  client. This is the same capability the canonical layer existed to provide, and it is retired for
+  the same reason — it was built on a shared request model that expresses neither protocol
+  faithfully, and the documented need is same-wire failover.
+- **Kept and ported**: everything in PR #17 that is provider-neutral — endpoint aliases, capability
+  filtering (`Capability`/`CapabilityProvider`), sticky routing, cost and latency strategies, 429
+  cooling with `classifyHealth`, attempt observers, and `Stats()` health snapshots. These run over
+  `provider/openai` types now, unchanged in behavior. `classifyHealth` reads the status through the
+  structural `interface{ StatusCode() int }` rather than `*ais.APIError`, which is what lets it
+  drop the canonical import.
+
+The cost is explicit: a deployment that genuinely needs to fail one request over from an
+OpenAI-compatible backend to Anthropic must now run two compose clients (or map the request
+itself), where v0.6.0 let it declare both endpoints in one list. That is the price of removing the
+shared model, accepted here on the evidence that no caller in this repository exercised the mixing.
+If a concrete cross-protocol requirement appears, the right response is a mapping the caller writes
+with full knowledge of both protocols — not a revival of the canonical layer.
 
 ### Guards
 
