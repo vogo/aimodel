@@ -119,7 +119,7 @@ type CacheControl struct {
 // ephemeralCache returns the canonical 5-minute ephemeral marker used on
 // both message content blocks and tool definitions.
 func ephemeralCache() *CacheControl {
-	return &CacheControl{Type: "ephemeral"}
+	return &CacheControl{Type: CacheControlTypeEphemeral}
 }
 
 // ContentSource represents the source of an image or document in Anthropic's API format.

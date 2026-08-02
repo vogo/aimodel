@@ -37,9 +37,9 @@ func fromAnthropicResponse(ar *MessagesResponse) *ais.ChatResponse {
 
 	for _, block := range ar.Content {
 		switch block.Type {
-		case "thinking":
+		case ContentBlockTypeThinking:
 			thinkingParts = append(thinkingParts, block.Thinking)
-		case "text":
+		case ContentBlockTypeText:
 			textParts = append(textParts, block.Text)
 
 			// A text block may carry citation annotations this wrapper does
@@ -49,7 +49,7 @@ func fromAnthropicResponse(ar *MessagesResponse) *ais.ChatResponse {
 			if len(block.Citations) > 0 {
 				extraBlocks = append(extraBlocks, block.Raw)
 			}
-		case "tool_use":
+		case ContentBlockTypeToolUse:
 			msg.ToolCalls = append(msg.ToolCalls, ais.ToolCall{
 				Index: len(msg.ToolCalls),
 				ID:    block.ID,
@@ -139,17 +139,17 @@ func parseDataURI(uri string) (mediaType, data string, ok bool) {
 
 func mapAnthropicStopReason(reason string) ais.FinishReason {
 	switch reason {
-	case "end_turn", "stop_sequence":
+	case StopReasonEndTurn, StopReasonStopSequence:
 		return ais.FinishReasonStop
-	case "max_tokens":
+	case StopReasonMaxTokens:
 		return ais.FinishReasonLength
-	case "tool_use":
+	case StopReasonToolUse:
 		return ais.FinishReasonToolCalls
-	case "model_context_window_exceeded":
+	case StopReasonModelContextWindowExceeded:
 		return FinishReasonModelContextWindowExceeded
-	case "refusal":
+	case StopReasonRefusal:
 		return FinishReasonRefusal
-	case "pause_turn":
+	case StopReasonPauseTurn:
 		return FinishReasonPauseTurn
 	default:
 		return ais.FinishReason(reason)

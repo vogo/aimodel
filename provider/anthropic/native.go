@@ -265,19 +265,19 @@ func decodeNativeEvent(eventType, payload string) (*StreamEvent, error) {
 	}
 	var target any
 	switch event.Type {
-	case "message_start":
+	case StreamEventTypeMessageStart:
 		event.MessageStart = &MessageStartEvent{}
 		target = event.MessageStart
-	case "content_block_start":
+	case StreamEventTypeContentBlockStart:
 		event.ContentBlockStart = &ContentBlockStartEvent{}
 		target = event.ContentBlockStart
-	case "content_block_delta":
+	case StreamEventTypeContentBlockDelta:
 		event.ContentBlockDelta = &ContentBlockDeltaEvent{}
 		target = event.ContentBlockDelta
-	case "message_delta":
+	case StreamEventTypeMessageDelta:
 		event.MessageDelta = &MessageDeltaEvent{}
 		target = event.MessageDelta
-	case "error":
+	case StreamEventTypeError:
 		event.Error = &MessagesErrorResponse{}
 		target = event.Error
 	default:

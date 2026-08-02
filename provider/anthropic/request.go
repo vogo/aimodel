@@ -110,14 +110,14 @@ func setAnthropicMessages(ar *MessagesRequest, messages []ais.Message) error {
 			if parts := m.Content.Parts(); len(parts) > 0 {
 				useBlocks = true
 				for _, p := range parts {
-					if p.Type == "text" {
-						systemBlocks = append(systemBlocks, ContentBlock{Type: "text", Text: p.Text})
+					if p.Type == ContentBlockTypeText {
+						systemBlocks = append(systemBlocks, ContentBlock{Type: ContentBlockTypeText, Text: p.Text})
 					}
 				}
 			} else {
 				text := m.Content.Text()
 				systemTexts = append(systemTexts, text)
-				systemBlocks = append(systemBlocks, ContentBlock{Type: "text", Text: text})
+				systemBlocks = append(systemBlocks, ContentBlock{Type: ContentBlockTypeText, Text: text})
 			}
 			continue
 		}
@@ -223,7 +223,7 @@ func toAnthropicToolChoice(req *ais.ChatRequest) *ToolChoice {
 
 func setAnthropicAutoCache(ar *MessagesRequest, ext *RequestExtension) {
 	if ext.AutoCache {
-		ar.CacheControl = &CacheControl{Type: "ephemeral", TTL: ext.AutoCacheTTL}
+		ar.CacheControl = &CacheControl{Type: CacheControlTypeEphemeral, TTL: ext.AutoCacheTTL}
 	}
 }
 
@@ -291,7 +291,7 @@ func toolResultBlock(m ais.Message) (ContentBlock, error) {
 	}
 
 	block := ContentBlock{
-		Type:          "tool_result",
+		Type:          ContentBlockTypeToolResult,
 		ToolUseID:     m.ToolCallID,
 		ResultContent: m.Content.Text(),
 	}
@@ -361,14 +361,14 @@ func toAnthropicMessage(m ais.Message) (MessagesMessage, error) {
 		text := m.Content.Text()
 		if text != "" {
 			blocks = append(blocks, ContentBlock{
-				Type: "text",
+				Type: ContentBlockTypeText,
 				Text: text,
 			})
 		}
 
 		for _, tc := range m.ToolCalls {
 			blocks = append(blocks, ContentBlock{
-				Type:  "tool_use",
+				Type:  ContentBlockTypeToolUse,
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
 				Input: json.RawMessage(tc.Function.Arguments),
@@ -397,7 +397,7 @@ func toAnthropicMessage(m ais.Message) (MessagesMessage, error) {
 			switch p.Type {
 			case "text":
 				blocks = append(blocks, ContentBlock{
-					Type: "text",
+					Type: ContentBlockTypeText,
 					Text: p.Text,
 				})
 			case "image_url":
@@ -405,7 +405,7 @@ func toAnthropicMessage(m ais.Message) (MessagesMessage, error) {
 					continue
 				}
 
-				block := ContentBlock{Type: "image"}
+				block := ContentBlock{Type: ContentBlockTypeImage}
 
 				if mediaType, b64Data, ok := parseDataURI(p.ImageURL.URL); ok {
 					block.Source = &ContentSource{
@@ -442,7 +442,7 @@ func toAnthropicMessage(m ais.Message) (MessagesMessage, error) {
 	// flagged CacheBreakpoint so we can attach cache_control.
 	if cacheBreakpoint {
 		block := ContentBlock{
-			Type:         "text",
+			Type:         ContentBlockTypeText,
 			Text:         m.Content.Text(),
 			CacheControl: ephemeralCache(),
 		}
@@ -469,18 +469,18 @@ func convertToolChoice(tc any) *ToolChoice {
 	case string:
 		switch v {
 		case "auto":
-			return &ToolChoice{Type: "auto"}
+			return &ToolChoice{Type: ToolChoiceTypeAuto}
 		case "required":
-			return &ToolChoice{Type: "any"}
+			return &ToolChoice{Type: ToolChoiceTypeAny}
 		case "none":
 			// Explicit "none" forbids any tool call; an omitted tool_choice
 			// would instead let the model choose, so emit {type:"none"}.
-			return &ToolChoice{Type: "none"}
+			return &ToolChoice{Type: ToolChoiceTypeNone}
 		}
 	case map[string]any:
 		if fn, ok := v["function"].(map[string]any); ok {
 			if name, ok := fn["name"].(string); ok {
-				return &ToolChoice{Type: "tool", Name: name}
+				return &ToolChoice{Type: ToolChoiceTypeTool, Name: name}
 			}
 		}
 	}
