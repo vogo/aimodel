@@ -68,9 +68,10 @@ func (c *ComposeClient) stickyPreferredAlias(sessionID string) string {
 		h.Write([]byte{0})
 	}
 
-	// Mix in the alias count via the digest domain to avoid modulo bias concerns
-	// being confused with ordering; the digest is stable for a given input.
-	idx := int(h.Sum32()) % len(aliases)
+	// Reduce the digest modulo the alias count in uint32 space: converting the
+	// uint32 digest to int first would yield a negative value (and a negative
+	// index) wherever int is 32 bits.
+	idx := int(h.Sum32() % uint32(len(aliases)))
 
 	return aliases[idx]
 }

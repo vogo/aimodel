@@ -726,3 +726,36 @@ func TestNoActiveModels_Error(t *testing.T) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
 	}
 }
+
+// NewComposeClient must own its entries: deriving aliases may not write back
+// into the caller's slice, and later mutations by the caller must not reach the
+// client's routing table.
+func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	entries := []ModelEntry{
+		{Name: "m0", Client: newClientForServer(t, s)},
+		{Name: "m1", Client: newClientForServer(t, s)},
+	}
+
+	cc, err := NewComposeClient(StrategyFailover, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entries[0].Alias != "" || entries[1].Alias != "" {
+		t.Fatalf("caller entries were written back: %q, %q", entries[0].Alias, entries[1].Alias)
+	}
+
+	if cc.entries[0].Alias != "m0" || cc.entries[1].Alias != "m1" {
+		t.Fatalf("client aliases = %q, %q, want m0, m1", cc.entries[0].Alias, cc.entries[1].Alias)
+	}
+
+	// The client does not share the caller's backing array.
+	entries[0].Name = "mutated"
+
+	if cc.entries[0].Name != "m0" {
+		t.Fatalf("client entry follows caller mutation: %q", cc.entries[0].Name)
+	}
+}

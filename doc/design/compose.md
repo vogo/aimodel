@@ -47,7 +47,7 @@ Every request flows through the same chain:
 capability filter → strategy ordering → recovery probes → per-endpoint attempts
 ```
 
-1. **Capability filter** (§4) drops endpoints that cannot serve the request (e.g. a tools request keeps only `Tools`-capable endpoints). Runs before health and strategy.
+1. **Capability filter** (§4) drops endpoints that have *declared* they cannot serve the request (e.g. a tools request drops endpoints declaring `Tools: false`). Endpoints that declare no capability are never filtered. Runs before health and strategy.
 2. **Strategy ordering** (§2) orders the capable, health-available candidates.
 3. **Recovery probes** (§3) prepend errored endpoints whose backoff has elapsed.
 4. **Attempts** try candidates in order until one succeeds; each failure updates health (§3) and emits an `AttemptResult` (§5), then fails over.
@@ -91,20 +91,23 @@ Recovery:
 - Success → `markActive()`: state `active`, error count reset to 0, last error cleared.
 - `error` recovery probe `shouldProbe`: the wait is an **exponential backoff** of `interval × 2^min(errorCount-1, 6)` — at most 64× the base interval (default 60s → up to 64 minutes). A probed endpoint is **prepended** to the candidate list, forming a "probe first, keep backing off on failure" self-healing loop.
 - `cooling` rejoin uses a fixed `coolingInterval` (default 10s, shorter than the recovery interval; set via `WithCoolingInterval`) — no half-open or sliding-window machinery.
+- A **429 answering a recovery probe** keeps the endpoint in `error`: it records the error and restarts the wait at the current backoff level, but never demotes a long backoff to the 10s cooling interval. `errorCount` still does not advance.
 
-`Stats()` returns an immutable per-endpoint snapshot (`[]EndpointStat`: `Alias`, `Status`, `ErrorCount`, `LastError`, `ErrorTime`), safe to read concurrently with dispatch. Zero time / nil error means "never failed or recovered". Mutating the returned slice does not affect internal state.
+`Stats()` returns an immutable per-endpoint snapshot (`[]EndpointStat`: `Alias`, `Status`, `ErrorCount`, `LastError`, `ErrorTime`), safe to read concurrently with dispatch. Zero time / nil error means "never failed or recovered". Mutating the returned slice does not affect internal state. `Status` reflects **routing behavior**, not the raw stored state: a cooling endpoint whose interval has elapsed is already selectable, so it reports `active` rather than a stale `cooling` that would contradict where requests actually go.
 
 ## 4. Capability filtering
 
 `Capability{Tools, Vision, MaxContextTokens}` is a strong-typed contract declared per endpoint (`ModelEntry.Capability` / `EndpointSpec.Capability`) or by a client implementing `CapabilityProvider`. It is never inferred from `Tags` or the provider name.
 
-Filtering runs first and only **excludes** candidates:
+**Filtering is opt-in.** Only an endpoint that *declares* a capability can be excluded by it. An endpoint that declares nothing is **unknown, not incapable**: it stays in the candidate list for every request. Undeclared is the default for hand-built `ModelEntry` values and for `EndpointSpec`s that leave `Capability` nil — and `*aimodel.Client` does not implement `CapabilityProvider` — so adding capability filtering changes the routing of no existing configuration. Declaring `Capability{Tools: false}` is the explicit, deliberate way to say "this endpoint cannot serve tools"; implementing `CapabilityProvider` is itself a declaration, so a zero `Capability` returned from it means "neither tools nor vision", not "unknown".
 
-- A request with `Tools` (or an explicit `tool_choice` other than `"none"`) keeps only `Tools`-capable endpoints.
-- A request carrying an image content part keeps only `Vision`-capable endpoints.
+Filtering runs first and only **excludes** declared-incapable candidates:
+
+- A request with `Tools` (or an explicit `tool_choice` other than `"none"`) drops endpoints that declared `Tools: false`.
+- A request carrying an image content part drops endpoints that declared `Vision: false`.
 - `MaxContextTokens` is part of the contract for future budget routing; the SDK does not estimate tokens, so it is not filtered today.
 
-If a request requires a capability no endpoint has, `composes` returns a `*CapabilityError` (matching `ErrCapabilityNotSatisfied`) **before any network I/O**. Filtering never strips tools, rewrites the request, switches dialect, or downgrades to plain chat. Missing capability metadata is treated conservatively as "not supported".
+If a request requires a capability and every endpoint has *declared* it unsupported, `composes` returns a `*CapabilityError` (matching `ErrCapabilityNotSatisfied`) **before any network I/O**. Filtering never strips tools, rewrites the request, switches dialect, or downgrades to plain chat.
 
 ## 5. Attempt observation
 

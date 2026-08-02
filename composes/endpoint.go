@@ -58,6 +58,8 @@ type EndpointSpec struct {
 	Tags map[string]string
 
 	// Capability optionally declares the endpoint's strong-typed capability.
+	// Leaving it nil keeps the endpoint out of the capability filter entirely
+	// (unknown, not incapable).
 	Capability *Capability
 	// Cost optionally declares static pricing for StrategyCost.
 	Cost *EndpointCost

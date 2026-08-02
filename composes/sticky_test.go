@@ -204,3 +204,29 @@ func TestSticky_IntegrationRoutesToPreferred(t *testing.T) {
 		t.Fatalf("model = %q, want m%s", resp.Model, want)
 	}
 }
+
+// The digest must be reduced in uint32 space: int(h.Sum32()) is negative for
+// digests above MaxInt32 wherever int is 32 bits (GOARCH=386/arm/mips), which
+// would make the modulo negative and panic on the alias lookup.
+func TestSticky_PreferredAliasAlwaysInRange(t *testing.T) {
+	for n := 1; n <= 8; n++ {
+		aliases := make([]string, n)
+		for i := range aliases {
+			aliases[i] = fmt.Sprintf("ep-%d", i)
+		}
+
+		c := stickyClient(aliases...)
+
+		valid := make(map[string]bool, n)
+		for _, a := range aliases {
+			valid[a] = true
+		}
+
+		for i := range 500 {
+			got := c.stickyPreferredAlias(fmt.Sprintf("session-%d", i))
+			if !valid[got] {
+				t.Fatalf("n=%d session-%d: preferred alias %q is outside the configured set", n, i, got)
+			}
+		}
+	}
+}

@@ -342,3 +342,75 @@ func TestStats_ConcurrentSafe(t *testing.T) {
 
 	wg.Wait()
 }
+
+// A cooling endpoint whose interval has elapsed is already selectable again, so
+// Stats() must report it as active instead of leaving a stale "cooling" until
+// the next success — otherwise the reported state contradicts routing.
+func TestStats_ElapsedCoolingReportsActive(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "m0", Alias: "a", Client: newClientForServer(t, s)},
+	}, WithCoolingInterval(10*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	cc.nowFunc = func() time.Time { return now }
+	cc.health[0].markCooling(&ais.APIError{StatusCode: 429}, now)
+
+	if got := cc.Stats()[0].Status; got != "cooling" {
+		t.Fatalf("status right after 429 = %q, want cooling", got)
+	}
+
+	// Interval elapsed: available() would select it, so Stats must agree.
+	cc.nowFunc = func() time.Time { return now.Add(11 * time.Second) }
+
+	if got := cc.Stats()[0].Status; got != "active" {
+		t.Fatalf("status after the cooling interval = %q, want active", got)
+	}
+
+	if !cc.health[0].available(now.Add(11*time.Second), cc.coolingInterval) {
+		t.Fatal("endpoint should be available once cooling elapsed")
+	}
+}
+
+// A 429 answering a recovery probe must not demote a long error backoff to the
+// much shorter cooling interval, which would let the endpoint skip its backoff.
+func TestModelHealth_429OnErroredKeepsBackoff(t *testing.T) {
+	h := newModelHealth()
+	now := time.Now()
+
+	for range 3 {
+		h.markError(errors.New("5xx"), now)
+	}
+
+	// The probe fires after the 4x backoff (errorCount=3 → 2^2) and gets a 429.
+	probeAt := now.Add(4 * time.Minute)
+	h.markCooling(&ais.APIError{StatusCode: 429}, probeAt)
+
+	snap := h.snapshot()
+	if snap.state != stateError {
+		t.Fatalf("state = %s, want error (a 429 must not clear the error state)", snap.state)
+	}
+
+	if snap.errorCount != 3 {
+		t.Fatalf("errorCount = %d, want 3 (cooling never advances the backoff)", snap.errorCount)
+	}
+
+	// Not selectable via the cooling path, and the next probe waits a full
+	// backoff from the probe attempt rather than the 10s cooling interval.
+	if h.available(probeAt.Add(30*time.Second), 10*time.Second) {
+		t.Fatal("an errored endpoint must not rejoin rotation through cooling")
+	}
+
+	if h.shouldProbe(probeAt.Add(time.Minute), time.Minute) {
+		t.Fatal("next probe must wait the full 4x backoff, not one interval")
+	}
+
+	if !h.shouldProbe(probeAt.Add(4*time.Minute), time.Minute) {
+		t.Fatal("probe should be due once the 4x backoff elapsed")
+	}
+}

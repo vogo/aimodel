@@ -121,13 +121,21 @@ func (h *modelHealth) markError(err error, now time.Time) {
 // markCooling records a rate-limit (429) failure: the endpoint enters cooling
 // with the error and timestamp recorded, but the consecutive-failure count is
 // left untouched so cooling never drives the error backoff.
+//
+// An endpoint already in the error state stays there: a 429 answering a recovery
+// probe must not demote a long backoff to the much shorter cooling interval. The
+// probe's timestamp is recorded so the next probe waits another full backoff at
+// the current level, and errorCount still does not advance.
 func (h *modelHealth) markCooling(err error, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.state = stateCooling
 	h.lastError = err
 	h.errorTime = now
+
+	if h.state != stateError {
+		h.state = stateCooling
+	}
 }
 
 // isActive reports whether the endpoint is in the active state.

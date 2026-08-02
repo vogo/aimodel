@@ -70,6 +70,10 @@ func (e *APIError) Unwrap() error {
 }
 
 // ModelError associates an error with a specific model name.
+//
+// Compose dispatch no longer produces it: several endpoints may share one model,
+// so failures are attributed by endpoint alias via composes.EndpointError. This
+// type stays exported for callers that aggregate by model name.
 type ModelError struct {
 	Model string
 	Err   error
@@ -83,7 +87,9 @@ func (e *ModelError) Unwrap() error {
 	return e.Err
 }
 
-// MultiError collects errors from multiple model attempts.
+// MultiError collects errors from multiple model attempts. Like ModelError it is
+// keyed by model name; compose dispatch aggregates with composes.MultiError,
+// which is keyed by endpoint alias.
 type MultiError struct {
 	Errors []ModelError
 }

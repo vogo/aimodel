@@ -32,6 +32,11 @@ import (
 // client itself. It is never inferred from Tags or the provider name, and it
 // drives candidate filtering only — the router excludes incapable endpoints but
 // never strips tools, rewrites the request, switches dialect, or downgrades.
+//
+// Filtering is opt-in: an endpoint that declares nothing is *unknown*, not
+// *incapable*, and never participates in the filter. Only an explicit
+// declaration — a non-nil ModelEntry.Capability or a CapabilityProvider client —
+// can exclude an endpoint.
 type Capability struct {
 	// Tools marks the endpoint able to serve function/tool calls.
 	Tools bool
@@ -45,7 +50,9 @@ type Capability struct {
 
 // CapabilityProvider is optionally implemented by a ChatCompleter (e.g. a
 // provider's native client) that can declare its own Capability. A non-nil
-// ModelEntry.Capability always overrides this declaration.
+// ModelEntry.Capability always overrides this declaration. Implementing it is
+// itself a declaration: the returned Capability participates in filtering, so a
+// zero value means "supports neither tools nor vision", not "unknown".
 type CapabilityProvider interface {
 	ComposeCapability() Capability
 }
@@ -85,19 +92,22 @@ func (e *CapabilityError) Unwrap() error {
 	return ErrCapabilityNotSatisfied
 }
 
-// resolvedCapability returns the effective capability for entry i: an explicit
-// ModelEntry.Capability wins; otherwise a client implementing CapabilityProvider
-// declares it; otherwise the zero (conservative) capability is used.
-func (c *ComposeClient) resolvedCapability(i int) Capability {
+// resolvedCapability returns the effective capability for entry i and whether it
+// was declared at all: an explicit ModelEntry.Capability wins; otherwise a client
+// implementing CapabilityProvider declares it. With neither, the capability is
+// *unknown* (declared == false) — the entry is left out of the filter rather than
+// assumed incapable, so configurations that never declare a Capability route
+// exactly as they did before capability filtering existed.
+func (c *ComposeClient) resolvedCapability(i int) (Capability, bool) {
 	if cap := c.entries[i].Capability; cap != nil {
-		return *cap
+		return *cap, true
 	}
 
 	if cp, ok := c.entries[i].Client.(CapabilityProvider); ok {
-		return cp.ComposeCapability()
+		return cp.ComposeCapability(), true
 	}
 
-	return Capability{}
+	return Capability{}, false
 }
 
 // requestRequiresTools reports whether the request needs a tools-capable
@@ -139,8 +149,10 @@ func requiredCapabilities(req *ais.ChatRequest) []string {
 }
 
 // capableIndices returns the entry indices whose capability satisfies the
-// request, in definition order. Health is intentionally ignored here — the
-// capability filter runs before health skipping and strategy ordering.
+// request, in definition order. Endpoints that declare no capability are
+// unknown, not incapable: they always stay in the candidate list. Health is
+// intentionally ignored here — the capability filter runs before health skipping
+// and strategy ordering.
 func (c *ComposeClient) capableIndices(req *ais.ChatRequest) []int {
 	needTools := requestRequiresTools(req)
 	needVision := requestRequiresVision(req)
@@ -148,13 +160,15 @@ func (c *ComposeClient) capableIndices(req *ais.ChatRequest) []int {
 	out := make([]int, 0, len(c.entries))
 
 	for i := range c.entries {
-		cap := c.resolvedCapability(i)
-		if needTools && !cap.Tools {
-			continue
-		}
+		cap, declared := c.resolvedCapability(i)
+		if declared {
+			if needTools && !cap.Tools {
+				continue
+			}
 
-		if needVision && !cap.Vision {
-			continue
+			if needVision && !cap.Vision {
+				continue
+			}
 		}
 
 		out = append(out, i)

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"time"
 
@@ -59,8 +60,9 @@ type ModelEntry struct {
 	Tags map[string]string
 
 	// Capability optionally declares the endpoint's strong-typed capability. A
-	// nil value falls back to the client's CapabilityProvider declaration, then
-	// to the conservative zero capability.
+	// nil value falls back to the client's CapabilityProvider declaration; with
+	// neither, the capability is unknown and the endpoint is never excluded by
+	// the capability filter.
 	Capability *Capability
 
 	// Cost optionally declares static pricing for StrategyCost. Nil sorts after
@@ -159,17 +161,22 @@ func NewComposeClient(strategy Strategy, entries []ModelEntry, opts ...ComposeOp
 		}
 	}
 
-	if err := resolveAliases(entries); err != nil {
+	// Own a copy before deriving aliases: the caller's slice and its elements are
+	// never written back to, matching the "clone first, never touch the caller's
+	// object" rule the request path follows.
+	owned := slices.Clone(entries)
+
+	if err := resolveAliases(owned); err != nil {
 		return nil, err
 	}
 
-	health := make([]*modelHealth, len(entries))
+	health := make([]*modelHealth, len(owned))
 	for i := range health {
 		health[i] = newModelHealth()
 	}
 
 	c := &ComposeClient{
-		entries:          entries,
+		entries:          owned,
 		health:           health,
 		strategy:         strategy,
 		stickyFallback:   StrategyFailover,
@@ -190,7 +197,8 @@ func NewComposeClient(strategy Strategy, entries []ModelEntry, opts ...ComposeOp
 // health snapshots and errors are stably addressable. An empty alias is derived
 // from the model Name when it is free, otherwise as "entry-<index>" (this keeps
 // hand-built entries backward compatible). Explicit aliases must not collide
-// with any other alias, derived or explicit.
+// with any other alias, derived or explicit. It writes to the slice it is given,
+// which is always the client's own copy — never the caller's.
 func resolveAliases(entries []ModelEntry) error {
 	seen := make(map[string]int, len(entries))
 
@@ -349,15 +357,25 @@ func (c *ComposeClient) allAliases() []string {
 // Stats returns an immutable per-endpoint health snapshot, safe to call
 // concurrently with dispatch. Mutating the returned slice does not affect
 // internal state.
+//
+// Status reflects routing behavior, not just the stored state: a cooling
+// endpoint whose interval has elapsed is already selectable again, so it is
+// reported as "active" rather than staying "cooling" until the next success.
 func (c *ComposeClient) Stats() []EndpointStat {
+	now := c.nowFunc()
 	stats := make([]EndpointStat, len(c.entries))
 
 	for i := range c.entries {
 		snap := c.health[i].snapshot()
 
+		state := snap.state
+		if state == stateCooling && now.Sub(snap.errorTime) >= c.coolingInterval {
+			state = stateActive
+		}
+
 		stats[i] = EndpointStat{
 			Alias:      c.entries[i].Alias,
-			Status:     string(snap.state),
+			Status:     string(state),
 			ErrorCount: snap.errorCount,
 			LastError:  snap.lastError,
 			ErrorTime:  snap.errorTime,

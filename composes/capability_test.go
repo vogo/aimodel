@@ -315,6 +315,57 @@ func TestLatencyStrategy_AliasTieBreak(t *testing.T) {
 	assertIntSlice(t, selectReq(c, testRequest()), []int{1, 0})
 }
 
+// Entries that declare no Capability are unknown, not incapable: a tools request
+// must still reach them. This is the upgrade path for every hand-built
+// ModelEntry and every NewFromEndpoints spec that predates capability filtering.
+func TestCapability_UndeclaredNeverFiltered(t *testing.T) {
+	entries := []ModelEntry{
+		{Name: "m0", Alias: "silent-a"},
+		{Name: "m1", Alias: "silent-b"},
+	}
+	c := newTestComposeClient(StrategyFailover, entries)
+
+	assertIntSlice(t, selectReq(c, toolsRequest()), []int{0, 1})
+	assertIntSlice(t, selectReq(c, visionRequest()), []int{0, 1})
+}
+
+// The same path end to end: an undeclared endpoint receives the tools request
+// over the wire instead of failing fast with a CapabilityError.
+func TestCapability_UndeclaredDispatchesToolsRequest(t *testing.T) {
+	var gotTools atomic.Bool
+
+	s := newToolsCapturingServer(t, &gotTools)
+	defer s.Close()
+
+	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "m0", Alias: "silent", Client: newClientForServer(t, s)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := cc.ChatCompletion(context.Background(), toolsRequest()); err != nil {
+		t.Fatalf("undeclared endpoint must serve a tools request, got %v", err)
+	}
+
+	if !gotTools.Load() {
+		t.Fatal("the tools request never reached the undeclared endpoint")
+	}
+}
+
+// Mixing declared and undeclared endpoints: only an explicit Tools:false
+// declaration excludes, and the request is never downgraded to the excluded one.
+func TestCapability_DeclaredIncapableExcludedAlongsideUndeclared(t *testing.T) {
+	entries := []ModelEntry{
+		{Name: "m0", Alias: "declared-no-tools", Capability: &Capability{Tools: false}},
+		{Name: "m1", Alias: "undeclared"},
+		{Name: "m2", Alias: "declared-tools", Capability: &Capability{Tools: true}},
+	}
+	c := newTestComposeClient(StrategyFailover, entries)
+
+	assertIntSlice(t, selectReq(c, toolsRequest()), []int{1, 2})
+}
+
 func TestCapabilityFilter_RunsBeforeHealth(t *testing.T) {
 	// The incapable endpoint is healthy but must still be excluded; the capable
 	// endpoint is errored, so nothing is available → ErrNoActiveModels (not a

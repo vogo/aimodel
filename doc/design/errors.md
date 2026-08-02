@@ -43,12 +43,25 @@ Returned when the client's resolved provider does not implement the capability b
 
 This is a **local** failure: it is returned before any HTTP request is built, so an unsupported capability never reaches the network and never falls back to a different endpoint. See [ADR 0006](../adr/0006-responses-capability-on-provider-native-types.md).
 
-## 4. `ModelError`
+## 4. Multi-endpoint aggregation lives in `composes`
 
-`{Model, Err}` — associates an error with the specific model name that produced it. Implements `Unwrap`, so `errors.Is` / `errors.As` reach the underlying error.
+Compose dispatch aggregates its failures with **composes-owned** types, not with the `ais` ones:
 
-## 5. `MultiError`
+- `composes.EndpointError{Alias, Err}` attributes one attempt to a stable endpoint **alias**, and
+- `composes.MultiError{Errors []*EndpointError}` collects them in attempt order.
 
-The collection of errors from a multi-model attempt. It implements Go 1.20+ `Unwrap() []error`, so `errors.Is` / `errors.As` match **any** of the underlying model errors. An empty collection degrades to `ErrNoActiveModels`.
+The alias is what makes this necessary: the multi-endpoint case routes several endpoints to the *same* model, so a model name cannot distinguish them. `MultiError` implements Go 1.20+ `Unwrap() []error`, so `errors.Is` / `errors.As` still reach any underlying `*APIError`. See [compose.md](./compose.md) §5.
 
-See [compose.md](./compose.md).
+**Breaking change** (this replaced `*ais.MultiError` as compose's aggregate error): `errors.Is` keeps working unchanged, but a type assertion must be retargeted —
+
+```go
+var me *ais.MultiError      // before
+var me *composes.MultiError // after — .Errors is []*EndpointError, keyed by Alias
+errors.As(err, &me)
+```
+
+## 5. `ais.ModelError` / `ais.MultiError`
+
+`ModelError{Model, Err}` associates an error with a model name; `MultiError{Errors []ModelError}` collects several, unwrapping to `ErrNoActiveModels` when empty. Both implement `Unwrap`, so `errors.Is` / `errors.As` reach the underlying errors.
+
+**Status**: they remain exported for compatibility and for callers that aggregate by model name, but nothing in this repository produces them any more — compose dispatch uses the alias-keyed types in §4. They are not part of any provider's response path and receive no new features; new code should prefer `composes.MultiError`.
