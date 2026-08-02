@@ -9,7 +9,7 @@ This SDK is a **thin API wrapper**: it builds requests, manages connections, and
 
 There is no unified client and no shared schema. You pick a protocol by importing its package, and that package expresses its official API completely rather than the part another vendor happens to share. Architecture: [doc/architecture.md](./doc/architecture.md).
 
-> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.6.0. [MIGRATION.md](./MIGRATION.md) maps every removed symbol to its native counterpart; [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
+> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.7.0. [MIGRATION.md](./MIGRATION.md) maps every removed symbol to its native counterpart; [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
 
 ## Documentation
 

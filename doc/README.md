@@ -30,7 +30,7 @@ This directory holds the design documentation. The root [README.md](../README.md
 ## Root documents
 
 - [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API, multi-backend compose.
-- [../MIGRATION.md](../MIGRATION.md) — migrating off the canonical API removed in v0.6.0.
+- [../MIGRATION.md](../MIGRATION.md) — migrating off the canonical API removed in v0.7.0.
 - [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
 - [../CHANGES.md](../CHANGES.md) — release index and the merged timeline of both protocols' change logs.
 

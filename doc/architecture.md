@@ -47,7 +47,7 @@ There is no unified client and no shared request/response model. A caller picks 
 
 Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
 
-This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.6.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md); the migration is in [MIGRATION.md](../MIGRATION.md).
+This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md); the migration is in [MIGRATION.md](../MIGRATION.md).
 
 ### 2.1 What the three principles mean here
 

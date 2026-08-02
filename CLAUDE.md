@@ -16,16 +16,14 @@ It intentionally does **not** include retry, rate limiting, request validation, 
 - delete build binary after test
 - current file only contains core api/model dispatching logic, and core rules, not add any other logic.
 
-## Migration in progress
+## Canonical layer removed (v0.7.0)
 
 The vendor-neutral canonical layer (`ais`, the root `Client`/`Stream`/`Responder`, and both
-providers' translation code) is **being removed** — see
-[ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) and
-[MIGRATION.md](./MIGRATION.md). v0.5.1 marked it `Deprecated:`; v0.6.0 deletes it.
-
-While that code still exists, do not extend it, do not add fields to it, and do not add a new
-provider to it. New work goes into a provider package. The principles below describe the target
-design and are already in force for every change.
+providers' translation code) **was removed in v0.7.0**, after being marked `Deprecated:` in v0.6.1
+— see [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) and
+[MIGRATION.md](./MIGRATION.md). Do not reintroduce a shared request/response model, a translation
+layer, or a provider registry; the guard tests fail if one grows back. New work goes into a
+provider package. The principles below are in force for every change.
 
 ## Design Principles
 

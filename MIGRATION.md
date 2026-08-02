@@ -1,15 +1,15 @@
 # Migration: canonical API → provider-native clients
 
 `aimodel` stops shipping a shared request/response model for OpenAI-compatible and Anthropic
-protocols. From **v0.6.0** the public surface is two complete, mutually independent native
+protocols. From **v0.7.0** the public surface is two complete, mutually independent native
 clients — [`provider/openai`](./provider/openai/README.md) and
 [`provider/anthropic`](./provider/anthropic/README.md) — plus a small set of tools that carry no
 protocol semantics.
 
 | Version | What happens |
 |---|---|
-| **v0.5.1** | No behavior change. Every symbol removed in v0.6.0 carries a Go `Deprecated:` comment pointing here, so `staticcheck` / editors flag the call sites ahead of time. |
-| **v0.6.0** | The canonical layer is deleted: `ais`, the root `Client`/`ChatCompleter`/`Stream`/interception/`Responder`, both providers' translation layers, and the provider registry. |
+| **v0.6.1** | No behavior change. Every symbol removed in v0.7.0 carries a Go `Deprecated:` comment pointing here, so `staticcheck` / editors flag the call sites ahead of time. |
+| **v0.7.0** | The canonical layer is deleted: `ais`, the root `Client`/`ChatCompleter`/`Stream`/interception/`Responder`, both providers' translation layers, and the provider registry. |
 
 Nothing is renamed in place — every removed symbol has a native counterpart listed below.
 
@@ -26,7 +26,7 @@ it delivered:
   compose deployments in this repository always dispatch across backends of the *same* wire
   format.
 
-The native layer already targeted full fidelity to each official API. v0.6.0 makes it the only
+The native layer already targeted full fidelity to each official API. v0.7.0 makes it the only
 layer, so a vendor feature is reachable the day it is wired.
 
 ## At a glance
@@ -43,7 +43,7 @@ resp, err := client.ChatCompletion(ctx, &ais.ChatRequest{
 })
 text := resp.Choices[0].Message.Content.Text()
 
-// after (v0.6.0), OpenAI-compatible
+// after (v0.7.0), OpenAI-compatible
 client := openai.NewClient(key, openai.WithBaseURL("https://api.openai.com/v1"))
 resp, err := client.ChatCompletions(ctx, &openai.ChatCompletionRequest{
     Model:    openai.ModelGPT4o,
@@ -51,7 +51,7 @@ resp, err := client.ChatCompletions(ctx, &openai.ChatCompletionRequest{
 })
 text := resp.Choices[0].Message.Content.Text()
 
-// after (v0.6.0), Anthropic
+// after (v0.7.0), Anthropic
 client := anthropic.NewClient(key)
 resp, err := client.Messages(ctx, &anthropic.MessagesRequest{
     Model:     anthropic.ModelClaudeSonnet5,
@@ -74,7 +74,7 @@ Two rules cover most of the diff:
 
 ## Construction
 
-| v0.5.x | v0.6.0 (OpenAI) | v0.6.0 (Anthropic) |
+| ≤ v0.6.0 | v0.7.0 (OpenAI) | v0.7.0 (Anthropic) |
 |---|---|---|
 | `aimodel.NewClient(...)` | `openai.NewClient(apiKey, opts...)` | `anthropic.NewClient(apiKey, opts...)` |
 | `aimodel.WithAPIKey(k)` | first argument of `NewClient` | first argument of `NewClient` |
@@ -95,7 +95,7 @@ you need to control the transport as well. Applying both leaves the last one win
 
 ## Chat, non-streaming
 
-| v0.5.x | v0.6.0 (OpenAI) | v0.6.0 (Anthropic) |
+| ≤ v0.6.0 | v0.7.0 (OpenAI) | v0.7.0 (Anthropic) |
 |---|---|---|
 | `client.ChatCompletion(ctx, req)` | `client.ChatCompletions(ctx, req)` | `client.Messages(ctx, req)` |
 | `ais.ChatRequest` | `openai.ChatCompletionRequest` | `anthropic.MessagesRequest` |
@@ -121,7 +121,7 @@ defaulted by a translator. Set it explicitly.
 
 ## Chat, streaming
 
-| v0.5.x | v0.6.0 (OpenAI) | v0.6.0 (Anthropic) |
+| ≤ v0.6.0 | v0.7.0 (OpenAI) | v0.7.0 (Anthropic) |
 |---|---|---|
 | `client.ChatCompletionStream(ctx, req)` | `client.ChatCompletionsStream(ctx, req)` | `client.MessagesStream(ctx, req)` |
 | `*aimodel.Stream` | `*openai.ChatCompletionStream` | `*anthropic.MessageStream` |
@@ -148,7 +148,7 @@ to `Close` repeatedly.
 
 ## Usage accounting
 
-| v0.5.x | v0.6.0 (OpenAI) | v0.6.0 (Anthropic) |
+| ≤ v0.6.0 | v0.7.0 (OpenAI) | v0.7.0 (Anthropic) |
 |---|---|---|
 | `ais.Usage.PromptTokens` | `ChatCompletionUsage.PromptTokens` | `MessagesUsage.InputTokens` |
 | `ais.Usage.CompletionTokens` | `ChatCompletionUsage.CompletionTokens` | `MessagesUsage.OutputTokens` |
@@ -184,7 +184,7 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
 }
 ```
 
-| v0.5.x | v0.6.0 |
+| ≤ v0.6.0 | v0.7.0 |
 |---|---|
 | `*ais.APIError` | `*openai.HTTPError` / `*anthropic.HTTPError` |
 | `apiErr.StatusCode` (field) | `httpErr.StatusCode()` (method) |
@@ -197,7 +197,7 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
 | `*ais.ModelError` / `*ais.MultiError` | `*composes.ModelError` / `*composes.MultiError` |
 
 **Breaking within the native layer**: `HTTPError.StatusCode` was an exported *field* in v0.5.x's
-native clients. Go does not allow a field and a method to share a name, so in v0.6.0 the field is
+native clients. Go does not allow a field and a method to share a name, so in v0.7.0 the field is
 renamed to `Status` and `StatusCode() int` becomes the accessor. Read it through the method.
 
 ## Models
@@ -205,7 +205,7 @@ renamed to `Status` and `StatusCode() int` becomes the accessor. Read it through
 `ais/model.go` held model-name constants for every backend anyone had used. Model names are not a
 vendor-neutral contract, so the constants move into the package whose protocol serves them:
 
-| v0.5.x | v0.6.0 |
+| ≤ v0.6.0 | v0.7.0 |
 |---|---|
 | `ais.ModelAnthropicClaude*` | `anthropic.ModelClaude*` |
 | `ais.ModelOpenaiGPT*` / `ais.ModelOpenaiO*` | `openai.ModelGPT*` / `openai.ModelO*` |
@@ -218,7 +218,7 @@ No shared constants package replaces them. A plain string literal remains valid 
 `ais.Extensions` and the Anthropic `Extend*` / `*Of` helpers are removed. Everything they carried
 is an ordinary field of the native request or response:
 
-| v0.5.x | v0.6.0 (Anthropic) |
+| ≤ v0.6.0 | v0.7.0 (Anthropic) |
 |---|---|
 | `anthropic.ExtendRequest(r, &RequestExtension{AutoCache: true})` | `MessagesRequest.CacheControl` at the request root |
 | `RequestExtension.Container` | `MessagesRequest.Container` |
@@ -250,7 +250,7 @@ one this package already models.
 The root `Responder` capability only forwarded to the native client, so it is removed rather than
 replaced:
 
-| v0.5.x | v0.6.0 |
+| ≤ v0.6.0 | v0.7.0 |
 |---|---|
 | `aimodel.Responder` | *(removed)* use `*openai.Client` directly |
 | `client.Responses(ctx, req)` | `openai.NewClient(key).Responses(ctx, req)` |
@@ -276,7 +276,7 @@ entries := []composes.ModelEntry{{Name: "gpt-4o", Client: openai.NewClient(key)}
 resp, err := compose.ChatCompletions(ctx, &openai.ChatCompletionRequest{...})
 ```
 
-| v0.5.x | v0.6.0 |
+| ≤ v0.6.0 | v0.7.0 |
 |---|---|
 | `ModelEntry.Client aimodel.ChatCompleter` | `ModelEntry.Client composes.ChatCompleter` (satisfied by `*openai.Client`) |
 | `compose.ChatCompletion(ctx, *ais.ChatRequest)` | `compose.ChatCompletions(ctx, *openai.ChatCompletionRequest)` |
@@ -294,7 +294,7 @@ growing back.
 
 ## Removed symbols
 
-Everything below is deleted in v0.6.0. Each carries a `Deprecated:` comment in v0.5.1.
+Everything below is deleted in v0.7.0. Each carries a `Deprecated:` comment in v0.6.1.
 
 **Package `ais` (entire package)** — `ChatRequest`, `ChatResponse`, `Message`, `Choice`, `Content`,
 `ContentPart`, `ImageURL`, `Tool`, `FunctionDefinition`, `ToolCall`, `FunctionCall`, `Thinking`,
@@ -320,5 +320,6 @@ which decode directly from the wire.
 
 ## If you cannot migrate yet
 
-v0.5.0 remains available and is not retracted; pinning it keeps the canonical API working. It will
-not receive further protocol updates — those land in the native layer only.
+Every release up to and including v0.6.0 still ships the canonical API, and none of them is
+retracted — pinning `≤ v0.6.0` keeps it working. Those versions will not receive further protocol
+updates, though; new features land in the native layer only.

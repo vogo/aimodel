@@ -22,8 +22,8 @@ Protocol-independent changes to the SDK's own surface.
 
 | Version | Change |
 |---|---|
-| v0.5.1 | Deprecate the canonical API. Every symbol removed in v0.6.0 — package `ais`, the root canonical client / stream / interception / `Responder` surface, and both providers' registry and extension entry points — now carries a `Deprecated:` comment pointing at [MIGRATION.md](./MIGRATION.md). No behavior, signature or serialization change. |
-| v0.6.0 | Remove the canonical API. `provider/openai` and `provider/anthropic` are the only public interface, each expressing its protocol completely and independently; `composes` narrows to dispatch within the OpenAI-compatible wire format. Both `HTTPError` types implement `StatusCode() int` (the field is renamed `Status`), both native streams accumulate and report usage, and `openai.ChatCompletionRequest.ExtraBody` carries backend-private parameters. Migration table: [MIGRATION.md](./MIGRATION.md); reasoning: [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md). |
+| v0.6.1 | Deprecate the canonical API. Every symbol removed in v0.7.0 — package `ais`, the root canonical client / stream / interception / `Responder` surface, and both providers' registry and extension entry points — now carries a `Deprecated:` comment pointing at [MIGRATION.md](./MIGRATION.md). No behavior, signature or serialization change. |
+| v0.7.0 | Remove the canonical API. `provider/openai` and `provider/anthropic` are the only public interface, each expressing its protocol completely and independently; `composes` narrows to dispatch within the OpenAI-compatible wire format. Both `HTTPError` types implement `StatusCode() int` (the field is renamed `Status`), both native streams accumulate and report usage, and `openai.ChatCompletionRequest.ExtraBody` carries backend-private parameters. Migration table: [MIGRATION.md](./MIGRATION.md); reasoning: [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md). |
 
 ---
 

@@ -25,7 +25,7 @@
 //     OpenAI-compatible backends, with health tracking and failover.
 //
 // Up to v0.5.x this package held a unified client over a vendor-neutral
-// request/response model. v0.6.0 removed it: the two protocols are expressed
+// request/response model. v0.7.0 removed it: the two protocols are expressed
 // completely and independently instead of through a shared schema that could
 // only carry what both had in common. See MIGRATION.md for the symbol-by-symbol
 // migration table and doc/adr/0007-provider-native-as-the-only-public-interface.md

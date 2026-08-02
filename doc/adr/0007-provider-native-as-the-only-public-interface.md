@@ -111,9 +111,9 @@ re-growth of a shared layer:
 
 ## Consequences
 
-- **v0.6.0 is a breaking release.** `aimodel.Client`, `ais.*`, `WithProvider`, the unified
+- **v0.7.0 is a breaking release.** `aimodel.Client`, `ais.*`, `WithProvider`, the unified
   `Stream`, the shared error model, extensions and the default-model behavior are gone.
-  [MIGRATION.md](../../MIGRATION.md) maps every removed symbol; v0.5.1 marks them all
+  [MIGRATION.md](../../MIGRATION.md) maps every removed symbol; v0.6.1 marks them all
   `Deprecated:` first so `staticcheck` reports call sites before the removal lands.
 
 - **Delivering one request to two protocols is no longer possible, and is not a goal.** Callers
