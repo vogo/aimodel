@@ -11,7 +11,7 @@ Responses) and Anthropic Messages (`provider/anthropic`). Zero external dependen
 This SDK is a **thin API wrapper** — it builds requests, manages connections, and decodes responses.
 It intentionally does **not** include rate limiting, request validation, caching / persistence, logging / metrics.
 Retry is likewise out of the provider packages; the one exception is the `composes` routing layer, which
-retries an endpoint before judging it dead (ADR 0009).
+retries an endpoint before judging it dead (ADR 0004).
 
 ## Rules
 
@@ -66,7 +66,7 @@ Consequences to apply directly:
   indices, opaque strings, scalars and closures; `composes/openais` and `composes/anthropics` bind it
   to their own wire types and never import each other. The test for any shared type: *if I add a
   field to it, does a provider package have to learn about it?* Pools never mix protocols, and there
-  is no cross-protocol failover ([ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md)).
+  is no cross-protocol failover ([ADR 0003](./doc/adr/0003-shared-routing-core-across-protocol-wrappers.md)).
 
 Guard tests enforce this in CI rather than leaving it to convention: providers import neither each
 other nor the root package; no public API references a shared semantic package; both `*HTTPError`
@@ -83,7 +83,9 @@ When a step does not apply, state so explicitly. Details in [doc/architecture.md
 
 Step ② includes the ADRs: if a change contradicts an invariant an accepted ADR states, the ADR is
 part of the sync, not an afterthought. Accepted ADRs are immutable — add a new ADR that supersedes
-it and update the [ADR index](./doc/adr.md), rather than rewriting the old decision.
+it and update the [ADR index](./doc/adr.md), rather than rewriting the old decision. The index holds
+only decisions in force: once nothing in force depends on a superseded ADR, its document is removed
+and its record stays in git history.
 
 ## Build & Test Commands
 

@@ -1,4 +1,4 @@
-# ADR 0009: A pool has one active endpoint, serves one conversation at a time, and retries in place before replacing it
+# ADR 0004: A pool has one active endpoint, serves one conversation at a time, and retries in place before replacing it
 
 - Status: Accepted
 - Date: 2026-08-03
@@ -26,7 +26,7 @@ That is a load balancer, and it is not what composing several backends was for. 
   untouched *and* failed over — so one bad request was delivered to every endpoint in the pool in turn,
   spending quota at each and producing a `MultiError` that blamed the backends for the caller's request.
 
-Two further facts shaped what could replace it. [ADR 0008](./0008-shared-routing-core-across-protocol-wrappers.md)
+Two further facts shaped what could replace it. [ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md)
 requires that whatever state the core holds be expressible in indices, opaque labels and scalars — no request
 may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK does not do retry.
 
@@ -78,11 +78,12 @@ may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK
    consequences below.
 
 `StrategySticky`, `WithSessionID`, `WithStickyFallback`, `WithRecoveryInterval`, `WithCoolingInterval` and the
-recovery-probe mechanism are deleted outright in v0.9.0, with no compatibility aliases — the same treatment
-v0.7.0 gave the canonical layer. `WithRetryPolicy` and `WithRecoverTime` replace the two interval options;
+recovery-probe mechanism are deleted outright in v0.9.0, with no compatibility aliases: an alias would keep
+a stateless reading of the pool alive in the API. `WithRetryPolicy` and `WithRecoverTime` replace the two
+interval options;
 `EndpointStat` gains `Active` and its `Status` values become `available` / `dead`.
 
-### Why this does not breach ADR 0008
+### Why this does not breach ADR 0003
 
 The active endpoint is an `int` index and a `uint64` generation. The retry policy is two scalars. Nothing the
 core learned in this change has a protocol shape, and `Call` gained no field. The guard tests still hold: the
@@ -144,7 +145,7 @@ context, and the policy is explicit at construction.
   cannot be done within this ADR's other constraints. `*openai.ChatCompletionStream` and
   `*anthropic.MessageStream` expose no completion hook — `Close` merely closes a private body — so the only
   ways to learn that a stream ended are to add a hook to the provider packages (which would make them carry
-  the compose layer's concurrency semantics, against ADR 0007's isolation rule) or to return a wrapper type
+  the compose layer's concurrency semantics, against ADR 0002's isolation rule) or to return a wrapper type
   from `…Stream` (which would break the method sets that let pools nest). Both were rejected.
 
   The gap is narrow in the usage this ADR targets: one conversation reads its stream before issuing the next
@@ -156,4 +157,4 @@ context, and the policy is explicit at construction.
 
 - [Multi-backend composition](../design/compose.md)
 - [ADR 0001 — keep the SDK a thin wrapper](./0001-keep-the-sdk-a-thin-wrapper.md)
-- [ADR 0008 — a shared routing core, protocol wrappers on top](./0008-shared-routing-core-across-protocol-wrappers.md)
+- [ADR 0003 — a shared routing core, protocol wrappers on top](./0003-shared-routing-core-across-protocol-wrappers.md)

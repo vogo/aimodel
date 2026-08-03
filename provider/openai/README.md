@@ -137,7 +137,7 @@ type statusCoder interface{ StatusCode() int }
 
 - This package imports nothing else from this module, and nothing in this module sits between it
   and `provider/anthropic`. Duplication between the two is expected — see
-  [ADR 0007](../../doc/adr/0007-provider-native-as-the-only-public-interface.md).
+  [ADR 0002](../../doc/adr/0002-provider-native-as-the-only-public-interface.md).
 - `Model` is required on every request; there is no client-level default and no environment
   fallback.
 - Requests are never mutated: the stream flag is set on a copy.

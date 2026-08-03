@@ -15,13 +15,13 @@ composes               capability filter → active endpoint → retries → fai
                        active state · health · aliases · observers · Stats() · MultiError
 ```
 
-The line between them is the rule from [ADR 0008](../adr/0008-shared-routing-core-across-protocol-wrappers.md):
+The line between them is the rule from [ADR 0003](../adr/0003-shared-routing-core-across-protocol-wrappers.md):
 
 > **Routing mechanism may be shared across protocols. Protocol semantics may not.**
 
 The core sees endpoint indices, opaque capability labels, ordering metadata and a closure. It never sees
 a request, a response or a stream — not through a field, not through a type parameter. That is why it can
-be shared without becoming the canonical layer [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md)
+be shared without becoming the canonical layer [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md)
 removed, and why the two wrappers form **separate pools**: one shares *how a candidate is chosen*, never
 *what a request is*. There is no cross-protocol failover, and a pool may not mix endpoints of two protocols.
 
@@ -224,7 +224,7 @@ how one state machine classifies failures from *every* protocol without importin
 endpoint is attempted at most `1 + maxRetries` times and the worst-case **synchronous** wait a caller pays is
 `base × (2^maxRetries − 1)`. The waits are interruptible: a cancelled context ends the wait and the call. This
 is the one retry in this module — provider packages remain retry-free ([ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md),
-[ADR 0009](../adr/0009-stateful-active-endpoint-with-in-call-retry.md)).
+[ADR 0004](../adr/0004-stateful-active-endpoint-with-in-call-retry.md)).
 
 **Recovery.** `composes.WithRecoverTime(d)` sets how long a dead endpoint stays out. When `d` has elapsed it is
 a candidate again — that is *all*: recovery never takes the pool back from a healthy incumbent, so an endpoint

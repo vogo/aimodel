@@ -21,3 +21,4 @@ The SDK is limited to request translation, HTTP connection management, and respo
 ## References
 
 - [Architecture §1](../architecture.md#1-design-scope)
+- [ADR 0004 — the compose path's bounded retry exception](./0004-stateful-active-endpoint-with-in-call-retry.md)

@@ -11,7 +11,7 @@ This document covers the **cross-cutting architecture**: what the SDK is for, wh
 | Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) |
 | Multi-backend dispatch and health tracking | [design/compose.md](./design/compose.md) |
 
-The decisions behind this architecture are recorded in the [ADR index](./adr.md); [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md) is the one that shapes everything below.
+The decisions behind this architecture are recorded in the [ADR index](./adr.md); [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md) is the one that shapes everything below.
 
 ---
 
@@ -23,7 +23,7 @@ aimodel is a **thin API wrapper**. Its responsibilities are strictly limited to 
 2. **Connection management** — HTTP client, timeouts, auth headers, SSE reading;
 3. **Response decoding** — decode that protocol's responses and stream events, losslessly.
 
-It **deliberately excludes** rate limiting, request validation, caching / persistence, and logging / metrics. Those belong to the caller or a framework above: putting them in the SDK introduces implicit behavior and costs the caller cannot control. Retry is excluded from the provider clients on the same grounds — one call, one HTTP request — with one bounded exception: `composes` retries an endpoint before judging it dead, because deciding that a backend is unusable is the whole job of that layer ([ADR 0009](./adr/0009-stateful-active-endpoint-with-in-call-retry.md)).
+It **deliberately excludes** rate limiting, request validation, caching / persistence, and logging / metrics. Those belong to the caller or a framework above: putting them in the SDK introduces implicit behavior and costs the caller cannot control. Retry is excluded from the provider clients on the same grounds — one call, one HTTP request — with one bounded exception: `composes` retries an endpoint before judging it dead, because deciding that a backend is unusable is the whole job of that layer ([ADR 0004](./adr/0004-stateful-active-endpoint-with-in-call-retry.md)).
 
 Consequences that follow directly:
 
@@ -47,7 +47,7 @@ There is no unified client and no shared request/response model. A caller picks 
 
 Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
 
-This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md).
+This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md).
 
 ### 2.1 What the three principles mean here
 
@@ -78,7 +78,7 @@ Applied consequences:
   }
   ```
 
-- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — the active endpoint, strategies, retries, health, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0008](./adr/0008-shared-routing-core-across-protocol-wrappers.md))
+- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — the active endpoint, strategies, retries, health, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0003](./adr/0003-shared-routing-core-across-protocol-wrappers.md))
 
 ### 2.3 Guards
 
@@ -177,4 +177,4 @@ When an official API changes, update these in sync:
 
 When a step does not apply, say so explicitly rather than skipping it silently.
 
-When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md). This is part of step 2, not optional cleanup: a change that contradicts an invariant an accepted ADR states is not synced until that ADR is superseded. Accepted ADRs are immutable, so record the new decision in a new ADR and mark the old one superseded rather than editing its decision text.
+When an architectural decision changes, add an ADR under [`doc/adr/`](./adr/) and update the [ADR index](./adr.md). This is part of step 2, not optional cleanup: a change that contradicts an invariant an accepted ADR states is not synced until that ADR is superseded. Accepted ADRs are immutable, so record the new decision in a new ADR and mark the old one superseded rather than editing its decision text. The index carries only decisions in force: once nothing in force depends on a superseded ADR, its document is removed and the record of it stays in git history and in the protocol change logs.
