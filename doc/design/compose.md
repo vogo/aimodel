@@ -11,8 +11,8 @@ composes/openais       ChatCompletions · ChatCompletionsStream · Responses · 
 composes/anthropics    Messages · MessagesStream
         │  required labels + a per-candidate closure          candidate index
         ▼                                                              ▲
-composes               capability filter → strategy ordering → recovery probes → attempts
-                       health state · aliases · observers · Stats() · MultiError
+composes               capability filter → active endpoint → retries → failover
+                       active state · health · aliases · observers · Stats() · MultiError
 ```
 
 The line between them is the rule from [ADR 0008](../adr/0008-shared-routing-core-across-protocol-wrappers.md):
@@ -28,7 +28,7 @@ removed, and why the two wrappers form **separate pools**: one shares *how a can
 > **Note for readers of earlier versions.** Up to v0.7.x, `composes` itself carried `ChatCompleter`,
 > `ModelEntry`, `NewComposeClient` and `NewFromEndpoints` over `provider/openai` types. v0.8.0 moved all of
 > them, unchanged in behaviour, to `composes/openais`, and the root package kept only the neutral core — with
-> no compatibility aliases. See [MIGRATION.md](../../MIGRATION.md) for the symbol-by-symbol table.
+> no compatibility aliases.
 
 ## 1. Choosing a package
 
@@ -45,7 +45,7 @@ the same way whatever it serves:
 cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEntry{
     {Name: "gpt-4o",       Client: openai.NewClient(openaiKey), Weight: 3},
     {Name: "qwen3.7-plus", Client: openai.NewClient(qwenKey, openai.WithBaseURL(qwenURL)), Weight: 1},
-}, composes.WithRecoveryInterval(30*time.Second))
+}, composes.WithRetryPolicy(time.Second, 3), composes.WithRecoverTime(5*time.Minute))
 
 response, err := cc.ChatCompletions(ctx, &openai.ChatCompletionRequest{ /* … */ })
 
@@ -95,7 +95,7 @@ Every endpoint carries two identities that must not be confused:
 | Field | Meaning |
 |---|---|
 | `Name` | the **model** name sent to the backend in the request's `Model` field. |
-| `Alias` | the endpoint's **operational identity**, used for health snapshots, sticky routing, and error attribution. |
+| `Alias` | the endpoint's **operational identity**, used for health snapshots and error attribution. |
 
 `Alias` is required and unique on the declarative path (errors name the offending position). On the manual
 path an empty alias is derived — from `Name` when free, otherwise `entry-<index>` — so every entry is always
@@ -104,77 +104,141 @@ stably addressable; explicit aliases must still be unique. The alias is what let
 
 ---
 
-## 3. Routing order
+## 3. The active endpoint
+
+A pool serves its calls from **one endpoint at a time** — its *active* endpoint. The strategy chooses that
+endpoint when the pool has none, or when the current one has been judged dead; it does not run per call. So a
+run of successful calls all land on the same backend, whatever the strategy, and a caller gets a stable
+attribution rather than a fresh draw each time.
 
 Every call flows through the same chain, in the core:
 
 ```
-capability filter → strategy ordering → recovery probes → per-endpoint attempts
+capability filter → active endpoint (reuse · select · switch) → attempt + retries → next endpoint
 ```
 
 1. **Capability filter** (§6) drops endpoints that have *declared* they cannot serve the call, and endpoints
-   the wrapper marked ineligible. Endpoints that declare nothing are never filtered. Runs before health and
-   strategy.
-2. **Strategy ordering** (§4) orders the capable, health-available candidates.
-3. **Recovery probes** (§5) prepend errored endpoints whose backoff has elapsed.
-4. **Attempts** try candidates in order until one succeeds; each failure updates health (§5) and emits an
-   `AttemptResult` (§7), then fails over.
+   the wrapper marked ineligible. Endpoints that declare nothing are never filtered. It runs first — before
+   health, before the active endpoint is even consulted.
+2. **The active endpoint** serves the call whenever it is available and capable of it. Three cases divert:
+   - *no active endpoint yet* — the strategy picks one among the capable available endpoints and it is
+     committed as the pool's active;
+   - *the active endpoint is dead* — the strategy picks a replacement and commits it;
+   - *the active endpoint is healthy but cannot serve this call* — the strategy picks among the capable
+     available endpoints **for this call only**. The pool's active endpoint is left where it is.
+3. **Attempt and retries** (§5) run against the chosen endpoint: the first attempt, then up to `maxRetries`
+   more with a doubling wait.
+4. **Next endpoint** — exhausting the retries (or a credential failure) marks the endpoint dead. If another
+   capable available endpoint remains, the same call continues on it; the switch is committed as the new
+   active unless the failing endpoint was only a temporary pick.
 
-All strategies return an **ordered candidate list** rather than a single endpoint, so failover applies
-uniformly to every strategy. An empty candidate list returns `composes.ErrNoActiveModels`; every candidate
-failing returns a `*composes.MultiError` of `EndpointError` (in attempt order).
+A call that finds nothing to try returns `composes.ErrNoActiveModels`. A call that tried endpoints and ran out
+returns a `*composes.MultiError` with **one `EndpointError` per endpoint**, in the order they were tried — a
+retried endpoint contributes the error it finally failed with, not one entry per retry.
 
 For streaming, only the call that opens the stream is covered: once a backend has started streaming, a
-mid-stream error reaches the caller rather than triggering a retry elsewhere. It is not re-observed and does
+mid-stream error reaches the caller rather than triggering a retry or a switch. It is not re-observed and does
 not update health.
+
+### One call at a time
+
+A pool belongs to **one conversation** and serves it **one call at a time**. A second call arriving while one
+is in flight does not queue — it is rejected immediately with `composes.ErrCallInProgress`, having contacted
+no endpoint and changed no health state. Concurrency on a single pool is a usage error, not a load to smooth
+out, so it is reported rather than hidden behind latency.
+
+```go
+_, err := cc.ChatCompletions(ctx, request)
+if errors.Is(err, composes.ErrCallInProgress) {
+    // Another call owns this pool. Build one pool per concurrent conversation.
+}
+```
+
+Three properties round this out:
+
+- **The capability filter runs before the busy check.** A call no endpoint can serve is reported as a
+  `*CapabilityError`, never as a busy pool — the two failures mean different things to a caller.
+- **The slot is released on every exit path**, including `*MultiError` and `ErrNoActiveModels`, so a failed
+  call never strands the pool.
+- **`Stats()` does not contend for it.** It reads pool state under a different lock and answers while a call
+  is in flight.
+
+Callers that genuinely need parallel requests build **one pool per concurrent conversation**. Pools are cheap,
+and each keeps its own active endpoint and health — which is the point: a shared pool would give the two
+conversations a shared active endpoint anyway.
+
+> **Streaming holds the pool only until the stream is established.** The slot is released when `…Stream`
+> returns, so the caller reads the stream while a subsequent call may proceed. Holding it until the stream was
+> closed would need a completion hook the provider stream types do not expose, and an abandoned stream would
+> then wedge the pool permanently. For the one-conversation-per-pool usage this package targets, the caller is
+> reading the stream before it issues the next call anyway.
+
+Within a call, the active endpoint and its *generation* change together under a separate short-held lock, and
+a caller may only retire the active endpoint it observed at the generation it saw. That guard is what keeps
+the switch count at one even when calls race for the pool. No lock is held across a network attempt or a
+retry wait.
 
 ## 4. Selection strategies
 
-| Strategy | Behavior |
-|---|---|
-| `StrategyFailover` (default) | Healthy endpoints in declaration order |
-| `StrategyRandom` | Healthy endpoints, shuffled |
-| `StrategyWeight` | A full ordering sampled **without replacement** in proportion to weight; `Weight <= 0` counts as 1 |
-| `StrategySticky` | Pins a session to a stable endpoint (see below); non-default |
-| `StrategyCost` | Ascending static cost from `EndpointCost`; unpriced endpoints sort last; alias tie-break |
-| `StrategyLatency` | Ascending injected `Latency`; endpoints without latency sort last; alias tie-break |
+A strategy decides **who becomes the active endpoint**, not who serves each call. That is the substantive
+change from earlier versions: `StrategyRandom` and `StrategyWeight` no longer spread load across requests —
+they draw once, when the pool needs an endpoint. A pool is not a load balancer.
 
-**Sticky routing.** Attach a session id with `composes.WithSessionID(ctx, id)`. The preferred alias is an FNV
-hash over the session id plus the sorted alias set, so it is reproducible across processes and instances and
-does not jitter as health changes. The preferred endpoint leads when available; otherwise failover proceeds in
-a deterministic order. Without a session id, sticky falls back to the configured fallback strategy
-(`composes.WithStickyFallback`, default `StrategyFailover`) — never a randomly generated affinity key.
+| Strategy | Behavior when selecting |
+|---|---|
+| `StrategyFailover` (default) | The first available endpoint in declaration order |
+| `StrategyRandom` | A uniformly random available endpoint |
+| `StrategyWeight` | An available endpoint drawn in proportion to weight; `Weight <= 0` counts as 1 |
+| `StrategyCost` | The lowest static cost from `EndpointCost`; unpriced endpoints sort last; alias tie-break |
+| `StrategyLatency` | The lowest injected `Latency`; endpoints without latency sort last; alias tie-break |
+
+Each strategy still produces a full ordering, which is also the deterministic sequence a single call walks
+through as endpoints die under it.
 
 **Economic routing.** `StrategyCost` / `StrategyLatency` read static metadata on the entry
 (`composes.EndpointCost{InputPrice, OutputPrice}`, `Latency`). Missing metadata is never treated as
 zero/cheapest — it sorts *after* endpoints that carry data. The output side of the cost key is scaled by
 `Call.OutputUnits`, which each wrapper fills from its own protocol's output cap (`max_completion_tokens`,
-`max_output_tokens`, `max_tokens`), defaulting to one unit. So the request's own cap can reorder the pool
-without the core ever seeing the request. Dynamic pricing is out of scope.
+`max_output_tokens`, `max_tokens`), defaulting to one unit. So the request's own cap can decide *which
+endpoint the pool settles on*, without the core ever seeing the request. Dynamic pricing is out of scope.
 
-## 5. Health tracking, cooling & recovery probes
+## 5. Retries, health and recovery
 
-The core records `state`, `lastError`, `errorTime` and `errorCount` per endpoint. There are three states:
+The core records `state`, `lastError`, `errorTime` and `errorCount` per endpoint. There are exactly two
+states:
 
 | State | Entered by | Selection behavior |
 |---|---|---|
-| `active` | success (or start) | always selectable |
-| `cooling` | HTTP **429** | skipped until the cooling interval elapses, then rejoins regular rotation |
-| `error` | HTTP **5xx** / transport failure | skipped until an exponential-backoff recovery probe is due |
+| `available` | success, or start | selectable — as the active endpoint, its replacement, or a temporary pick |
+| `dead` | exhausted retries, or HTTP **401/403** | not selectable until `recover_time` has elapsed |
 
 Failure classification reads the status code through the structural `interface{ StatusCode() int }` — which is
 how one state machine classifies failures from *every* protocol without importing any of them:
 
-- **429** → cooling (does **not** advance the failure count);
-- **5xx**, or no status (transport failure, or an error embedded in a body the HTTP layer accepted) → error;
-- **other 4xx** → request failure: attributed and failed over, but the endpoint stays healthy.
+- **401 / 403** → the endpoint's credentials do not work. No retry, no wait: it is dead at once.
+- **everything else** — 429, 400 and other 4xx, 5xx, transport failures, an error embedded in a body the HTTP
+  layer accepted — → retryable. The same endpoint is attempted again under the retry policy, and only an
+  exhausted round judges it.
 
-An endpoint whose backoff has elapsed is **prepended** to the candidate list, forming a "probe first, keep
-backing off on failure" self-healing loop. The backoff is `interval × 2^min(errorCount-1, 6)` — capped at 64×
-the base interval. A 429 answering a probe keeps the endpoint in `error` at its current backoff level rather
-than demoting it to the much shorter cooling interval.
+**In-call retries.** `composes.WithRetryPolicy(base, maxRetries)` makes retry *k* wait `base × 2^(k-1)`, so an
+endpoint is attempted at most `1 + maxRetries` times and the worst-case **synchronous** wait a caller pays is
+`base × (2^maxRetries − 1)`. The waits are interruptible: a cancelled context ends the wait and the call. This
+is the one retry in this module — provider packages remain retry-free ([ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md),
+[ADR 0009](../adr/0009-stateful-active-endpoint-with-in-call-retry.md)).
 
-Health is per **endpoint**, not per interaction form: a Chat Completions failure cools the same endpoint a
+**Recovery.** `composes.WithRecoverTime(d)` sets how long a dead endpoint stays out. When `d` has elapsed it is
+a candidate again — that is *all*: recovery never takes the pool back from a healthy incumbent, so an endpoint
+returning causes no switch of its own. There is no recovery probe and no exponential health backoff.
+
+`NewRouter` (and therefore both wrappers' constructors) rejects `recover_time <= base × 2^maxRetries`, along
+with a non-positive base or recover time and a negative retry count. A recovery window shorter than the backoff
+scale the retries themselves reach would put an endpoint back into rotation inside the very interval it just
+failed through.
+
+**Cancellation** never counts as a failure: it does not change health, does not retry and does not switch. The
+attempt is still attributed to its alias for observation.
+
+Health is per **endpoint**, not per interaction form: a Chat Completions failure kills the same endpoint a
 Responses call would have routed to.
 
 ## 6. Capability filtering
@@ -211,14 +275,16 @@ established or fails to establish — post-establishment SSE errors are surfaced
 re-reported. Observers run synchronously on the request path under no internal lock; they must be fast and
 non-blocking.
 
-`Stats()` returns an immutable `[]composes.EndpointStat{Alias, Status, ErrorCount, LastError, ErrorTime}`
-snapshot, safe to call concurrently with dispatch. Status reflects routing behavior: a cooling endpoint whose
-interval has elapsed is reported `active`.
+`Stats()` returns an immutable `[]composes.EndpointStat{Alias, Status, Active, ErrorCount, LastError,
+ErrorTime}` snapshot, safe to call concurrently with dispatch. `Status` reflects routing behavior: a dead
+endpoint whose recover time has elapsed is already reported `available`. `Active` marks the one endpoint
+currently serving the pool, and is independent of `Status` — a call routed around the active endpoint on
+capability grounds does not move it.
 
 ## 8. Errors
 
 When every candidate fails, the result is a `*composes.MultiError` carrying one `EndpointError{Alias, Err}` per
-attempt, in order. It implements `Unwrap() []error`, so `errors.Is` / `errors.As` match **any** backend's
+**endpoint**, in the order they were tried. It implements `Unwrap() []error`, so `errors.Is` / `errors.As` match **any** backend's
 failure — including through to that provider's own error type:
 
 ```go
@@ -229,8 +295,9 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests { /* eve
 ```
 
 Declaring that interface locally, rather than importing a provider's error type, is the pattern the core itself
-uses. When the candidate list is empty — every endpoint cooling or errored and none due for a probe — the
-result is `composes.ErrNoActiveModels`.
+uses. When there was nothing to try at all — every relevant endpoint dead and none recovered — the result is
+`composes.ErrNoActiveModels` instead. Two further sentinels never reach a backend at all:
+`composes.ErrCapabilityNotSatisfied` (wrapped by `*CapabilityError`) and `composes.ErrCallInProgress`.
 
 ## 9. Adding a protocol
 

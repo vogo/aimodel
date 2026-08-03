@@ -119,7 +119,7 @@ func TestResponses_RoutesAndOverridesTheModel(t *testing.T) {
 	s := newResponsesServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "gpt-5", Alias: "primary", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -150,7 +150,7 @@ func TestResponses_FailsOverAndAttributesEveryAlias(t *testing.T) {
 
 	obs := &recordingObserver{}
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "broken", Client: newClientForServer(t, sFail)},
 		{Name: "m1", Alias: "healthy", Client: newClientForServer(t, sOK)},
 	}, composes.WithAttemptObserver(obs.fn))
@@ -173,8 +173,8 @@ func TestResponses_FailsOverAndAttributesEveryAlias(t *testing.T) {
 	}
 
 	// The failure marked the shared health state, visible to every form.
-	if s := cc.Stats()[0]; s.Status != "error" {
-		t.Fatalf("broken endpoint status = %q, want error", s.Status)
+	if s := cc.Stats()[0]; s.Status != "dead" {
+		t.Fatalf("broken endpoint status = %q, want dead", s.Status)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestResponses_AllFailAggregatesByAlias(t *testing.T) {
 	defer s0.Close()
 	defer s1.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "a", Client: newClientForServer(t, s0)},
 		{Name: "m1", Alias: "b", Client: newClientForServer(t, s1)},
 	})
@@ -208,7 +208,7 @@ func TestResponsesStream_FailsOverOnEstablishment(t *testing.T) {
 	defer sFail.Close()
 	defer sStream.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "broken", Client: newClientForServer(t, sFail)},
 		{Name: "m1", Alias: "streamer", Client: newClientForServer(t, sStream)},
 	})
@@ -233,15 +233,13 @@ func TestResponsesStream_FailsOverOnEstablishment(t *testing.T) {
 	}
 }
 
-// Responses runs through the same core loop as chat, so every strategy —
-// including sticky, which needs the session context to reach the core — fails
+// Responses runs through the same core loop as chat, so every strategy fails
 // over identically.
 func TestResponses_EveryStrategyFailsOverToTheHealthyEndpoint(t *testing.T) {
 	strategies := []composes.Strategy{
 		composes.StrategyFailover,
 		composes.StrategyRandom,
 		composes.StrategyWeight,
-		composes.StrategySticky,
 		composes.StrategyCost,
 		composes.StrategyLatency,
 	}
@@ -254,7 +252,7 @@ func TestResponses_EveryStrategyFailsOverToTheHealthyEndpoint(t *testing.T) {
 
 			fast, slow := 10*time.Millisecond, 50*time.Millisecond
 
-			cc, err := NewComposeClient(strategy, []ModelEntry{
+			cc, err := newRoutingClient(t, strategy, []ModelEntry{
 				{
 					Name: "m0", Alias: "broken", Weight: 9, Client: newClientForServer(t, sFail),
 					Cost: &composes.EndpointCost{InputPrice: 1, OutputPrice: 1}, Latency: &fast,
@@ -268,9 +266,7 @@ func TestResponses_EveryStrategyFailsOverToTheHealthyEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx := composes.WithSessionID(context.Background(), "session-1")
-
-			resp, err := cc.Responses(ctx, responsesRequest())
+			resp, err := cc.Responses(context.Background(), responsesRequest())
 			if err != nil {
 				t.Fatalf("%s: expected failover to succeed, got %v", strategy, err)
 			}
@@ -282,8 +278,8 @@ func TestResponses_EveryStrategyFailsOverToTheHealthyEndpoint(t *testing.T) {
 	}
 }
 
-// Sticky pins a session to one endpoint across Responses calls too.
-func TestResponses_StickySessionKeepsOneEndpoint(t *testing.T) {
+// The pool's active endpoint holds across Responses calls too.
+func TestResponses_SuccessiveCallsStayOnOneBackend(t *testing.T) {
 	entries := make([]ModelEntry, 3)
 
 	for i, alias := range []string{"a", "b", "c"} {
@@ -293,12 +289,12 @@ func TestResponses_StickySessionKeepsOneEndpoint(t *testing.T) {
 		entries[i] = ModelEntry{Name: "m" + alias, Alias: alias, Client: newClientForServer(t, s)}
 	}
 
-	cc, err := NewComposeClient(composes.StrategySticky, entries)
+	cc, err := newRoutingClient(t, composes.StrategyRandom, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := composes.WithSessionID(context.Background(), "session-xyz")
+	ctx := context.Background()
 
 	first, err := cc.Responses(ctx, responsesRequest())
 	if err != nil {
@@ -312,15 +308,14 @@ func TestResponses_StickySessionKeepsOneEndpoint(t *testing.T) {
 		}
 
 		if resp.Model != first.Model {
-			t.Fatalf("sticky routing drifted: %q then %q", first.Model, resp.Model)
+			t.Fatalf("the active endpoint drifted: %q then %q", first.Model, resp.Model)
 		}
 	}
 }
 
-// Health recovery reaches the Responses path through the shared state: a chat
-// failure errors the endpoint, and the elapsed backoff makes the next Responses
-// call probe it first.
-func TestResponses_HealthRecoveryIsSharedWithChat(t *testing.T) {
+// Health is one pool state, whichever interaction form observes it: a chat
+// failure kills the endpoint and the next Responses call routes around it.
+func TestResponses_HealthIsSharedWithChat(t *testing.T) {
 	var hits atomic.Int64
 
 	sFlaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -345,35 +340,35 @@ func TestResponses_HealthRecoveryIsSharedWithChat(t *testing.T) {
 	sOK := newResponsesServer(t, nil)
 	defer sOK.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "flaky", Client: newClientForServer(t, sFlaky)},
 		{Name: "m1", Alias: "steady", Client: newClientForServer(t, sOK)},
-	}, composes.WithRecoveryInterval(time.Nanosecond))
+	}, composes.WithRecoverTime(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// A chat failure errors the endpoint...
+	// A chat failure kills the endpoint and moves the pool to the other one...
 	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "error" {
-		t.Fatalf("status after the chat 5xx = %q, want error", s.Status)
+	if s := cc.Stats()[0]; s.Status != "dead" {
+		t.Fatalf("status after the chat 5xx = %q, want dead", s.Status)
 	}
 
-	// ...and the Responses call probes the same endpoint, recovering it.
+	// ...and the Responses call sees that same state, so it never contacts it.
 	resp, err := cc.Responses(context.Background(), responsesRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if resp.Model != "m0" {
-		t.Fatalf("model after the probe = %q, want m0", resp.Model)
+	if resp.Model != "m1" {
+		t.Fatalf("model = %q, want m1 — the dead endpoint must stay out", resp.Model)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "active" || s.ErrorCount != 0 {
-		t.Fatalf("stats after a successful probe = %+v, want active/0", s)
+	if hits.Load() != 1 {
+		t.Fatalf("the dead endpoint was contacted %d times, want 1", hits.Load())
 	}
 }
 
@@ -383,7 +378,7 @@ func TestResponses_SkipsEntriesWithoutTheMethodSet(t *testing.T) {
 	s := newResponsesServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "chat-only", Alias: "chat-only", Client: chatOnlyClient{}},
 		{Name: "full", Alias: "full", Client: newClientForServer(t, s)},
 	})
@@ -400,20 +395,70 @@ func TestResponses_SkipsEntriesWithoutTheMethodSet(t *testing.T) {
 		t.Fatalf("model = %q, want full (the chat-only entry cannot serve Responses)", resp.Model)
 	}
 
-	// Chat still uses the first entry.
+	// The Responses call selected the pool's active endpoint, because it had
+	// none: a capability-restricted call may choose the first active, it just may
+	// not displace one. Chat then follows that choice.
+	chatResp, err := cc.ChatCompletions(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if chatResp.Model != "full" {
+		t.Fatalf("chat model = %q, want full — the pool has an active endpoint now", chatResp.Model)
+	}
+}
+
+// Once the pool has settled on a chat-only endpoint, a Responses call is routed
+// around it without moving it.
+func TestResponses_RoutesAroundAChatOnlyActiveEndpoint(t *testing.T) {
+	s := newResponsesServer(t, nil)
+	defer s.Close()
+
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
+		{Name: "chat-only", Alias: "chat-only", Client: chatOnlyClient{}},
+		{Name: "full", Alias: "full", Client: newClientForServer(t, s)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := cc.Responses(context.Background(), responsesRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "full" {
+		t.Fatalf("model = %q, want full", resp.Model)
+	}
+
+	// The Responses call was a temporary pick: chat is still on chat-only.
 	chatResp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if chatResp.Model != "chat-only" {
-		t.Fatalf("chat model = %q, want chat-only", chatResp.Model)
+		t.Fatalf("chat model = %q, want the incumbent chat-only", chatResp.Model)
+	}
+
+	for _, stat := range cc.Stats() {
+		if stat.Alias == "chat-only" && !stat.Active {
+			t.Fatalf("chat-only should still be the active endpoint: %+v", stat)
+		}
+
+		if stat.Alias == "full" && stat.Active {
+			t.Fatalf("a temporary pick became the active endpoint: %+v", stat)
+		}
 	}
 }
 
 // With no entry able to serve Responses, the call fails before any network I/O.
 func TestResponses_NoCapableEndpointFailsFast(t *testing.T) {
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "chat-only", Alias: "only", Client: chatOnlyClient{}},
 	})
 	if err != nil {
@@ -456,7 +501,7 @@ func TestResponses_CapabilityFilterUsesResponsesFields(t *testing.T) {
 	sPlain := newResponsesServer(t, nil)
 	defer sPlain.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{
 			Name: "plain", Alias: "plain", Client: newClientForServer(t, sPlain),
 			Capability: &Capability{Tools: false},
@@ -492,7 +537,7 @@ func TestResponses_VisionRequirementFromInputImage(t *testing.T) {
 	s := newResponsesServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{
 			Name: "text-only", Alias: "text-only", Client: newClientForServer(t, s),
 			Capability: &Capability{Vision: false},

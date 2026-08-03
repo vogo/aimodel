@@ -20,6 +20,7 @@ package composes
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"slices"
 	"sync"
@@ -27,31 +28,80 @@ import (
 )
 
 const (
-	defaultRecoveryInterval = 60 * time.Second
-	// defaultCoolingInterval is the default rate-limit (429) cooling duration.
-	// It is deliberately shorter than the default recovery interval so a
-	// rate-limited endpoint rejoins rotation quickly without a backoff probe.
-	defaultCoolingInterval = 10 * time.Second
+	// defaultRetryBase is the first retry's wait; each further retry doubles it.
+	defaultRetryBase = 500 * time.Millisecond
+	// defaultMaxRetries is the number of retries *after* the first attempt, so an
+	// endpoint is attempted at most four times by default and the worst-case
+	// synchronous wait is 500ms × (2^3 − 1) = 3.5s.
+	defaultMaxRetries = 3
+	// defaultRecoverTime is how long a dead endpoint stays out of rotation. It
+	// must exceed retryBase × 2^maxRetries; the default clears that bound by an
+	// order of magnitude.
+	defaultRecoverTime = 60 * time.Second
 )
 
-// Router is the protocol-neutral routing core: it owns endpoint identity,
-// selection strategies, health state and failure attribution, and nothing else.
-// It never sees a request or a response — a wrapper package binds the types and
-// hands [Dispatch] a closure that performs one attempt against one endpoint.
+// noActive is the sentinel index meaning "the pool has not selected an active
+// endpoint yet", which is also the state a retired active leaves behind.
+const noActive = -1
+
+// Router is the protocol-neutral routing core: it owns endpoint identity, the
+// pool's active endpoint, selection strategies, health state and failure
+// attribution, and nothing else. It never sees a request or a response — a
+// wrapper package binds the types and hands [Dispatch] a closure that performs
+// one attempt against one endpoint.
 //
 // That boundary is the whole point: routing *mechanism* is shared, protocol
 // *semantics* are not. See doc/adr/0008-shared-routing-core-across-protocol-wrappers.md.
+//
+// # The active endpoint
+//
+// A router serves every call from one endpoint — its *active* endpoint — and
+// re-selects only when it has none yet or the current one is judged dead. A
+// strategy therefore decides who serves the pool, not who serves a call: it runs
+// at selection time, not on every dispatch.
+//
+// # One call at a time
+//
+// A pool belongs to one conversation and serves it one call at a time. A second
+// call arriving while one is in flight is rejected with [ErrCallInProgress]
+// rather than queued: concurrency here is a usage error, not a load to smooth
+// out. A caller that needs parallel requests builds one pool per worker.
+// See doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 type Router struct {
 	endpoints        []Endpoint
 	health           []*endpointHealth
 	strategy         Strategy
-	stickyFallback   Strategy
-	recoveryInterval time.Duration
-	coolingInterval  time.Duration
+	retryBase        time.Duration
+	maxRetries       int
+	recoverTime      time.Duration
 	attemptObservers []func(AttemptResult)
 	nowFunc          func() time.Time
-	rng              *rand.Rand
-	mu               sync.Mutex // protects rng
+	// waitFunc blocks for d or until ctx ends, returning ctx.Err() if it does.
+	// It is a field so tests can assert the retry wait sequence without sleeping.
+	waitFunc func(ctx context.Context, d time.Duration) error
+
+	// callSlot serialises dispatches: it holds exactly one token, so a router
+	// serves one call at a time. It is a channel rather than a mutex because the
+	// claim is a *try*, not a wait — a second concurrent call is rejected with
+	// ErrCallInProgress rather than queued.
+	callSlot chan struct{}
+
+	// mu protects rng, active and generation — everything about *which* endpoint
+	// serves the pool. It is held only for those decisions, never across an
+	// attempt or a retry wait, so Stats stays callable while a call is in flight.
+	mu  sync.Mutex
+	rng *rand.Rand
+	// active is the index of the endpoint currently serving the pool, or
+	// noActive. generation advances on every transition of active (both
+	// retirement and commit), which is what makes a switch conditional: a caller
+	// that observed generation g may only retire the active it saw at g.
+	active     int
+	generation uint64
+	// commits counts how many endpoints have been committed as the pool's active
+	// one over its lifetime. One commit is the initial selection; each further
+	// commit is a switch, which is the unit the concurrency guarantee is stated
+	// in — concurrent failures of one active endpoint cause exactly one.
+	commits uint64
 }
 
 // Option configures a Router. The same options serve every wrapper package, so
@@ -59,39 +109,41 @@ type Router struct {
 // its endpoints speak.
 type Option func(*Router)
 
-// WithRecoveryInterval sets the duration after which an errored endpoint
-// becomes eligible for a recovery probe.
-func WithRecoveryInterval(d time.Duration) Option {
+// WithRetryPolicy sets the in-call retry policy for the active endpoint: base is
+// the wait before the first retry and each further retry doubles it, so retry k
+// waits base × 2^(k-1) and an endpoint is attempted at most 1 + maxRetries
+// times. Exhausting them is what judges an endpoint dead.
+//
+// The waits are synchronous — they block the caller's request for up to
+// base × (2^maxRetries − 1) in total — and interruptible: a cancelled context
+// ends the wait and the call immediately. This is the one place in this module
+// where a retry lives; provider packages stay retry-free (ADR 0001, ADR 0009).
+func WithRetryPolicy(base time.Duration, maxRetries int) Option {
 	return func(r *Router) {
-		r.recoveryInterval = d
+		r.retryBase = base
+		r.maxRetries = maxRetries
 	}
 }
 
-// WithCoolingInterval sets how long a rate-limited (429) endpoint sleeps before
-// rejoining regular rotation. It has no effect on the 5xx error backoff.
-func WithCoolingInterval(d time.Duration) Option {
+// WithRecoverTime sets how long a dead endpoint stays out of rotation. When it
+// elapses the endpoint is a candidate again — that is all: recovery never
+// displaces a healthy active endpoint, so an endpoint coming back causes no
+// switch on its own.
+//
+// It must be strictly greater than base × 2^maxRetries, so a recovered endpoint
+// is never re-selected inside the same backoff scale it just failed through.
+// [NewRouter] rejects a configuration that violates this.
+func WithRecoverTime(d time.Duration) Option {
 	return func(r *Router) {
-		r.coolingInterval = d
-	}
-}
-
-// WithStickyFallback sets the strategy StrategySticky falls back to when a
-// request carries no session id. A sticky fallback is coerced to failover to
-// avoid recursion. Defaults to StrategyFailover.
-func WithStickyFallback(s Strategy) Option {
-	return func(r *Router) {
-		if s == StrategySticky {
-			s = StrategyFailover
-		}
-
-		r.stickyFallback = s
+		r.recoverTime = d
 	}
 }
 
 // WithAttemptObserver registers a callback invoked when each endpoint attempt
-// finishes (see AttemptResult). Multiple observers may be registered. Observers
-// run synchronously on the request path under no internal lock: they must be
-// fast and must not call blocking Router operations.
+// finishes (see AttemptResult), including every retry against the same endpoint.
+// Multiple observers may be registered. Observers run synchronously on the
+// request path under no internal lock: they must be fast and must not call
+// blocking Router operations.
 func WithAttemptObserver(fn func(AttemptResult)) Option {
 	return func(r *Router) {
 		if fn != nil {
@@ -106,7 +158,9 @@ func WithAttemptObserver(fn func(AttemptResult)) Option {
 // how a wrapper finds the client and the model name that belong to it.
 //
 // Endpoints are copied before aliases are resolved, so the caller's slice and
-// its elements are never written back to.
+// its elements are never written back to. The retry policy and recover time are
+// validated here rather than at dispatch: a pool whose recovery window is
+// shorter than its own backoff is a configuration error, not a runtime one.
 func NewRouter(strategy Strategy, endpoints []Endpoint, opts ...Option) (*Router, error) {
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("aimodel/composes: at least one endpoint is required")
@@ -124,21 +178,93 @@ func NewRouter(strategy Strategy, endpoints []Endpoint, opts ...Option) (*Router
 	}
 
 	r := &Router{
-		endpoints:        owned,
-		health:           health,
-		strategy:         strategy,
-		stickyFallback:   StrategyFailover,
-		recoveryInterval: defaultRecoveryInterval,
-		coolingInterval:  defaultCoolingInterval,
-		nowFunc:          time.Now,
-		rng:              newRand(time.Now().UnixNano()),
+		endpoints:   owned,
+		health:      health,
+		strategy:    strategy,
+		retryBase:   defaultRetryBase,
+		maxRetries:  defaultMaxRetries,
+		recoverTime: defaultRecoverTime,
+		nowFunc:     time.Now,
+		waitFunc:    waitFor,
+		callSlot:    make(chan struct{}, 1),
+		rng:         newRand(time.Now().UnixNano()),
+		active:      noActive,
 	}
 
 	for _, opt := range opts {
 		opt(r)
 	}
 
+	if err := r.validateTiming(); err != nil {
+		return nil, err
+	}
+
 	return r, nil
+}
+
+// validateTiming rejects a retry/recovery configuration that cannot mean what it
+// says: non-positive durations, a negative retry count, or a recovery window
+// that does not outlast the backoff scale the retries themselves reach.
+func (r *Router) validateTiming() error {
+	if r.retryBase <= 0 {
+		return fmt.Errorf("aimodel/composes: retry base must be positive, got %v", r.retryBase)
+	}
+
+	if r.maxRetries < 0 {
+		return fmt.Errorf("aimodel/composes: max retries must not be negative, got %d", r.maxRetries)
+	}
+
+	if r.recoverTime <= 0 {
+		return fmt.Errorf("aimodel/composes: recover time must be positive, got %v", r.recoverTime)
+	}
+
+	bound, ok := backoffBound(r.retryBase, r.maxRetries)
+	if !ok {
+		return fmt.Errorf(
+			"aimodel/composes: retry policy overflows: base %v doubled %d times exceeds the maximum duration",
+			r.retryBase, r.maxRetries,
+		)
+	}
+
+	if r.recoverTime <= bound {
+		return fmt.Errorf(
+			"aimodel/composes: recover time %v must be greater than base × 2^maxRetries (%v × 2^%d = %v)",
+			r.recoverTime, r.retryBase, r.maxRetries, bound,
+		)
+	}
+
+	return nil
+}
+
+// backoffBound returns base × 2^maxRetries, reporting false if that overflows a
+// time.Duration. It is the scale the retry waits reach, and the lower bound the
+// recover time must clear.
+func backoffBound(base time.Duration, maxRetries int) (time.Duration, bool) {
+	bound := base
+
+	for range maxRetries {
+		if bound > math.MaxInt64/2 {
+			return 0, false
+		}
+
+		bound *= 2
+	}
+
+	return bound, true
+}
+
+// waitFor blocks for d, or until ctx ends — in which case it returns ctx.Err()
+// so a cancelled caller never pays for the rest of a retry wait.
+func waitFor(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // resolveAliases guarantees every endpoint has a non-empty, unique alias so all
@@ -193,18 +319,25 @@ type Call struct {
 	Stream bool
 }
 
-// Dispatch runs one full candidate loop and returns the first successful
-// attempt's value. The routing chain is: capability filter → strategy ordering
-// → recovery probes → per-endpoint attempts with health and observation updates.
+// Dispatch serves one call from the pool's active endpoint and returns its
+// value. The chain is: capability filter → active endpoint (reused, selected or
+// switched) → attempt with in-call exponential retries → on exhaustion, mark
+// dead and move to the next capable available endpoint.
 //
 // attempt is invoked with the index of the endpoint to try; it owns everything
 // protocol-shaped — building the per-endpoint request, calling the backend, and
 // returning its value. The router only learns whether the attempt failed, and
-// classifies that failure structurally (see classifyHealth).
+// classifies that failure structurally (see classifyFailure).
 //
-// Failures are collected in attempt order and returned as a *MultiError; an
-// empty candidate list yields ErrNoActiveModels; an unsatisfiable Requires set
-// yields a *CapabilityError before any attempt is made.
+// Failures are collected one per endpoint — a retry round contributes its final
+// error, not one entry per retry — and returned as a *MultiError; having no
+// candidate to try at all yields ErrNoActiveModels; an unsatisfiable Requires
+// set yields a *CapabilityError before any attempt is made.
+//
+// A router serves one dispatch at a time: a call arriving while another is in
+// flight is rejected with ErrCallInProgress, having touched no endpoint and no
+// health state. The capability filter runs before that check, so an unservable
+// call is reported as such rather than as a busy pool.
 func Dispatch[T any](
 	ctx context.Context,
 	r *Router,
@@ -213,73 +346,208 @@ func Dispatch[T any](
 ) (T, error) {
 	var zero T
 
-	// 1. Capability filter runs before health and strategy. A call whose
-	// required labels no endpoint declares fails fast, before any attempt.
+	// The capability filter runs before health, the active endpoint and the
+	// strategy alike. A call whose required labels no endpoint declares fails
+	// fast, before any attempt — and before the call slot is claimed, so an
+	// unservable call is never reported as a busy pool.
 	capable := r.capableIndices(call)
 	if len(call.Requires) > 0 && len(capable) == 0 {
 		return zero, &CapabilityError{Required: slices.Clone(call.Requires), Considered: r.Aliases()}
 	}
 
-	// 2. Strategy ordering over the capable, health-available candidates.
-	candidates := r.selectEndpoints(ctx, call, capable)
-
-	// 3. Prepend recovery probes for capable endpoints whose backoff elapsed.
-	candidates = r.prependRecoveryProbes(candidates, capable)
-
-	if len(candidates) == 0 {
-		return zero, ErrNoActiveModels
+	if err := r.acquire(ctx); err != nil {
+		return zero, err
 	}
+	defer r.release()
 
 	var errs []*EndpointError
 
-	for _, idx := range candidates {
-		// Return immediately if the context is cancelled to avoid marking
-		// healthy endpoints as errored due to client-side cancellation.
+	tried := make(map[int]bool, len(capable))
+
+	for {
 		if ctx.Err() != nil {
 			return zero, ctx.Err()
 		}
 
-		alias := r.endpoints[idx].Alias
-
-		result, err := attempt(ctx, idx)
-		if err != nil {
-			// Cancellation never poisons health; still attribute the alias if an
-			// attempt was made.
-			if ctx.Err() != nil {
-				r.observe(AttemptResult{Alias: alias, Success: false, Err: err, Stream: call.Stream})
-				return zero, ctx.Err()
-			}
-
-			r.observe(AttemptResult{Alias: alias, Success: false, Err: err, Stream: call.Stream})
-			r.applyFailure(idx, err)
-
-			errs = append(errs, &EndpointError{Alias: alias, Err: err})
-
-			continue
+		choice, ok := r.pickEndpoint(call, capable, tried)
+		if !ok {
+			break
 		}
 
-		r.observe(AttemptResult{Alias: alias, Success: true, Stream: call.Stream})
-		r.health[idx].markActive()
+		tried[choice.endpoint] = true
 
-		return result, nil
+		result, failure, cancelled := runAttempts(ctx, r, call, choice.endpoint, attempt)
+		if cancelled != nil {
+			return zero, cancelled
+		}
+
+		if failure == nil {
+			return result, nil
+		}
+
+		// The endpoint is out: record why, and if it was the one serving the pool,
+		// retire it so the next choice commits a replacement.
+		r.health[choice.endpoint].markDead(failure, r.nowFunc())
+
+		if choice.serving {
+			r.retireActive(choice.endpoint, choice.generation)
+		}
+
+		errs = append(errs, &EndpointError{Alias: r.endpoints[choice.endpoint].Alias, Err: failure})
+	}
+
+	if len(errs) == 0 {
+		return zero, ErrNoActiveModels
 	}
 
 	return zero, &MultiError{Errors: errs}
 }
 
-// applyFailure updates endpoint health according to the failure classification.
-// Request failures (non-429 4xx) are attributed and failed over but leave the
-// endpoint healthy.
-func (r *Router) applyFailure(idx int, err error) {
+// runAttempts drives one endpoint through its whole retry round. It returns
+// either a value, or the final failure that judges the endpoint dead, or the
+// context error that ends the call without touching health.
+//
+// Retry k waits retryBase × 2^(k-1) beforehand; a credential failure skips the
+// retries entirely. Every real network attempt is observed, including retries.
+func runAttempts[T any](
+	ctx context.Context,
+	r *Router,
+	call Call,
+	endpoint int,
+	attempt func(ctx context.Context, endpoint int) (T, error),
+) (value T, failure, cancelled error) {
+	var zero T
+
+	alias := r.endpoints[endpoint].Alias
+
+	for retry := 0; ; retry++ {
+		if ctx.Err() != nil {
+			return zero, nil, ctx.Err()
+		}
+
+		result, err := attempt(ctx, endpoint)
+		if err == nil {
+			r.observe(AttemptResult{Alias: alias, Success: true, Stream: call.Stream})
+			r.health[endpoint].markSuccess()
+
+			return result, nil, nil
+		}
+
+		r.observe(AttemptResult{Alias: alias, Success: false, Err: err, Stream: call.Stream})
+
+		// Cancellation never poisons health and never retries: the endpoint did
+		// not misbehave, the caller went away.
+		if ctx.Err() != nil {
+			return zero, nil, ctx.Err()
+		}
+
+		if classifyFailure(err) == outcomeCredential || retry >= r.maxRetries {
+			return zero, err, nil
+		}
+
+		if waitErr := r.waitFunc(ctx, r.retryBase<<retry); waitErr != nil {
+			return zero, nil, waitErr
+		}
+	}
+}
+
+// endpointPick is the outcome of one selection: which endpoint to attempt, and
+// whether it is the endpoint currently serving the pool (in which case failing
+// it retires the active at the generation observed here). A pick that is not
+// serving is temporary — made because the active cannot satisfy this call's
+// capabilities — and must never rewrite the pool's active endpoint.
+type endpointPick struct {
+	endpoint   int
+	generation uint64
+	serving    bool
+}
+
+// pickEndpoint returns the endpoint to attempt next for this call.
+//
+//   - The active endpoint serves whenever it is available and capable of this
+//     call — that is the whole point of the model, and why consecutive successful
+//     calls stay on one backend under every strategy.
+//   - When there is no active endpoint, or the active one is dead, the strategy
+//     picks a replacement and it is committed as the pool's active.
+//   - When the active endpoint is merely incapable of *this* call, the strategy
+//     picks among the capable available endpoints for this call alone. The pool's
+//     active is left exactly as it was, so an occasional call needing a rarer
+//     capability cannot drag the pool off its stable endpoint.
+func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (endpointPick, bool) {
 	now := r.nowFunc()
 
-	switch classifyHealth(err) {
-	case outcomeCooling:
-		r.health[idx].markCooling(err, now)
-	case outcomeError:
-		r.health[idx].markError(err, now)
-	case outcomeRequestFailure:
-		// Attributed and failed over, but the endpoint is not judged unhealthy.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// activeUsable asks only about health, never about this call's capabilities:
+	// a healthy active endpoint keeps serving the pool even when the current call
+	// has to be routed around it.
+	activeUsable := r.active != noActive && r.health[r.active].available(now, r.recoverTime)
+
+	if activeUsable && !tried[r.active] && slices.Contains(capable, r.active) {
+		return endpointPick{endpoint: r.active, generation: r.generation, serving: true}, true
+	}
+
+	pool := make([]int, 0, len(capable))
+
+	for _, idx := range capable {
+		if !tried[idx] && r.health[idx].available(now, r.recoverTime) {
+			pool = append(pool, idx)
+		}
+	}
+
+	if len(pool) == 0 {
+		return endpointPick{}, false
+	}
+
+	pick := r.orderByStrategy(call, pool)[0]
+
+	// Commit the pick as the pool's active only when the pool has no usable one.
+	// If the active is healthy and was skipped purely on capability grounds, this
+	// pick is temporary.
+	if activeUsable {
+		return endpointPick{endpoint: pick, generation: r.generation, serving: false}, true
+	}
+
+	r.active = pick
+	r.generation++
+	r.commits++
+
+	return endpointPick{endpoint: pick, generation: r.generation, serving: true}, true
+}
+
+// acquire claims the router's single call slot, or reports ErrCallInProgress if
+// another call already holds it. It never waits: a pool serves one conversation,
+// so a second concurrent call is a usage error, and queueing would only convert
+// that error into unbounded latency.
+func (r *Router) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	select {
+	case r.callSlot <- struct{}{}:
+		return nil
+	default:
+		return ErrCallInProgress
+	}
+}
+
+// release gives the call slot back.
+func (r *Router) release() { <-r.callSlot }
+
+// retireActive gives up the pool's active endpoint, but only if it is still the
+// endpoint and generation the caller observed. That condition is what keeps
+// concurrent failures of one active from switching the pool more than once: the
+// first failure to arrive retires it, and every later one finds the generation
+// moved on and defers to the replacement already chosen.
+func (r *Router) retireActive(endpoint int, generation uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.active == endpoint && r.generation == generation {
+		r.active = noActive
+		r.generation++
 	}
 }
 
@@ -307,24 +575,30 @@ func (r *Router) Aliases() []string {
 // concurrently with dispatch. Mutating the returned slice does not affect
 // internal state.
 //
-// Status reflects routing behavior, not just the stored state: a cooling
-// endpoint whose interval has elapsed is already selectable again, so it is
-// reported as "active" rather than staying "cooling" until the next success.
+// Status reflects routing behavior, not just the stored state: a dead endpoint
+// whose recover time has elapsed is already selectable again, so it is reported
+// as "available" rather than staying "dead" until something picks it.
 func (r *Router) Stats() []EndpointStat {
 	now := r.nowFunc()
+
+	r.mu.Lock()
+	active := r.active
+	r.mu.Unlock()
+
 	stats := make([]EndpointStat, len(r.endpoints))
 
 	for i := range r.endpoints {
 		snap := r.health[i].snapshot()
 
 		state := snap.state
-		if state == stateCooling && now.Sub(snap.errorTime) >= r.coolingInterval {
-			state = stateActive
+		if state == stateDead && now.Sub(snap.errorTime) >= r.recoverTime {
+			state = stateAvailable
 		}
 
 		stats[i] = EndpointStat{
 			Alias:      r.endpoints[i].Alias,
 			Status:     string(state),
+			Active:     i == active,
 			ErrorCount: snap.errorCount,
 			LastError:  snap.lastError,
 			ErrorTime:  snap.errorTime,
@@ -332,35 +606,4 @@ func (r *Router) Stats() []EndpointStat {
 	}
 
 	return stats
-}
-
-// prependRecoveryProbes prepends errored, capable endpoints that are eligible
-// for recovery probing to the candidate list. Cooling endpoints rejoin rotation
-// on their own timer and are not probed here.
-func (r *Router) prependRecoveryProbes(candidates, capable []int) []int {
-	now := r.nowFunc()
-
-	// Collect the set of already-selected candidates for quick lookup.
-	selected := make(map[int]bool, len(candidates))
-	for _, idx := range candidates {
-		selected[idx] = true
-	}
-
-	var probes []int
-
-	for _, idx := range capable {
-		if selected[idx] {
-			continue
-		}
-
-		if r.health[idx].shouldProbe(now, r.recoveryInterval) {
-			probes = append(probes, idx)
-		}
-	}
-
-	if len(probes) == 0 {
-		return candidates
-	}
-
-	return append(probes, candidates...)
 }

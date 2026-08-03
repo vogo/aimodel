@@ -94,9 +94,9 @@ the answer is no — no provider imports `composes`, and none ever will.
 `composes.ChatCompleter`, `composes.ModelEntry`, `composes.EndpointSpec` and `composes.NewFromEndpoints`
 must move to `composes/openais`. There is **no deprecation window** — unlike v0.6.1 → v0.7.0, which
 marked every removed symbol `Deprecated:` for one release so `staticcheck` could report call sites
-first. The trade is deliberate: the package boundary lands in one step and
-[MIGRATION.md](../../MIGRATION.md) is the upgrade path, because a transitional alias in the root
-package would be an OpenAI-wire symbol living in the package this decision exists to keep neutral.
+first. The trade is deliberate: the package boundary lands in one step, because a transitional
+alias in the root package would be an OpenAI-wire symbol living in the package this decision
+exists to keep neutral.
 
 Two smaller costs, recorded so they are not mistaken for oversights:
 
@@ -133,7 +133,7 @@ added:
 
 - **v0.8.0 is a breaking release** for `composes` callers only. `provider/openai` and
   `provider/anthropic` are untouched — no wire type, client, option or serialization changes.
-  [MIGRATION.md](../../MIGRATION.md) maps every moved symbol.
+  Every moved symbol keeps its name and behaviour under `composes/openais`.
 
 - **Three dispatch paths, one implementation.** OpenAI Chat Completions, OpenAI Responses and
   Anthropic Messages all get failover, the six strategies, 429 cooling, backoff recovery probes,
@@ -157,7 +157,6 @@ added:
 
 ## References
 
-- [MIGRATION.md](../../MIGRATION.md)
 - [Multi-backend composition](../design/compose.md)
 - [Architecture](../architecture.md)
 - [ADR 0001 — keep the SDK a thin wrapper](./0001-keep-the-sdk-a-thin-wrapper.md)

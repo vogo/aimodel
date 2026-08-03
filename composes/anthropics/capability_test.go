@@ -65,7 +65,7 @@ func TestCapability_ToolsRoutesToTheCapableEndpoint(t *testing.T) {
 	sPlain := newTestServer(t, nil)
 	defer sPlain.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "plain", Capability: &Capability{Tools: false}, Client: newClientForServer(t, sPlain)},
 		{Name: "m1", Alias: "tools", Capability: &Capability{Tools: true}, Client: newClientForServer(t, sTools)},
 	})
@@ -73,6 +73,18 @@ func TestCapability_ToolsRoutesToTheCapableEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A plain request first, so the pool settles on the declaration-order entry.
+	plain, err := cc.Messages(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if plain.Model != "m0" {
+		t.Fatalf("plain request routed to %q, want m0", plain.Model)
+	}
+
+	// The tools request cannot be served there, so it is routed to the capable
+	// endpoint for this call alone.
 	resp, err := cc.Messages(context.Background(), toolsRequest())
 	if err != nil {
 		t.Fatal(err)
@@ -82,19 +94,25 @@ func TestCapability_ToolsRoutesToTheCapableEndpoint(t *testing.T) {
 		t.Fatalf("model = %q, want the tools-capable m1", resp.Model)
 	}
 
-	// The tools reached the endpoint untouched — no stripping or downgrade.
+	// The tools reached it untouched — no stripping or downgrade.
 	if !gotTools.Load() {
 		t.Fatal("tools were stripped before reaching the capable endpoint")
 	}
 
-	// A plain request still reaches the first endpoint.
-	plain, err := cc.Messages(context.Background(), testRequest())
+	// Routing around the active endpoint does not move it.
+	plain, err = cc.Messages(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if plain.Model != "m0" {
-		t.Fatalf("plain request routed to %q, want m0", plain.Model)
+		t.Fatalf("plain request after the tools call routed to %q, want m0", plain.Model)
+	}
+
+	for _, stat := range cc.Stats() {
+		if (stat.Alias == "plain") != stat.Active {
+			t.Fatalf("a temporary pick moved the active endpoint: %+v", stat)
+		}
 	}
 }
 
@@ -106,7 +124,7 @@ func TestCapability_AllIncapableErrorsBeforeNetwork(t *testing.T) {
 	}))
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "a", Capability: &Capability{Tools: false}, Client: newClientForServer(t, s)},
 		{Name: "m1", Alias: "b", Capability: &Capability{Tools: false}, Client: newClientForServer(t, s)},
 	})
@@ -140,7 +158,7 @@ func TestCapability_VisionFromImageContentBlock(t *testing.T) {
 	s := newTestServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "text-only", Capability: &Capability{Vision: false}, Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -228,7 +246,7 @@ func TestCapability_UndeclaredIsNeverFiltered(t *testing.T) {
 	s := newTestServer(t, &gotTools)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "silent", Client: newClientForServer(t, s)},
 	})
 	if err != nil {

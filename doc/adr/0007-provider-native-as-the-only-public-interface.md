@@ -156,7 +156,7 @@ re-growth of a shared layer:
 
 - **v0.7.0 is a breaking release.** `aimodel.Client`, `ais.*`, `WithProvider`, the unified
   `Stream`, the shared error model, extensions and the default-model behavior are gone.
-  [MIGRATION.md](../../MIGRATION.md) maps every removed symbol; v0.6.1 marks them all
+  Every removed symbol has a native counterpart; v0.6.1 marks them all
   `Deprecated:` first so `staticcheck` reports call sites before the removal lands.
 
 - **Delivering one request to two protocols is no longer possible, and is not a goal.** Callers
@@ -190,7 +190,6 @@ re-growth of a shared layer:
 
 ## References
 
-- [MIGRATION.md](../../MIGRATION.md)
 - [Architecture](../architecture.md)
 - [ADR 0001 — keep the SDK a thin wrapper](./0001-keep-the-sdk-a-thin-wrapper.md)
 - [ADR 0004 — model capabilities with small interfaces](./0004-model-capabilities-with-small-interfaces.md)

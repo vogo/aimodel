@@ -18,84 +18,92 @@
 package composes
 
 import (
-	"context"
 	"math/rand"
+	"slices"
 )
 
-// Strategy determines how candidate endpoints are ordered for a call. Every
-// strategy returns a full ordered candidate list (not a single pick), so the
-// dispatch loop fails over uniformly regardless of strategy.
+// Strategy decides which endpoint becomes the pool's active one. It runs when
+// the router has no active endpoint or is replacing a dead one — not on every
+// call. A strategy therefore expresses a *preference between backends*, not a
+// distribution over requests: with the active model, consecutive successful
+// calls all land on the same endpoint whichever strategy is configured.
+//
+// Each strategy still produces a full ordering rather than a single pick, so the
+// same ordering also gives the deterministic sequence a failing call walks
+// through as endpoints die under it.
 type Strategy string
 
 const (
-	// StrategyFailover selects endpoints in declaration order, skipping unhealthy ones.
+	// StrategyFailover prefers endpoints in declaration order: the first
+	// available one becomes active. It is the default.
 	StrategyFailover Strategy = "failover"
-	// StrategyRandom selects active endpoints in a shuffled order.
+	// StrategyRandom picks a uniformly random available endpoint.
 	StrategyRandom Strategy = "random"
-	// StrategyWeight orders endpoints sampled without replacement in proportion
-	// to weight; Weight <= 0 counts as 1.
+	// StrategyWeight picks an available endpoint with probability proportional to
+	// weight; Weight <= 0 counts as 1.
 	StrategyWeight Strategy = "weighted"
-	// StrategySticky pins a stream of calls to a stable endpoint by session id
-	// (see WithSessionID). It is non-default; without a session id it falls back
-	// to the configured sticky-fallback strategy.
-	StrategySticky Strategy = "sticky"
-	// StrategyCost orders endpoints by ascending static cost (EndpointCost).
+	// StrategyCost prefers the endpoint with the lowest static cost (EndpointCost).
 	StrategyCost Strategy = "cost"
-	// StrategyLatency orders endpoints by ascending injected latency.
+	// StrategyLatency prefers the endpoint with the lowest injected latency.
 	StrategyLatency Strategy = "latency"
 )
 
-// selectEndpoints returns the ordered list of endpoint indices to try. It first
-// narrows the capability-filtered set to the health-available endpoints, then
-// orders them according to the configured strategy.
-func (r *Router) selectEndpoints(ctx context.Context, call Call, capable []int) []int {
+// selectEndpoints returns the strategy's ordering over the endpoints that may
+// serve this call: capability-filtered, then narrowed to the health-available.
+// It is the selection a router performs when it needs a new active endpoint,
+// exposed separately so the ordering can be reasoned about on its own.
+func (r *Router) selectEndpoints(call Call, capable []int) []int {
 	now := r.nowFunc()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	available := make([]int, 0, len(capable))
 
 	for _, idx := range capable {
-		if r.health[idx].available(now, r.coolingInterval) {
+		if r.health[idx].available(now, r.recoverTime) {
 			available = append(available, idx)
 		}
 	}
 
-	return r.orderByStrategy(ctx, call, r.strategy, available)
+	return r.orderByStrategy(call, available)
 }
 
-// orderByStrategy orders an already-available candidate slice per the given
+// orderByStrategy orders an already-available candidate slice per the router's
 // strategy. The input slice is in declaration order and is not mutated.
-func (r *Router) orderByStrategy(ctx context.Context, call Call, s Strategy, available []int) []int {
-	switch s {
+//
+// The caller must hold r.mu: the random and weighted orderings draw from the
+// router's rng, and every caller reaches this while deciding the active
+// endpoint, which is protected by the same lock.
+func (r *Router) orderByStrategy(call Call, available []int) []int {
+	switch r.strategy {
 	case StrategyRandom:
 		return r.orderRandom(available)
 	case StrategyWeight:
 		return r.orderWeighted(available)
-	case StrategySticky:
-		return r.selectSticky(ctx, call, available)
 	case StrategyCost:
-		return r.sortByCost(append([]int(nil), available...), call)
+		return r.sortByCost(slices.Clone(available), call)
 	case StrategyLatency:
-		return r.sortByLatency(append([]int(nil), available...))
+		return r.sortByLatency(slices.Clone(available))
 	default: // StrategyFailover and any unknown value.
-		return append([]int(nil), available...)
+		return slices.Clone(available)
 	}
 }
 
-// orderRandom returns a shuffled copy of the available indices.
+// orderRandom returns a shuffled copy of the available indices. The caller holds
+// r.mu, which is what protects the rng.
 func (r *Router) orderRandom(available []int) []int {
-	result := append([]int(nil), available...)
+	result := slices.Clone(available)
 
-	r.mu.Lock()
 	r.rng.Shuffle(len(result), func(i, j int) {
 		result[i], result[j] = result[j], result[i]
 	})
-	r.mu.Unlock()
 
 	return result
 }
 
 // orderWeighted orders the available indices by sampling without replacement in
-// proportion to weight; Weight <= 0 counts as 1.
+// proportion to weight; Weight <= 0 counts as 1. The caller holds r.mu.
 func (r *Router) orderWeighted(available []int) []int {
 	type candidate struct {
 		idx    int
@@ -114,9 +122,6 @@ func (r *Router) orderWeighted(available []int) []int {
 	}
 
 	result := make([]int, 0, len(candidates))
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	for len(candidates) > 0 {
 		total := 0

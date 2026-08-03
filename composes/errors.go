@@ -23,12 +23,21 @@ import (
 	"strings"
 )
 
-// ErrNoActiveModels reports that every endpoint is currently unavailable —
-// cooling or errored — and none is due for a recovery probe.
+// ErrNoActiveModels reports that a dispatch found nothing to try: every
+// endpoint that could have served it was dead and none had recovered yet.
 //
 // The aggregate failure of a dispatch that did try endpoints is a *MultiError,
 // not this sentinel.
 var ErrNoActiveModels = errors.New("aimodel/composes: no active models available")
+
+// ErrCallInProgress reports that the router is already serving a call. A pool
+// belongs to one conversation and serves it one call at a time, so a second
+// concurrent call is a usage error rather than something to queue: it is
+// rejected immediately, without touching any endpoint or any health state.
+//
+// A caller that genuinely needs concurrent requests builds one pool per
+// concurrent worker; pools are cheap and each keeps its own active endpoint.
+var ErrCallInProgress = errors.New("aimodel/composes: a call is already in progress on this pool")
 
 // ErrCapabilityNotSatisfied reports that no endpoint declares the labels a call
 // required. It is returned before any attempt is made. Match with errors.Is;
@@ -73,8 +82,11 @@ func (e *EndpointError) Error() string {
 
 func (e *EndpointError) Unwrap() error { return e.Err }
 
-// MultiError aggregates every endpoint failure from one dispatch, in attempt
-// order. Endpoints serving the same model are distinguished by alias (via
+// MultiError aggregates the endpoint failures of one dispatch, one entry per
+// endpoint in the order they were tried. An endpoint that was retried
+// contributes the error it finally failed with, not one entry per retry, so the
+// aggregate reads as "these backends were tried and this is how each ended".
+// Endpoints serving the same model are distinguished by alias (via
 // EndpointError). It implements Go 1.20+ multi-error unwrapping so errors.Is/As
 // match any underlying endpoint error.
 type MultiError struct {

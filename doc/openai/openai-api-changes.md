@@ -7,7 +7,6 @@ This file records **how aimodel's OpenAI wrapper tracks the official OpenAI APIs
 - **Official protocols**: Chat Completions (`POST /chat/completions`) and, since 2026-08-01, Responses (`POST /v1/responses`) — neither carries a standalone version number, both are keyed by the endpoint
 - **Official docs**: https://platform.openai.com/docs/api-reference/chat · https://platform.openai.com/docs/api-reference/responses
 - **Implementation notes**: [openai-chat-api.md](./openai-chat-api.md) · [openai-response-api.md](./openai-response-api.md)
-- **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
 **Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 
@@ -23,7 +22,7 @@ Newest first.
 
 **Wrapper change**
 
-- **The canonical layer is gone** (v0.7.0). `provider/openai` is now reached directly: `openai.NewClient(apiKey, ...)` with `ChatCompletions` / `ChatCompletionsStream` and `Responses` / `ResponsesStream`. The registered provider (`Name`, `New`), the canonical translation (`toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk`) and the canonical SSE decoder are deleted, along with the root `Responder` capability, which only forwarded to the native client. Migration table: [MIGRATION.md](../../MIGRATION.md); reasoning: [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md).
+- **The canonical layer is gone** (v0.7.0). `provider/openai` is now reached directly: `openai.NewClient(apiKey, ...)` with `ChatCompletions` / `ChatCompletionsStream` and `Responses` / `ResponsesStream`. The registered provider (`Name`, `New`), the canonical translation (`toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk`) and the canonical SSE decoder are deleted, along with the root `Responder` capability, which only forwarded to the native client. Reasoning: [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md).
 - **`ChatCompletionRequest.ExtraBody`**: a controlled channel for the private top-level parameters OpenAI-*compatible* backends add (`enable_thinking`, `chat_template_kwargs`, …). Additive only — a key colliding with a modelled field, an empty key, or a value that is not valid JSON fails at marshal time, before any network I/O. Decoding fills it with every unmodelled key, so a request body round-trips losslessly. The modelled key set is derived from the struct tags and cannot drift.
 - **`ChatCompletionStream` accumulates while the caller reads**: `Response()` returns the assembled completion (text, reasoning content, refusals and tool-call arguments concatenated in arrival order; identity fields last-non-empty-wins; choices grown by index) and `Usage()` the token accounting. This replaces the canonical `Message.AppendDelta`.
 - **`WithTimeout(d)`**: bounds a whole call. It copies the client configured so far, so the caller's `*http.Client` is never mutated and a transport from an earlier `WithHTTPClient` survives.

@@ -5,11 +5,11 @@
 
 Go clients for AI model APIs — one complete, independent client per protocol. Zero external dependencies.
 
-This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
+This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements. The single exception is the multi-backend `composes` layer, which retries an endpoint before judging it dead ([ADR 0009](./doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md)); the provider clients issue exactly one HTTP request per call.
 
 There is no unified client and no shared schema. You pick a protocol by importing its package, and that package expresses its official API completely rather than the part another vendor happens to share. Architecture: [doc/architecture.md](./doc/architecture.md).
 
-> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.7.0. [MIGRATION.md](./MIGRATION.md) maps every removed symbol to its native counterpart; [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
+> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.7.0; every removed symbol has a native counterpart on `provider/openai` or `provider/anthropic`. [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
 
 ## Documentation
 
@@ -22,9 +22,6 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 | OpenAI Responses API | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) |
 | Anthropic Messages API | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 | Multi-backend composition | [doc/design/compose.md](./doc/design/compose.md) |
-| Migrating off the canonical API | [MIGRATION.md](./MIGRATION.md) |
-
-Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
 | Protocol | Official docs | Package |
 |---|---|---|
@@ -238,7 +235,7 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
 
 ### Multi-backend composition
 
-Dispatch across several backends with failover, six selection strategies, health tracking and recovery probes. `composes` is the protocol-neutral routing core; a wrapper package binds it to one protocol's wire types:
+Dispatch across several backends: a pool serves its calls from one active endpoint, retries it in place when it fails, and moves to another only once it is judged dead. `composes` is the protocol-neutral routing core; a wrapper package binds it to one protocol's wire types:
 
 ```go
 import (
@@ -254,6 +251,8 @@ cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEn
 response, err := cc.ChatCompletions(ctx, request)          // Chat Completions
 answer, err := cc.Responses(ctx, responsesRequest)         // Responses — same pool, same health
 ```
+
+A pool belongs to one conversation and serves it one call at a time: a concurrent second call is rejected with `composes.ErrCallInProgress` rather than queued, so parallel work means one pool per conversation.
 
 Anthropic backends use `composes/anthropics` the same way, with `Messages` / `MessagesStream`. The two pools are separate: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover.
 

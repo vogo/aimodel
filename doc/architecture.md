@@ -10,7 +10,6 @@ This document covers the **cross-cutting architecture**: what the SDK is for, wh
 | OpenAI Responses: wire types, typed SSE events, hosted tools | [openai/openai-response-api.md](./openai/openai-response-api.md) |
 | Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) |
 | Multi-backend dispatch and health tracking | [design/compose.md](./design/compose.md) |
-| Migrating off the removed canonical API | [../MIGRATION.md](../MIGRATION.md) |
 
 The decisions behind this architecture are recorded in the [ADR index](./adr.md); [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md) is the one that shapes everything below.
 
@@ -24,7 +23,7 @@ aimodel is a **thin API wrapper**. Its responsibilities are strictly limited to 
 2. **Connection management** — HTTP client, timeouts, auth headers, SSE reading;
 3. **Response decoding** — decode that protocol's responses and stream events, losslessly.
 
-It **deliberately excludes** retry, rate limiting, request validation, caching / persistence, and logging / metrics. Those belong to the caller or a framework above: putting them in the SDK introduces implicit behavior and costs the caller cannot control.
+It **deliberately excludes** rate limiting, request validation, caching / persistence, and logging / metrics. Those belong to the caller or a framework above: putting them in the SDK introduces implicit behavior and costs the caller cannot control. Retry is excluded from the provider clients on the same grounds — one call, one HTTP request — with one bounded exception: `composes` retries an endpoint before judging it dead, because deciding that a backend is unusable is the whole job of that layer ([ADR 0009](./adr/0009-stateful-active-endpoint-with-in-call-retry.md)).
 
 Consequences that follow directly:
 
@@ -48,7 +47,7 @@ There is no unified client and no shared request/response model. A caller picks 
 
 Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
 
-This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md); the migration is in [MIGRATION.md](../MIGRATION.md).
+This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0007](./adr/0007-provider-native-as-the-only-public-interface.md).
 
 ### 2.1 What the three principles mean here
 
@@ -79,7 +78,7 @@ Applied consequences:
   }
   ```
 
-- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — strategies, health, probes, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0008](./adr/0008-shared-routing-core-across-protocol-wrappers.md))
+- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — the active endpoint, strategies, retries, health, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0008](./adr/0008-shared-routing-core-across-protocol-wrappers.md))
 
 ### 2.3 Guards
 
@@ -147,7 +146,7 @@ Before the stream ends both accessors return a live snapshot, in which a tool ca
 
 ## 4. `composes` and its wrappers
 
-Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the six selection strategies, the three-state health machine (429 cooling, exponential-backoff recovery probes), alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
+Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the pool's single active endpoint, the five selection strategies that choose it, in-call exponential retries, the `available`/`dead` health machine on a fixed recovery timer, alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
 
 | Package | Pool | Methods |
 |---|---|---|
@@ -163,7 +162,7 @@ Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing
 | Root package `aimodel` | Package clause and the module's architectural guard tests. Exports nothing |
 | `provider/openai/` | Chat Completions and Responses: client and options (`native.go`, `responses.go`), wire types (`wire.go`, `responses_wire.go`), typed stream events (`responses_events.go`), stream accumulation (`accumulate.go`), model and discriminator constants (`model.go`, `responses_const.go`) |
 | `provider/anthropic/` | Messages: client and options (`native.go`), wire types (`wire.go`), stream accumulation and usage merging (`accumulate.go`), model and discriminator constants (`model.go`, `const.go`) |
-| `composes/` | The neutral routing core: dispatch strategies (`strategy.go`), health tracking (`health.go`), the router and candidate loop (`router.go`), endpoint metadata and capability filtering (`endpoint.go`), sticky sessions (`sticky.go`), aggregate errors (`errors.go`) |
+| `composes/` | The neutral routing core: selection strategies (`strategy.go`), the two-state health machine (`health.go`), the active endpoint, retries and dispatch loop (`router.go`), endpoint metadata and capability filtering (`endpoint.go`), aggregate errors (`errors.go`) |
 | `composes/openais/` | OpenAI-wire wrapper: compose client and both interaction forms (`openais.go`), entries and declarative specs (`endpoint.go`), capability predicates (`capability.go`) |
 | `composes/anthropics/` | Anthropic-wire wrapper, same file layout |
 | `integrations/` | Per-provider examples and offline integration tests |
@@ -174,7 +173,7 @@ When an official API changes, update these in sync:
 
 1. the provider's wire types and client;
 2. the relevant `doc/` document — the protocol's own page, and this one if a package boundary moved;
-3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md) — plus the [CHANGES.md](../CHANGES.md) index.
+3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md).
 
 When a step does not apply, say so explicitly rather than skipping it silently.
 

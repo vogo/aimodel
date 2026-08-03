@@ -167,7 +167,7 @@ func TestManualEntries_DeriveStableAliases(t *testing.T) {
 
 	client := newClientForServer(t, s)
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "gpt-4o", Client: client},
 		{Name: "gpt-4o", Client: client}, // same model: the canary case
 		{Name: "", Client: client},
@@ -190,7 +190,7 @@ func TestNewComposeClient_DuplicateExplicitAlias(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
 
-	_, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	_, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "x", Client: newClientForServer(t, s)},
 		{Name: "m1", Alias: "x", Client: newClientForServer(t, s)},
 	})
@@ -210,7 +210,7 @@ func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
 		{Name: "m1", Client: newClientForServer(t, s)},
 	}
 
-	cc, err := NewComposeClient(composes.StrategyFailover, entries)
+	cc, err := newRoutingClient(t, composes.StrategyFailover, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +232,10 @@ func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
 }
 
 // Cost routing reads the entry's static pricing scaled by the request's own
-// output cap, so a large cap can reorder the pool.
-func TestCostStrategy_OutputCapReordersEndpoints(t *testing.T) {
+// output cap, so the cap of the call that selects the pool's active endpoint
+// decides which one it is. Two pools are needed, not two calls: selection
+// happens once per pool, which is exactly what the active model changed.
+func TestCostStrategy_OutputCapDecidesTheSelection(t *testing.T) {
 	sInputHeavy, sOutputHeavy := newTestServer(t), newTestServer(t)
 	defer sInputHeavy.Close()
 	defer sOutputHeavy.Close()
@@ -249,13 +251,13 @@ func TestCostStrategy_OutputCapReordersEndpoints(t *testing.T) {
 		},
 	}
 
-	cc, err := NewComposeClient(composes.StrategyCost, entries)
+	// One output unit: the output-heavy endpoint is cheapest.
+	small, err := newRoutingClient(t, composes.StrategyCost, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// One output unit: the output-heavy endpoint is cheapest.
-	resp, err := cc.ChatCompletions(context.Background(), testRequest())
+	resp, err := small.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,17 +267,33 @@ func TestCostStrategy_OutputCapReordersEndpoints(t *testing.T) {
 	}
 
 	// A large output cap makes the input-heavy endpoint cheapest instead.
+	large, err := newRoutingClient(t, composes.StrategyCost, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	big := testRequest()
 	cap1000 := 1000
 	big.MaxCompletionTokens = &cap1000
 
-	resp, err = cc.ChatCompletions(context.Background(), big)
+	resp, err = large.ChatCompletions(context.Background(), big)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if resp.Model != "input-heavy" {
 		t.Fatalf("model with a large output cap = %q, want input-heavy", resp.Model)
+	}
+
+	// The pool that selected under a large cap keeps that endpoint even for a
+	// call whose cap would have chosen the other one.
+	resp, err = large.ChatCompletions(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "input-heavy" {
+		t.Fatalf("model = %q, want the incumbent input-heavy", resp.Model)
 	}
 }
 
@@ -284,14 +302,14 @@ func TestNestedComposeClient_ServesBothForms(t *testing.T) {
 	s := newResponsesServer(t, nil)
 	defer s.Close()
 
-	inner, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	inner, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "inner", Alias: "inner", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	outer, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	outer, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "", Alias: "pool", Client: inner},
 	})
 	if err != nil {

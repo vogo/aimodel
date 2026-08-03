@@ -154,6 +154,24 @@ func blocksMessage(t *testing.T, blocks ...anthropic.ContentBlock) anthropic.Mes
 	return anthropic.MessagesMessage{Role: "user", Content: raw}
 }
 
+// newRoutingClient builds a ComposeClient whose retry policy keeps these tests
+// about routing rather than about waiting: the core's default policy retries a
+// failing endpoint three times over 3.5s, which would say nothing extra here. A
+// test that is about retrying or recovering passes its own policy, which wins
+// because caller options are applied last.
+func newRoutingClient(
+	t *testing.T, strategy composes.Strategy, entries []ModelEntry, opts ...composes.Option,
+) (*ComposeClient, error) {
+	t.Helper()
+
+	defaults := []composes.Option{
+		composes.WithRetryPolicy(time.Nanosecond, 0),
+		composes.WithRecoverTime(time.Minute),
+	}
+
+	return NewComposeClient(strategy, entries, append(defaults, opts...)...)
+}
+
 // recordingObserver collects attempt results safely.
 type recordingObserver struct {
 	mu      sync.Mutex
@@ -175,11 +193,11 @@ func (r *recordingObserver) seen() []composes.AttemptResult {
 }
 
 func TestNewComposeClient_Validation(t *testing.T) {
-	if _, err := NewComposeClient(composes.StrategyFailover, nil); err == nil {
+	if _, err := newRoutingClient(t, composes.StrategyFailover, nil); err == nil {
 		t.Fatal("expected an error for empty entries")
 	}
 
-	if _, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{{Name: "m0"}}); err == nil {
+	if _, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{{Name: "m0"}}); err == nil {
 		t.Fatal("expected an error for a nil client")
 	}
 }
@@ -188,7 +206,7 @@ func TestMessages_RoutesAndOverridesTheModel(t *testing.T) {
 	s := newTestServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "claude-opus-5", Alias: "primary", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -216,7 +234,7 @@ func TestMessages_EmptyEntryNameKeepsTheRequestModel(t *testing.T) {
 	s := newTestServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Alias: "a", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -240,7 +258,7 @@ func TestMessages_FailoverAndAttribution(t *testing.T) {
 
 	obs := &recordingObserver{}
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "broken", Client: newClientForServer(t, sFail)},
 		{Name: "m1", Alias: "healthy", Client: newClientForServer(t, sOK)},
 	}, composes.WithAttemptObserver(obs.fn))
@@ -262,8 +280,8 @@ func TestMessages_FailoverAndAttribution(t *testing.T) {
 		t.Fatalf("observations = %+v, want broken/failure then healthy/success", results)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "error" || s.ErrorCount != 1 {
-		t.Fatalf("stats after 5xx = %+v, want error/1", s)
+	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 || s.Active {
+		t.Fatalf("stats after 5xx = %+v, want dead/1 and not active", s)
 	}
 }
 
@@ -272,7 +290,7 @@ func TestMessages_AllFailAggregatesByAlias(t *testing.T) {
 	defer s0.Close()
 	defer s1.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "a", Client: newClientForServer(t, s0)},
 		{Name: "m1", Alias: "b", Client: newClientForServer(t, s1)},
 	})
@@ -306,7 +324,7 @@ func TestMessagesStream_FailsOverOnEstablishment(t *testing.T) {
 
 	obs := &recordingObserver{}
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "broken", Client: newClientForServer(t, sFail)},
 		{Name: "m1", Alias: "streamer", Client: newClientForServer(t, sStream)},
 	}, composes.WithAttemptObserver(obs.fn))
@@ -336,9 +354,13 @@ func TestMessagesStream_FailsOverOnEstablishment(t *testing.T) {
 	}
 }
 
-// Health recovery end to end: a 5xx errors the endpoint, the elapsed backoff
-// prepends it as a probe, and a successful probe returns it to active.
-func TestHealthRecovery_ProbeReturnsEndpointToActive(t *testing.T) {
+// Recovery end to end: a dead endpoint rejoins the candidate pool once the
+// recover time elapses, without taking the pool back from its replacement.
+func TestRecovery_DeadEndpointRejoinsWithoutDisplacingTheActive(t *testing.T) {
+	// Short enough to elapse between calls, so the wrapper is exercised end to
+	// end without injecting a clock.
+	const recoverWindow = 20 * time.Millisecond
+
 	var hits atomic.Int64
 
 	sFlaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -361,10 +383,10 @@ func TestHealthRecovery_ProbeReturnsEndpointToActive(t *testing.T) {
 	sOK := newTestServer(t, nil)
 	defer sOK.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Alias: "flaky", Client: newClientForServer(t, sFlaky)},
 		{Name: "m1", Alias: "steady", Client: newClientForServer(t, sOK)},
-	}, composes.WithRecoveryInterval(time.Nanosecond))
+	}, composes.WithRecoverTime(recoverWindow))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,8 +395,84 @@ func TestHealthRecovery_ProbeReturnsEndpointToActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "error" {
-		t.Fatalf("status after 5xx = %q, want error", s.Status)
+	if s := cc.Stats()[0]; s.Status != "dead" || s.Active {
+		t.Fatalf("stats after 5xx = %+v, want dead and not active", s)
+	}
+
+	time.Sleep(2 * recoverWindow)
+
+	if s := cc.Stats()[0]; s.Status != "available" || s.Active {
+		t.Fatalf("stats after the recover window = %+v, want available and not active", s)
+	}
+
+	// The incumbent keeps serving: recovery restores candidacy, not the crown.
+	resp, err := cc.Messages(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "m1" {
+		t.Fatalf("model after recovery = %q, want the incumbent m1", resp.Model)
+	}
+
+	if s := cc.Stats()[1]; !s.Active {
+		t.Fatalf("steady should still be the active endpoint, got %+v", s)
+	}
+}
+
+// A 429 has no cooling window of its own any more: it walks the same retry path
+// as every other retryable failure and then takes the endpoint out.
+func TestRateLimited_RetriesThenDies(t *testing.T) {
+	s429, hits429 := newStatusServer(t, http.StatusTooManyRequests)
+	defer s429.Close()
+
+	sOK := newTestServer(t, nil)
+	defer sOK.Close()
+
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
+		{Name: "m0", Alias: "limited", Client: newClientForServer(t, s429)},
+		{Name: "m1", Alias: "ok", Client: newClientForServer(t, sOK)},
+	}, composes.WithRetryPolicy(time.Millisecond, 2), composes.WithRecoverTime(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three attempts: the first plus two retries.
+	if hits429.Load() != 3 {
+		t.Fatalf("the rate-limited endpoint was hit %d times, want 3", hits429.Load())
+	}
+
+	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 {
+		t.Fatalf("stats after 429 = %+v, want dead/1", s)
+	}
+
+	if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
+		t.Fatal(err)
+	}
+
+	if hits429.Load() != 3 {
+		t.Fatalf("the dead endpoint was contacted again (%d hits)", hits429.Load())
+	}
+}
+
+// 401 is the one failure that skips the retries entirely.
+func TestCredentialFailure_401DiesWithoutRetrying(t *testing.T) {
+	s401, hits401 := newStatusServer(t, http.StatusUnauthorized)
+	defer s401.Close()
+
+	sOK := newTestServer(t, nil)
+	defer sOK.Close()
+
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
+		{Name: "m0", Alias: "expired", Client: newClientForServer(t, s401)},
+		{Name: "m1", Alias: "ok", Client: newClientForServer(t, sOK)},
+	}, composes.WithRetryPolicy(time.Minute, 5), composes.WithRecoverTime(time.Hour))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	resp, err := cc.Messages(context.Background(), testRequest())
@@ -382,44 +480,18 @@ func TestHealthRecovery_ProbeReturnsEndpointToActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if resp.Model != "m0" {
-		t.Fatalf("model after the probe = %q, want m0", resp.Model)
+	if resp.Model != "m1" {
+		t.Fatalf("model = %q, want m1", resp.Model)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "active" || s.ErrorCount != 0 {
-		t.Fatalf("stats after a successful probe = %+v, want active/0", s)
-	}
-}
-
-func TestCooling_429SkippedDuringWindow(t *testing.T) {
-	s429, hits429 := newStatusServer(t, http.StatusTooManyRequests)
-	defer s429.Close()
-
-	sOK := newTestServer(t, nil)
-	defer sOK.Close()
-
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
-		{Name: "m0", Alias: "limited", Client: newClientForServer(t, s429)},
-		{Name: "m1", Alias: "ok", Client: newClientForServer(t, sOK)},
-	}, composes.WithCoolingInterval(time.Minute))
-	if err != nil {
-		t.Fatal(err)
+	// One attempt only — the minute-long retry policy is configured precisely so
+	// a single retry would hang this test rather than pass slowly.
+	if hits401.Load() != 1 {
+		t.Fatalf("attempts on the expired endpoint = %d, want 1", hits401.Load())
 	}
 
-	if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
-		t.Fatal(err)
-	}
-
-	if s := cc.Stats()[0]; s.Status != "cooling" || s.ErrorCount != 0 {
-		t.Fatalf("stats after 429 = %+v, want cooling/0", s)
-	}
-
-	if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
-		t.Fatal(err)
-	}
-
-	if hits429.Load() != 1 {
-		t.Fatalf("the cooled endpoint was hit %d times, want 1", hits429.Load())
+	if s := cc.Stats()[0]; s.Status != "dead" {
+		t.Fatalf("stats after 401 = %+v, want dead", s)
 	}
 }
 
@@ -427,7 +499,7 @@ func TestNoActiveModels_Error(t *testing.T) {
 	s := newFailServer(t)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -447,7 +519,6 @@ func TestEveryStrategy_FailsOverToTheHealthyEndpoint(t *testing.T) {
 		composes.StrategyFailover,
 		composes.StrategyRandom,
 		composes.StrategyWeight,
-		composes.StrategySticky,
 		composes.StrategyCost,
 		composes.StrategyLatency,
 	}
@@ -460,7 +531,7 @@ func TestEveryStrategy_FailsOverToTheHealthyEndpoint(t *testing.T) {
 
 			fast, slow := 10*time.Millisecond, 50*time.Millisecond
 
-			cc, err := NewComposeClient(strategy, []ModelEntry{
+			cc, err := newRoutingClient(t, strategy, []ModelEntry{
 				{
 					Name: "m0", Alias: "broken", Weight: 9, Client: newClientForServer(t, sFail),
 					Cost: &composes.EndpointCost{InputPrice: 1, OutputPrice: 1}, Latency: &fast,
@@ -474,9 +545,7 @@ func TestEveryStrategy_FailsOverToTheHealthyEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx := composes.WithSessionID(context.Background(), "session-1")
-
-			resp, err := cc.Messages(ctx, testRequest())
+			resp, err := cc.Messages(context.Background(), testRequest())
 			if err != nil {
 				t.Fatalf("%s: expected failover to succeed, got %v", strategy, err)
 			}
@@ -488,7 +557,9 @@ func TestEveryStrategy_FailsOverToTheHealthyEndpoint(t *testing.T) {
 	}
 }
 
-func TestSticky_SameSessionKeepsOneEndpoint(t *testing.T) {
+// The pool serves from one active endpoint: successive calls stay on it without
+// the caller carrying any affinity key.
+func TestActiveEndpoint_SuccessiveCallsStayOnOneBackend(t *testing.T) {
 	entries := make([]ModelEntry, 3)
 
 	for i, alias := range []string{"a", "b", "c"} {
@@ -498,12 +569,14 @@ func TestSticky_SameSessionKeepsOneEndpoint(t *testing.T) {
 		entries[i] = ModelEntry{Name: "m" + alias, Alias: alias, Client: newClientForServer(t, s)}
 	}
 
-	cc, err := NewComposeClient(composes.StrategySticky, entries)
+	// Random is the interesting case: with the active model even a randomising
+	// strategy chooses once, when the pool needs an endpoint, not per call.
+	cc, err := newRoutingClient(t, composes.StrategyRandom, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := composes.WithSessionID(context.Background(), "session-xyz")
+	ctx := context.Background()
 
 	first, err := cc.Messages(ctx, testRequest())
 	if err != nil {
@@ -517,7 +590,16 @@ func TestSticky_SameSessionKeepsOneEndpoint(t *testing.T) {
 		}
 
 		if resp.Model != first.Model {
-			t.Fatalf("sticky routing drifted: %q then %q", first.Model, resp.Model)
+			t.Fatalf("the active endpoint drifted: %q then %q", first.Model, resp.Model)
+		}
+	}
+
+	// The entries are named "m<alias>", so the alias is the model name's tail.
+	wantAlias := first.Model[1:]
+
+	for _, stat := range cc.Stats() {
+		if (stat.Alias == wantAlias) != stat.Active {
+			t.Fatalf("Stats disagrees about the active endpoint: %+v (serving %q)", stat, wantAlias)
 		}
 	}
 }
@@ -527,14 +609,14 @@ func TestNestedComposeClients(t *testing.T) {
 	defer sFail.Close()
 	defer sOK.Close()
 
-	inner, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	inner, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "inner", Client: newClientForServer(t, sFail)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	outer, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	outer, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "pool", Client: inner},
 		{Name: "m1", Client: newClientForServer(t, sOK)},
 	})
@@ -552,27 +634,39 @@ func TestNestedComposeClients(t *testing.T) {
 	}
 }
 
-func TestConcurrentRequests(t *testing.T) {
+// A pool serves one conversation: concurrent callers do not queue, they are
+// rejected with composes.ErrCallInProgress and the pool stays usable.
+func TestConcurrentRequests_AreRejectedNotQueued(t *testing.T) {
 	s := newTestServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var wg sync.WaitGroup
+	var (
+		wg       sync.WaitGroup
+		served   atomic.Int64
+		rejected atomic.Int64
+	)
 
 	errCh := make(chan error, 50)
 
 	for range 50 {
 		wg.Go(func() {
-			if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
+			switch _, err := cc.Messages(context.Background(), testRequest()); {
+			case err == nil:
+				served.Add(1)
+			case errors.Is(err, composes.ErrCallInProgress):
+				rejected.Add(1)
+			default:
 				errCh <- err
 			}
 
+			// Stats never queues behind a call, so it answers throughout.
 			_ = cc.Stats()
 		})
 	}
@@ -581,7 +675,20 @@ func TestConcurrentRequests(t *testing.T) {
 	close(errCh)
 
 	for err := range errCh {
-		t.Errorf("concurrent request error: %v", err)
+		t.Errorf("unexpected concurrent request error: %v", err)
+	}
+
+	if served.Load()+rejected.Load() != 50 {
+		t.Fatalf("served %d + rejected %d, want 50 accounted for", served.Load(), rejected.Load())
+	}
+
+	if served.Load() == 0 {
+		t.Fatal("no request was served at all")
+	}
+
+	// The pool is usable again once the storm passes.
+	if _, err := cc.Messages(context.Background(), testRequest()); err != nil {
+		t.Fatalf("pool unusable after concurrent rejection: %v", err)
 	}
 }
 
@@ -589,7 +696,7 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 	s := newTestServer(t, nil)
 	defer s.Close()
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "m0", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
@@ -603,8 +710,8 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "active" {
-		t.Fatalf("status after cancellation = %q, want active", s.Status)
+	if s := cc.Stats()[0]; s.Status != "available" {
+		t.Fatalf("status after cancellation = %q, want available", s.Status)
 	}
 }
 
@@ -670,7 +777,7 @@ func TestManualEntries_DeriveStableAliases(t *testing.T) {
 
 	client := newClientForServer(t, s)
 
-	cc, err := NewComposeClient(composes.StrategyFailover, []ModelEntry{
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
 		{Name: "claude-opus-5", Client: client},
 		{Name: "claude-opus-5", Client: client},
 		{Name: "", Client: client},
@@ -693,7 +800,7 @@ func TestNewComposeClient_DoesNotMutateCallerEntries(t *testing.T) {
 
 	entries := []ModelEntry{{Name: "m0", Client: newClientForServer(t, s)}}
 
-	if _, err := NewComposeClient(composes.StrategyFailover, entries); err != nil {
+	if _, err := newRoutingClient(t, composes.StrategyFailover, entries); err != nil {
 		t.Fatal(err)
 	}
 
