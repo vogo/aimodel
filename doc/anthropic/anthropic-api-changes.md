@@ -1,7 +1,5 @@
 # Anthropic Messages API — Change Log
 
-> Historical record: each entry describes the wrapper as it stood when the change landed. Entries dated before 2026-07-22 predate the public native wire model, so the type names they use are not today's.
-
 This file records **how aimodel's Anthropic wrapper tracks the official Messages API**: what changed upstream, and how the wrapper followed.
 
 - **Official protocol**: Anthropic Messages API (`POST /v1/messages`)

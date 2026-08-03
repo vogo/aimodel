@@ -1,7 +1,5 @@
 # OpenAI API — Change Log
 
-> Historical record: each entry describes the wrapper as it stood when the change landed. Entries dated before 2026-07-22 predate the native wire model, so the type names they use are not today's.
-
 This file records **how aimodel's OpenAI wrapper tracks the official OpenAI APIs**: what changed upstream, and how the wrapper followed.
 
 - **Official protocols**: Chat Completions (`POST /chat/completions`) and, since 2026-08-01, Responses (`POST /v1/responses`) — neither carries a standalone version number, both are keyed by the endpoint
