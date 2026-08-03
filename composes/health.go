@@ -29,20 +29,15 @@ import (
 // module wraps without importing any of them.
 type statusCoder interface{ StatusCode() int }
 
-// endpointState is the health of one endpoint. There are exactly two states:
-//
-//   - available: the endpoint may be selected — as the pool's active endpoint,
-//     as its replacement, or as a temporary pick for a call the active cannot
-//     serve.
-//   - dead: the endpoint exhausted its in-call retries, or answered with a
-//     credential failure. It is not selectable until the recover time elapses,
-//     at which point it becomes available again on the clock alone — there is no
-//     recovery probe and no exponential health backoff.
+// endpointState is the health of one endpoint. Only stateAvailable and
+// stateDead are ever stored; stateProbation is derived from the clock at read
+// time, so the failure that took an endpoint out stays on record throughout.
 type endpointState string
 
 const (
-	stateAvailable endpointState = "available"
-	stateDead      endpointState = "dead"
+	stateAvailable endpointState = StatusAvailable
+	stateDead      endpointState = StatusDead
+	stateProbation endpointState = StatusProbation
 )
 
 // failureOutcome classifies how a failed attempt is handled.
@@ -121,18 +116,33 @@ func (h *endpointHealth) markDead(err error, now time.Time) {
 	h.errorCount++
 }
 
-// available reports whether the endpoint may be selected now. A dead endpoint
-// becomes available again purely on the clock, once recover has elapsed since
-// the failure — recovery restores candidacy, nothing more.
-func (h *endpointHealth) available(now time.Time, recover time.Duration) bool {
+// selectable reports whether the endpoint may be selected now and, when it may,
+// whether that candidacy is provisional. A dead endpoint becomes selectable
+// purely on the clock, once recover has elapsed since the failure, and does so
+// on probation until a call confirms it.
+func (h *endpointHealth) selectable(now time.Time, recover time.Duration) (ok, probation bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	if h.state == stateAvailable {
-		return true
+		return true, false
 	}
 
-	return now.Sub(h.errorTime) >= recover
+	if now.Sub(h.errorTime) < recover {
+		return false, false
+	}
+
+	return true, true
+}
+
+// available reports whether the endpoint may be selected now, ignoring whether
+// that candidacy is provisional. It answers the two questions that do not care:
+// which endpoints enter a strategy ordering, and whether the incumbent is still
+// usable.
+func (h *endpointHealth) available(now time.Time, recover time.Duration) bool {
+	ok, _ := h.selectable(now, recover)
+
+	return ok
 }
 
 // healthSnapshot is a consistent copy of one endpoint's health accounting.

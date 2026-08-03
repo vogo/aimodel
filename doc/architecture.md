@@ -146,7 +146,7 @@ Before the stream ends both accessors return a live snapshot, in which a tool ca
 
 ## 4. `composes` and its wrappers
 
-Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the pool's single active endpoint, the five selection strategies that choose it, in-call exponential retries, the `available`/`dead` health machine on a fixed recovery timer, alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
+Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the pool's single active endpoint, the five selection strategies that choose it, in-call exponential retries, the health machine on a fixed recovery timer (`available` / `dead` stored, `probation` derived for an endpoint the clock restored but nothing has confirmed), alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
 
 | Package | Pool | Methods |
 |---|---|---|

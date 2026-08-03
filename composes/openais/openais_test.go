@@ -393,15 +393,16 @@ func TestRecovery_DeadEndpointRejoinsWithoutDisplacingTheActive(t *testing.T) {
 		t.Fatalf("model = %s, want the failover m1", resp.Model)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 || s.Active {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead || s.ErrorCount != 1 || s.Active {
 		t.Fatalf("stats after 5xx = %+v, want dead/1/not-active", s)
 	}
 
 	time.Sleep(2 * recover)
 
-	// The recovered endpoint is selectable again...
-	if s := cc.Stats()[0]; s.Status != "available" || s.Active {
-		t.Fatalf("stats after the recover window = %+v, want available and not active", s)
+	// The recovered endpoint is selectable again, on probation until a call
+	// confirms it...
+	if s := cc.Stats()[0]; s.Status != composes.StatusProbation || s.Active {
+		t.Fatalf("stats after the recover window = %+v, want probation and not active", s)
 	}
 
 	// ...but the healthy incumbent keeps serving: recovery is not a takeover.
@@ -450,7 +451,7 @@ func TestRateLimited_RetriesThenDies(t *testing.T) {
 		t.Fatalf("the rate-limited endpoint was hit %d times, want 3", hits429.Load())
 	}
 
-	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead || s.ErrorCount != 1 {
 		t.Fatalf("stats after 429 = %+v, want dead/1", s)
 	}
 
@@ -488,7 +489,7 @@ func TestRequestFailure_4xxDiesAfterRetries(t *testing.T) {
 		t.Fatalf("attempts = %d, want 2 (the first plus one retry)", hits400.Load())
 	}
 
-	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 || s.LastError == nil {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead || s.ErrorCount != 1 || s.LastError == nil {
 		t.Fatalf("stats after 4xx = %+v, want dead/1 with the recorded failure", s)
 	}
 }
@@ -524,7 +525,7 @@ func TestCredentialFailure_401DiesWithoutRetrying(t *testing.T) {
 		t.Fatalf("attempts on the expired endpoint = %d, want 1", hits401.Load())
 	}
 
-	if s := cc.Stats()[0]; s.Status != "dead" {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead {
 		t.Fatalf("stats after 401 = %+v, want dead", s)
 	}
 }
@@ -797,7 +798,7 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "available" {
+	if s := cc.Stats()[0]; s.Status != composes.StatusAvailable {
 		t.Fatalf("status after cancellation = %q, want available", s.Status)
 	}
 }
@@ -867,11 +868,11 @@ func TestStats_SharedAcrossInteractionForms(t *testing.T) {
 		byAlias[s.Alias] = s
 	}
 
-	if byAlias["broken"].Status != "dead" || byAlias["broken"].Active {
+	if byAlias["broken"].Status != composes.StatusDead || byAlias["broken"].Active {
 		t.Fatalf("broken stats = %+v, want dead and not active", byAlias["broken"])
 	}
 
-	if byAlias["healthy"].Status != "available" || !byAlias["healthy"].Active ||
+	if byAlias["healthy"].Status != composes.StatusAvailable || !byAlias["healthy"].Active ||
 		byAlias["healthy"].LastError != nil {
 		t.Fatalf("healthy stats = %+v, want available, active, with zeroed error fields", byAlias["healthy"])
 	}

@@ -46,7 +46,9 @@
 // under [StrategyRandom] or [StrategyWeight]. A failing endpoint is retried in
 // place with exponential waits, then marked dead and replaced by walking a
 // strategy ordering frozen for that selection — and a dead endpoint returns to
-// candidacy after the recover time without displacing whoever took its place.
+// candidacy after the recover time without displacing whoever took its place —
+// on probation, attempted once rather than under the retry policy until a call
+// confirms it.
 //
 // A pool also belongs to one conversation and serves it one call at a time: a
 // second call arriving while one is in flight is rejected with

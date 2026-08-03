@@ -50,10 +50,11 @@ const (
 )
 
 // freezeOrdering returns the strategy's full ordering over the endpoints that
-// may serve this call: the capability-filtered indices, narrowed to those that
-// are health-available right now. [Dispatch] calls it the first time a pick
-// cannot reuse the active endpoint, so failover walks one frozen sequence and
-// successful active reuse never advances Random / Weight RNG.
+// may serve this call: the capability-filtered indices, narrowed to those
+// selectable right now — which includes endpoints on probation, whose candidacy
+// a strategy treats no differently from a confirmed one. [Dispatch] calls it the
+// first time a pick cannot reuse the active endpoint, so failover walks one
+// frozen sequence and successful active reuse never advances Random / Weight RNG.
 //
 // The caller must not hold r.mu.
 func (r *Router) freezeOrdering(call Call, capable []int) []int {

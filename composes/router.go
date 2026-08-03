@@ -120,6 +120,8 @@ type Option func(*Router)
 // base × (2^maxRetries − 1) in total — and interruptible: a cancelled context
 // ends the wait and the call immediately. This is the one place in this module
 // where a retry lives; provider packages stay retry-free.
+//
+// The policy does not apply to an endpoint on probation; see [WithRecoverTime].
 func WithRetryPolicy(base time.Duration, maxRetries int) Option {
 	return func(r *Router) {
 		r.retryBase = base
@@ -131,6 +133,12 @@ func WithRetryPolicy(base time.Duration, maxRetries int) Option {
 // elapses the endpoint is a candidate again — that is all: recovery never
 // displaces a healthy active endpoint, so an endpoint coming back causes no
 // switch on its own.
+//
+// It comes back on probation: no probe request is issued, so the clock is no
+// evidence the endpoint works, and the first call routed to it is attempted once
+// rather than under the retry policy. A success promotes it; a failure judges it
+// dead again and restarts the window. [Router.Stats] reports the interim as
+// [StatusProbation].
 //
 // It must be strictly greater than base × 2^maxRetries, so a recovered endpoint
 // is never re-selected inside the same backoff scale it just failed through.
@@ -325,7 +333,8 @@ type Call struct {
 // value. The chain is: capability filter → reuse the active endpoint when it
 // can serve → otherwise freeze the strategy ordering once and walk it → attempt
 // with in-call exponential retries → on exhaustion, mark dead and continue the
-// walk.
+// walk. An endpoint whose recover time has just elapsed is on probation and
+// takes a single attempt instead of a retry round.
 //
 // The strategy runs only when a pick cannot reuse a healthy, capable active
 // endpoint — the same moments that commit or temporarily replace it. Successful
@@ -396,7 +405,7 @@ func Dispatch[T any](
 
 		tried[choice.endpoint] = true
 
-		result, failure, cancelled := runAttempts(ctx, r, call, choice.endpoint, attempt)
+		result, failure, cancelled := runAttempts(ctx, r, call, choice, attempt)
 		if cancelled != nil {
 			return zero, cancelled
 		}
@@ -428,17 +437,25 @@ func Dispatch[T any](
 // context error that ends the call without touching health.
 //
 // Retry k waits retryBase × 2^(k-1) beforehand; a credential failure skips the
-// retries entirely. Every real network attempt is observed, including retries.
+// retries entirely, and so does an endpoint on probation. Every real network
+// attempt is observed, including retries.
 func runAttempts[T any](
 	ctx context.Context,
 	r *Router,
 	call Call,
-	endpoint int,
+	pick endpointPick,
 	attempt func(ctx context.Context, endpoint int) (T, error),
 ) (value T, failure, cancelled error) {
 	var zero T
 
+	endpoint := pick.endpoint
 	alias := r.endpoints[endpoint].Alias
+
+	// An endpoint on probation gets one attempt, not a retry round.
+	maxRetries := r.maxRetries
+	if pick.probation {
+		maxRetries = 0
+	}
 
 	for retry := 0; ; retry++ {
 		if ctx.Err() != nil {
@@ -461,7 +478,7 @@ func runAttempts[T any](
 			return zero, nil, ctx.Err()
 		}
 
-		if classifyFailure(err) == outcomeCredential || retry >= r.maxRetries {
+		if classifyFailure(err) == outcomeCredential || retry >= maxRetries {
 			return zero, err, nil
 		}
 
@@ -471,18 +488,22 @@ func runAttempts[T any](
 	}
 }
 
-// endpointPick is the outcome of one selection: which endpoint to attempt, and
-// whether it is the endpoint currently serving the pool (in which case failing
-// it retires the active at the generation observed here). A pick that is not
-// serving is temporary — made because the active cannot satisfy this call's
-// capabilities — and must never rewrite the pool's active endpoint.
+// endpointPick is the outcome of one selection: which endpoint to attempt,
+// whether its candidacy is provisional, and whether it is the endpoint currently
+// serving the pool (in which case failing it retires the active at the
+// generation observed here). A pick that is not serving is temporary — made
+// because the active cannot satisfy this call's capabilities — and must never
+// rewrite the pool's active endpoint.
 type endpointPick struct {
 	endpoint   int
 	generation uint64
-	serving    bool
+	// probation marks an endpoint that is only selectable because its recover
+	// time elapsed. It gets one attempt rather than a retry round.
+	probation bool
+	serving   bool
 }
 
-// reuseActive returns the pool's active endpoint when it is available, capable
+// reuseActive returns the pool's active endpoint when it is selectable, capable
 // of this call, and not yet tried. It never runs the strategy.
 func (r *Router) reuseActive(capable []int, tried map[int]bool) (endpointPick, bool) {
 	now := r.nowFunc()
@@ -494,11 +515,12 @@ func (r *Router) reuseActive(capable []int, tried map[int]bool) (endpointPick, b
 		return endpointPick{}, false
 	}
 
-	if !r.health[r.active].available(now, r.recoverTime) {
+	usable, probation := r.health[r.active].selectable(now, r.recoverTime)
+	if !usable {
 		return endpointPick{}, false
 	}
 
-	return endpointPick{endpoint: r.active, generation: r.generation, serving: true}, true
+	return endpointPick{endpoint: r.active, generation: r.generation, probation: probation, serving: true}, true
 }
 
 // pickFromOrdering returns the next endpoint from a frozen strategy ordering.
@@ -518,36 +540,41 @@ func (r *Router) pickFromOrdering(ordering []int, tried map[int]bool) (endpointP
 	// has to be routed around it.
 	activeUsable := r.active != noActive && r.health[r.active].available(now, r.recoverTime)
 
-	pick, ok := nextInOrdering(ordering, tried, func(idx int) bool {
-		return r.health[idx].available(now, r.recoverTime)
+	pick, probation, ok := nextInOrdering(ordering, tried, func(idx int) (bool, bool) {
+		return r.health[idx].selectable(now, r.recoverTime)
 	})
 	if !ok {
 		return endpointPick{}, false
 	}
 
 	if activeUsable {
-		return endpointPick{endpoint: pick, generation: r.generation, serving: false}, true
+		return endpointPick{endpoint: pick, generation: r.generation, probation: probation, serving: false}, true
 	}
 
 	r.active = pick
 	r.generation++
 	r.commits++
 
-	return endpointPick{endpoint: pick, generation: r.generation, serving: true}, true
+	return endpointPick{endpoint: pick, generation: r.generation, probation: probation, serving: true}, true
 }
 
 // nextInOrdering returns the first index in ordering that is not yet tried and
-// that available reports as still selectable.
-func nextInOrdering(ordering []int, tried map[int]bool, available func(int) bool) (int, bool) {
-	for _, idx := range ordering {
-		if tried[idx] || !available(idx) {
+// that selectable reports as still selectable, along with whether that
+// candidacy is provisional.
+func nextInOrdering(
+	ordering []int, tried map[int]bool, selectable func(int) (bool, bool),
+) (idx int, probation, ok bool) {
+	for _, candidate := range ordering {
+		if tried[candidate] {
 			continue
 		}
 
-		return idx, true
+		if usable, provisional := selectable(candidate); usable {
+			return candidate, provisional, true
+		}
 	}
 
-	return 0, false
+	return 0, false, false
 }
 
 // acquire claims the router's single call slot, or reports ErrCallInProgress if
@@ -610,8 +637,8 @@ func (r *Router) Aliases() []string {
 // internal state.
 //
 // Status reflects routing behavior, not just the stored state: a dead endpoint
-// whose recover time has elapsed is already selectable again, so it is reported
-// as "available" rather than staying "dead" until something picks it.
+// whose recover time has elapsed reports [StatusProbation] — selectable again,
+// but unconfirmed.
 func (r *Router) Stats() []EndpointStat {
 	now := r.nowFunc()
 
@@ -626,7 +653,7 @@ func (r *Router) Stats() []EndpointStat {
 
 		state := snap.state
 		if state == stateDead && now.Sub(snap.errorTime) >= r.recoverTime {
-			state = stateAvailable
+			state = stateProbation
 		}
 
 		stats[i] = EndpointStat{

@@ -72,11 +72,11 @@ func TestEndpointHealth_DeadUntilRecoverElapses(t *testing.T) {
 	}
 
 	if !h.available(now.Add(recover), recover) {
-		t.Fatal("a dead endpoint should be available at the recover boundary")
+		t.Fatal("a dead endpoint should be selectable at the recover boundary")
 	}
 
 	if !h.available(now.Add(2*recover), recover) {
-		t.Fatal("a dead endpoint should stay available after recover")
+		t.Fatal("a dead endpoint should stay selectable after recover")
 	}
 }
 
@@ -95,6 +95,35 @@ func TestEndpointHealth_RecoveryKeepsTheRecordedFailure(t *testing.T) {
 	snap := h.snapshot()
 	if snap.state != stateDead || snap.lastError == nil || snap.errorCount != 1 {
 		t.Fatalf("snapshot after recovery = %+v; the failure record must survive", snap)
+	}
+}
+
+// Clock recovery restores candidacy provisionally: the endpoint is selectable,
+// and flagged so the attempt that picks it up does not spend a retry round on
+// what the clock cannot prove. Only a success ends that.
+func TestEndpointHealth_ClockRecoveryIsProvisional(t *testing.T) {
+	h := newEndpointHealth()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recover := time.Minute
+
+	if ok, probation := h.selectable(now, recover); !ok || probation {
+		t.Fatalf("a fresh endpoint = (%v, %v), want selectable outright", ok, probation)
+	}
+
+	h.markDead(errors.New("fail"), now)
+
+	if ok, probation := h.selectable(now, recover); ok || probation {
+		t.Fatalf("a dead endpoint = (%v, %v), want unselectable", ok, probation)
+	}
+
+	if ok, probation := h.selectable(now.Add(recover), recover); !ok || !probation {
+		t.Fatalf("a clock-recovered endpoint = (%v, %v), want selectable on probation", ok, probation)
+	}
+
+	h.markSuccess()
+
+	if ok, probation := h.selectable(now.Add(recover), recover); !ok || probation {
+		t.Fatalf("a confirmed endpoint = (%v, %v), want selectable outright", ok, probation)
 	}
 }
 

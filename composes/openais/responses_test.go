@@ -173,7 +173,7 @@ func TestResponses_FailsOverAndAttributesEveryAlias(t *testing.T) {
 	}
 
 	// The failure marked the shared health state, visible to every form.
-	if s := cc.Stats()[0]; s.Status != "dead" {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead {
 		t.Fatalf("broken endpoint status = %q, want dead", s.Status)
 	}
 }
@@ -353,7 +353,7 @@ func TestResponses_HealthIsSharedWithChat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if s := cc.Stats()[0]; s.Status != "dead" {
+	if s := cc.Stats()[0]; s.Status != composes.StatusDead {
 		t.Fatalf("status after the chat 5xx = %q, want dead", s.Status)
 	}
 
