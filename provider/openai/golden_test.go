@@ -29,12 +29,10 @@ import (
 	"testing"
 )
 
-// The baselines under testdata/golden are the exact request bodies the removed
-// canonical entry point produced for tool calls, image content and thinking.
-// Replaying them from the native client is what shows the removal changed the
-// entry point and not the request semantics. A native request is expected to
-// reach a baseline byte for byte; where it cannot, the difference belongs in a
-// comment, not in a relaxed comparison.
+// The baselines under testdata/golden are the exact request bodies this client
+// is expected to put on the wire for tool calls, image content and thinking. A
+// request must reach its baseline byte for byte; where it cannot, the
+// difference belongs in a comment, not in a relaxed comparison.
 
 // captureNativeRequest sends one native request and returns the exact body it
 // put on the wire.
@@ -78,18 +76,18 @@ func assertMatchesGolden(t *testing.T, name string, body []byte) {
 	}
 
 	if !bytes.Equal(want, indented.Bytes()) {
-		t.Errorf("native request differs from the canonical baseline %s\n--- want ---\n%s\n--- got ---\n%s",
+		t.Errorf("native request differs from the golden baseline %s\n--- want ---\n%s\n--- got ---\n%s",
 			path, want, indented.Bytes())
 	}
 }
 
-func TestNativeToolCallMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeToolCallMatchesGoldenBaseline(t *testing.T) {
 	request := &ChatCompletionRequest{
 		Model: ModelGPT4o,
 		Messages: []ChatCompletionMessage{
 			{Role: "user", Content: NewTextContent("What is the weather in SF?")},
 			// An assistant turn that only calls a tool still sends an explicit
-			// empty content, which is what the canonical translation emitted.
+			// empty content.
 			{Role: "assistant", Content: NewTextContent(""), ToolCalls: []ChatCompletionToolCall{{
 				ID: "call_1", Type: "function",
 				Function: ChatCompletionFunctionCall{Name: "get_weather", Arguments: `{"city":"SF"}`},
@@ -116,7 +114,7 @@ func TestNativeToolCallMatchesCanonicalBaseline(t *testing.T) {
 	assertMatchesGolden(t, "tool_call.json", captureNativeRequest(t, request))
 }
 
-func TestNativeImageContentMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeImageContentMatchesGoldenBaseline(t *testing.T) {
 	request := &ChatCompletionRequest{
 		Model: ModelGPT4o,
 		Messages: []ChatCompletionMessage{{Role: "user", Content: NewPartsContent(
@@ -132,7 +130,7 @@ func TestNativeImageContentMatchesCanonicalBaseline(t *testing.T) {
 	assertMatchesGolden(t, "image_content.json", captureNativeRequest(t, request))
 }
 
-func TestNativeThinkingMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeThinkingMatchesGoldenBaseline(t *testing.T) {
 	request := &ChatCompletionRequest{
 		Model:               ModelGPT56,
 		Messages:            []ChatCompletionMessage{{Role: "user", Content: NewTextContent("Solve it step by step.")}},
@@ -145,7 +143,7 @@ func TestNativeThinkingMatchesCanonicalBaseline(t *testing.T) {
 }
 
 // TestNativeToolCallResponseDecodesFully covers the response half of the tool
-// call path: the canonical layer used to flatten this into ais.ToolCall.
+// call path: index, id, type and the function name/arguments pair.
 func TestNativeToolCallResponseDecodesFully(t *testing.T) {
 	const fixture = `{"id":"chat-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]}}],"usage":{"prompt_tokens":50,"completion_tokens":12,"total_tokens":62}}`
 
@@ -169,9 +167,8 @@ func TestNativeToolCallResponseDecodesFully(t *testing.T) {
 	}
 }
 
-// TestNativeStreamUsageFromSharedFixture reads the same SSE bytes the
-// canonical stream is replayed against, so the two entry points are measured
-// on identical input.
+// TestNativeStreamUsageFromSharedFixture reads the shared SSE fixture under
+// testdata/golden, so streaming usage is measured on fixed input.
 func TestNativeStreamUsageFromSharedFixture(t *testing.T) {
 	fixture, err := os.ReadFile(filepath.Join("testdata", "golden", "stream_usage.sse"))
 	if err != nil {
@@ -222,8 +219,8 @@ func TestNativeStreamUsageFromSharedFixture(t *testing.T) {
 }
 
 // TestNativePromptCachingUsageDecodes covers the OpenAI half of prompt
-// caching, which is reported on the response rather than requested: the
-// canonical layer surfaced it as ais.Usage.CacheReadTokens.
+// caching, which is reported on the response rather than requested, through
+// the nested prompt/completion token details.
 func TestNativePromptCachingUsageDecodes(t *testing.T) {
 	const fixture = `{"id":"chat-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":896,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":8}}}`
 
@@ -241,7 +238,7 @@ func TestNativePromptCachingUsageDecodes(t *testing.T) {
 	}
 
 	// The cached count is a subset of the prompt tokens, not an addition to
-	// them — the canonical Usage documented the same relationship.
+	// them.
 	if response.Usage.PromptTokensDetails.CachedTokens > response.Usage.PromptTokens {
 		t.Error("cached tokens must be a subset of prompt tokens")
 	}

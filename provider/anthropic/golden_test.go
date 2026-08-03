@@ -29,8 +29,8 @@ import (
 	"testing"
 )
 
-// The baselines under testdata/golden are the exact request bodies the removed
-// canonical entry point produced for tool calls, image content, thinking and
+// The baselines under testdata/golden are the exact request bodies this client
+// is expected to put on the wire for tool calls, image content, thinking and
 // prompt caching. Replaying them from the native client is what shows the
 // removal changed the entry point and not the request semantics.
 
@@ -76,7 +76,7 @@ func assertMatchesGolden(t *testing.T, name string, body []byte) {
 	}
 
 	if !bytes.Equal(want, indented.Bytes()) {
-		t.Errorf("native request differs from the canonical baseline %s\n--- want ---\n%s\n--- got ---\n%s",
+		t.Errorf("native request differs from the golden baseline %s\n--- want ---\n%s\n--- got ---\n%s",
 			path, want, indented.Bytes())
 	}
 }
@@ -93,11 +93,11 @@ func blocks(t *testing.T, items ...ContentBlock) json.RawMessage {
 	return encoded
 }
 
-func TestNativeToolCallMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeToolCallMatchesGoldenBaseline(t *testing.T) {
 	request := &MessagesRequest{
 		Model: ModelClaudeSonnet5,
-		// The canonical layer defaulted an unset token cap to 4096; the native
-		// request states it, because the API requires max_tokens.
+		// The request states the token cap, because the API requires
+		// max_tokens.
 		MaxTokens: 4096,
 		Messages: []MessagesMessage{
 			{Role: "user", Content: json.RawMessage(`"What is the weather in SF?"`)},
@@ -107,8 +107,7 @@ func TestNativeToolCallMatchesCanonicalBaseline(t *testing.T) {
 				Name:  "get_weather",
 				Input: json.RawMessage(`{"city":"SF"}`),
 			})},
-			// A tool result is a user turn in this protocol, which is the
-			// mapping the canonical role "tool" used to hide.
+			// A tool result is a user turn in this protocol.
 			{Role: "user", Content: blocks(t, ContentBlock{
 				Type:          ContentBlockTypeToolResult,
 				ToolUseID:     "call_1",
@@ -131,7 +130,7 @@ func TestNativeToolCallMatchesCanonicalBaseline(t *testing.T) {
 	assertMatchesGolden(t, "tool_call.json", captureNativeRequest(t, request))
 }
 
-func TestNativeImageContentMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeImageContentMatchesGoldenBaseline(t *testing.T) {
 	request := &MessagesRequest{
 		Model:     ModelClaudeSonnet5,
 		MaxTokens: 512,
@@ -148,7 +147,7 @@ func TestNativeImageContentMatchesCanonicalBaseline(t *testing.T) {
 	assertMatchesGolden(t, "image_content.json", captureNativeRequest(t, request))
 }
 
-func TestNativeThinkingMatchesCanonicalBaseline(t *testing.T) {
+func TestNativeThinkingMatchesGoldenBaseline(t *testing.T) {
 	request := &MessagesRequest{
 		Model:        ModelClaudeSonnet5,
 		MaxTokens:    4096,
@@ -160,7 +159,7 @@ func TestNativeThinkingMatchesCanonicalBaseline(t *testing.T) {
 	assertMatchesGolden(t, "thinking.json", captureNativeRequest(t, request))
 }
 
-func TestNativePromptCachingMatchesCanonicalBaseline(t *testing.T) {
+func TestNativePromptCachingMatchesGoldenBaseline(t *testing.T) {
 	request := &MessagesRequest{
 		Model:     ModelClaudeSonnet5,
 		MaxTokens: 1024,
@@ -184,8 +183,7 @@ func TestNativePromptCachingMatchesCanonicalBaseline(t *testing.T) {
 }
 
 // TestNativeCachingUsageDecodes covers the response half of prompt caching:
-// the per-TTL write breakdown and the read count the canonical layer split
-// between ais.Usage and its extension.
+// the per-TTL write breakdown and the read count.
 func TestNativeCachingUsageDecodes(t *testing.T) {
 	const fixture = `{"id":"msg_1","content":[],"stop_reason":"end_turn","usage":{"input_tokens":12,"output_tokens":30,"cache_creation_input_tokens":1500,"cache_read_input_tokens":900,"cache_creation":{"ephemeral_5m_input_tokens":500,"ephemeral_1h_input_tokens":1000},"server_tool_use":{"web_search_requests":2,"web_fetch_requests":1},"inference_geo":"eu","service_tier":"priority"}}`
 

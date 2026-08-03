@@ -58,9 +58,8 @@ func drainNative(t *testing.T, stream *MessageStream) {
 }
 
 // fullStream carries every block kind the accumulator handles: text, thinking
-// and a tool_use whose input arrives as partial JSON. It is the fixture the
-// removed canonical stream was measured against too, so the numbers below are
-// a like-for-like baseline rather than freshly invented ones.
+// and a tool_use whose input arrives as partial JSON. The numbers below are
+// derived from this fixture and are the accumulator's baseline.
 func fullStream(t *testing.T) string {
 	t.Helper()
 
@@ -121,10 +120,9 @@ func TestMessageStreamAccumulatesEveryBlockKind(t *testing.T) {
 	}
 }
 
-// TestMessageStreamUsageMergesStartAndTerminalEvents pins the merge rule the
-// canonical layer used to apply in a private helper: the terminal event
-// reports only output_tokens and must not blank out what message_start
-// established.
+// TestMessageStreamUsageMergesStartAndTerminalEvents pins the merge rule: the
+// terminal event reports only output_tokens and must not blank out what
+// message_start established.
 func TestMessageStreamUsageMergesStartAndTerminalEvents(t *testing.T) {
 	stream, err := nativeStreamServer(t, fullStream(t)).
 		MessagesStream(context.Background(), &MessagesRequest{Model: "claude-sonnet-5", MaxTokens: 64})

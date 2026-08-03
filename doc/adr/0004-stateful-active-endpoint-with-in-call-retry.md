@@ -1,32 +1,31 @@
-# ADR 0009: A pool has one active endpoint, serves one conversation at a time, and retries in place before replacing it
+# ADR 0004: A pool has one active endpoint, serves one conversation at a time, and retries in place before replacing it
 
 - Status: Accepted
 - Date: 2026-08-03
 
 ## Context
 
-Up to v0.8.x, `composes.Dispatch` was stateless. Every call re-ran the whole chain — capability filter,
-strategy ordering, recovery probes — and produced a fresh ordered candidate list; "failover" existed only
-*inside* one call. The `Router` held no notion of which endpoint was currently in use, because there was none.
+Composing several backends can be read two ways: as a load balancer that picks a backend per request,
+or as a pool that serves one conversation from one backend and moves only when that backend fails.
 
-That is a load balancer, and it is not what composing several backends was for. The observable consequences:
+A stateless dispatcher implements the first reading — it re-runs the capability filter and the strategy
+on every call, produces a fresh ordered candidate list, and holds no notion of which endpoint is
+currently in use, because there is none. That is not what composing several backends is for here, and
+it costs three things:
 
-- `StrategyRandom` and `StrategyWeight` could route consecutive calls to different backends, so no run of
-  calls had a stable owner. Anything a caller wants to keep on one backend — a warm cache, a rate-limit
-  budget, a billing attribution, a conversation's continuity — had no way to express it.
-- `StrategyFailover` looked like it stuck to one endpoint, but only because it always preferred the first
-  declared one. A recovery probe for that endpoint was *prepended*, so a briefly failing preferred endpoint
-  reclaimed traffic from a healthy one at every backoff boundary.
-- `StrategySticky` addressed a different problem than it appeared to: its anchor was `FNV(sessionID + full
-  alias set)`, a hash-derived *preference* per session, not a memory of what actually served the last call. It
-  needed a session id threaded through the context, and it duplicated the "stay put" intent with a second,
-  conflicting source of stickiness.
-- The three-state health model spent its complexity in the wrong place. A 429 got a short private cooling
-  window; a 5xx got an exponential probe backoff; a non-429 4xx (a malformed request, say) left health
-  untouched *and* failed over — so one bad request was delivered to every endpoint in the pool in turn,
-  spending quota at each and producing a `MultiError` that blamed the backends for the caller's request.
+- **No run of calls has a stable owner.** Anything a caller wants to keep on one backend — a warm
+  cache, a rate-limit budget, a billing attribution, a conversation's continuity — has no way to be
+  expressed.
+- **Preference is not the same as memory.** A dispatcher that re-derives its ordering can only express
+  "stay put" as a preference for one declared endpoint or as a hash of some session key. Neither is a
+  memory of what actually served the last call, so a briefly failing preferred endpoint reclaims
+  traffic from a healthy one as soon as its ordering is recomputed.
+- **A caller's bad request is charged to the backends.** If the health model treats a malformed
+  request as a reason to move on without judging the endpoint, that one request is delivered to every
+  endpoint in the pool in turn, spending quota at each and producing a `MultiError` that blames the
+  backends for it.
 
-Two further facts shaped what could replace it. [ADR 0008](./0008-shared-routing-core-across-protocol-wrappers.md)
+Two further facts shaped what could replace it. [ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md)
 requires that whatever state the core holds be expressible in indices, opaque labels and scalars — no request
 may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK does not do retry.
 
@@ -43,11 +42,10 @@ may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK
    times. Exhausting them is what judges an endpoint dead; the call then continues on the next capable
    available endpoint without failing.
 
-3. **Two health states.** `available` and `dead` replace `active` / `cooling` / `error`. A dead endpoint
-   becomes available again once a fixed `recover_time` has elapsed — on the clock alone, with no probe request
-   and no exponential health backoff.
+3. **Two health states.** An endpoint is either `available` or `dead`. A dead endpoint becomes
+   available again once a fixed `recover_time` has elapsed — on the clock alone, with no probe request.
 
-4. **Failures split two ways, not three.** HTTP 401/403 means the endpoint's credentials do not work:
+4. **Failures split two ways.** HTTP 401/403 means the endpoint's credentials do not work:
    no retry, no wait, dead immediately. Everything else — 429, 400 and other 4xx, 5xx, transport errors —
    is retryable and only kills the endpoint once the retries are spent. Context cancellation is not a failure
    at all: it changes no health and triggers no switch.
@@ -77,12 +75,11 @@ may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK
    The serialisation covers a streaming call **up to establishment**, not for the stream's lifetime — see the
    consequences below.
 
-`StrategySticky`, `WithSessionID`, `WithStickyFallback`, `WithRecoveryInterval`, `WithCoolingInterval` and the
-recovery-probe mechanism are deleted outright in v0.9.0, with no compatibility aliases — the same treatment
-v0.7.0 gave the canonical layer. `WithRetryPolicy` and `WithRecoverTime` replace the two interval options;
-`EndpointStat` gains `Active` and its `Status` values become `available` / `dead`.
+The pool's timing is configured at construction: `WithRetryPolicy` sets the retry base and count,
+`WithRecoverTime` sets how long an endpoint stays dead. `EndpointStat` reports `Active` alongside a
+`Status` of `available` / `dead`.
 
-### Why this does not breach ADR 0008
+### Why this does not breach ADR 0003
 
 The active endpoint is an `int` index and a `uint64` generation. The retry policy is two scalars. Nothing the
 core learned in this change has a protocol shape, and `Call` gained no field. The guard tests still hold: the
@@ -104,7 +101,7 @@ context, and the policy is explicit at construction.
 
 ## Consequences
 
-- **A pool is not a load balancer.** `StrategyRandom` and `StrategyWeight` no longer spread requests; they draw
+- **A pool is not a load balancer.** `StrategyRandom` and `StrategyWeight` do not spread requests; they draw
   once, when the pool needs an endpoint. Callers wanting per-request distribution are not served by this
   package, and that is not a gap to be closed later — it is the trade this ADR makes.
 
@@ -117,25 +114,25 @@ context, and the policy is explicit at construction.
   chosen, not incidental: retrying or rotating through endpoints with bad credentials only multiplies the
   rejections.
 
-- **429 loses its short private cooling window.** A rate-limited endpoint now recovers on the same
-  `recover_time` as any other dead one. Pools that lean on rate-limit rotation should set `recover_time` from
-  their providers' limits.
+- **429 gets no special treatment.** A rate-limited endpoint recovers on the same `recover_time` as any
+  other dead one. Pools that lean on rate-limit rotation should set `recover_time` from their providers'
+  limits.
 
-- **A malformed request no longer tours the pool.** It is still retried against one endpoint before that
-  endpoint is judged, which spends more quota there than v0.8 did — but it is no longer delivered to every
-  backend, and the `MultiError` names the endpoints actually tried, one entry each.
+- **A malformed request does not tour the pool.** It is retried against one endpoint before that endpoint
+  is judged — which spends quota there — but it is never delivered to every backend, and the `MultiError`
+  names the endpoints actually tried, one entry each.
 
-- **`Stats()` gained a second axis.** `Active` and `Status` are independent; consumers reading `Status ==
-  "active"` from v0.8 must be updated, since that string no longer exists.
+- **`Stats()` has two independent axes.** `Active` says which endpoint currently serves the pool;
+  `Status` says whether an endpoint is `available` or `dead`.
 
-- **Concurrency is now a stated guarantee, not an emergent one.** Active-endpoint transitions are
+- **Concurrency is a stated guarantee, not an emergent one.** Active-endpoint transitions are
   generation-conditioned under a single lock, so concurrent failures of one endpoint commit exactly one
   switch. No lock is held across a network attempt or a retry wait. A `-race` test asserts the switch count.
 
 - **A pool is single-occupancy, and says so.** Throughput per pool is one request. Callers wanting parallelism
   build one pool per conversation — cheap, and each keeps its own active endpoint and health, which is what
-  they wanted anyway: sharing a pool would have shared the active endpoint too. Code written against v0.8 that
-  fans out concurrent calls on one client now gets `ErrCallInProgress` instead of parallelism. That is a loud
+  they wanted anyway: sharing a pool would share the active endpoint too. A caller that fans out concurrent
+  calls on one client gets `ErrCallInProgress` instead of parallelism. That is a loud
   failure by design; the alternative, queueing, would have turned it into a silent latency cliff behind a
   retry round of up to `base × (2^maxRetries − 1)`.
 
@@ -144,7 +141,7 @@ context, and the policy is explicit at construction.
   cannot be done within this ADR's other constraints. `*openai.ChatCompletionStream` and
   `*anthropic.MessageStream` expose no completion hook — `Close` merely closes a private body — so the only
   ways to learn that a stream ended are to add a hook to the provider packages (which would make them carry
-  the compose layer's concurrency semantics, against ADR 0007's isolation rule) or to return a wrapper type
+  the compose layer's concurrency semantics, against ADR 0002's isolation rule) or to return a wrapper type
   from `…Stream` (which would break the method sets that let pools nest). Both were rejected.
 
   The gap is narrow in the usage this ADR targets: one conversation reads its stream before issuing the next
@@ -156,4 +153,4 @@ context, and the policy is explicit at construction.
 
 - [Multi-backend composition](../design/compose.md)
 - [ADR 0001 — keep the SDK a thin wrapper](./0001-keep-the-sdk-a-thin-wrapper.md)
-- [ADR 0008 — a shared routing core, protocol wrappers on top](./0008-shared-routing-core-across-protocol-wrappers.md)
+- [ADR 0003 — a shared routing core, protocol wrappers on top](./0003-shared-routing-core-across-protocol-wrappers.md)

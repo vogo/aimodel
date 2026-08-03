@@ -25,7 +25,7 @@ Responses is OpenAI's forward-looking interface: hosted tools, `previous_respons
 | Chat Completions | `ChatCompletions` / `ChatCompletionsStream` | `ChatCompletionRequest` / `ChatCompletionResponse` |
 | Responses | `Responses` / `ResponsesStream` | `ResponsesRequest` / `Response` / `ResponseStreamEvent` |
 
-A new interaction form gets its own methods rather than widening the existing ones — the surviving half of [ADR 0004](../adr/0004-model-capabilities-with-small-interfaces.md), as restated by [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md). Up to v0.5.x this operation was also reachable through a root `Responder` capability on the unified client; that client is gone, and the types it spoke were already these ones, so the migration is to call the same methods on `*openai.Client` directly.
+A new interaction form gets its own methods rather than widening the existing ones — the small-interface rule of [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md) §6. This operation used to be reachable through a root `Responder` capability on a unified client; that client is gone, and the types it spoke were already these ones, so the migration is to call the same methods on `*openai.Client` directly.
 
 Out of scope for this change: the Assistants API (retired), the Realtime API, background-response polling helpers, `GET`/`DELETE`/`cancel` on `/v1/responses`, conversation-resource CRUD, and hosted execution of anything beyond OpenAI's three first-party tools.
 

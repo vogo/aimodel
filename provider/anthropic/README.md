@@ -138,7 +138,7 @@ the event sequence.
 
 - This package imports nothing else from this module, and nothing in this module sits between it
   and `provider/openai`. Duplication between the two is expected — see
-  [ADR 0007](../../doc/adr/0007-provider-native-as-the-only-public-interface.md).
+  [ADR 0002](../../doc/adr/0002-provider-native-as-the-only-public-interface.md).
 - Tool results are `user` turns carrying `tool_result` blocks; batch parallel results into one
   message, because consecutive `user` turns are rejected.
 - Requests are never mutated: the stream flag is set on a copy.

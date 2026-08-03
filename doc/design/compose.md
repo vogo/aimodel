@@ -15,20 +15,15 @@ composes               capability filter → active endpoint → retries → fai
                        active state · health · aliases · observers · Stats() · MultiError
 ```
 
-The line between them is the rule from [ADR 0008](../adr/0008-shared-routing-core-across-protocol-wrappers.md):
+The line between them is the rule from [ADR 0003](../adr/0003-shared-routing-core-across-protocol-wrappers.md):
 
 > **Routing mechanism may be shared across protocols. Protocol semantics may not.**
 
 The core sees endpoint indices, opaque capability labels, ordering metadata and a closure. It never sees
 a request, a response or a stream — not through a field, not through a type parameter. That is why it can
-be shared without becoming the canonical layer [ADR 0007](../adr/0007-provider-native-as-the-only-public-interface.md)
-removed, and why the two wrappers form **separate pools**: one shares *how a candidate is chosen*, never
+be shared without becoming the canonical layer [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md)
+rejects, and why the two wrappers form **separate pools**: one shares *how a candidate is chosen*, never
 *what a request is*. There is no cross-protocol failover, and a pool may not mix endpoints of two protocols.
-
-> **Note for readers of earlier versions.** Up to v0.7.x, `composes` itself carried `ChatCompleter`,
-> `ModelEntry`, `NewComposeClient` and `NewFromEndpoints` over `provider/openai` types. v0.8.0 moved all of
-> them, unchanged in behaviour, to `composes/openais`, and the root package kept only the neutral core — with
-> no compatibility aliases.
 
 ## 1. Choosing a package
 
@@ -180,9 +175,9 @@ retry wait.
 
 ## 4. Selection strategies
 
-A strategy decides **who becomes the active endpoint**, not who serves each call. That is the substantive
-change from earlier versions: `StrategyRandom` and `StrategyWeight` no longer spread load across requests —
-they draw once, when the pool needs an endpoint. A pool is not a load balancer.
+A strategy decides **who becomes the active endpoint**, not who serves each call. `StrategyRandom` and
+`StrategyWeight` therefore do not spread load across requests — they draw once, when the pool needs an
+endpoint. A pool is not a load balancer.
 
 | Strategy | Behavior when selecting |
 |---|---|
@@ -224,11 +219,11 @@ how one state machine classifies failures from *every* protocol without importin
 endpoint is attempted at most `1 + maxRetries` times and the worst-case **synchronous** wait a caller pays is
 `base × (2^maxRetries − 1)`. The waits are interruptible: a cancelled context ends the wait and the call. This
 is the one retry in this module — provider packages remain retry-free ([ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md),
-[ADR 0009](../adr/0009-stateful-active-endpoint-with-in-call-retry.md)).
+[ADR 0004](../adr/0004-stateful-active-endpoint-with-in-call-retry.md)).
 
 **Recovery.** `composes.WithRecoverTime(d)` sets how long a dead endpoint stays out. When `d` has elapsed it is
 a candidate again — that is *all*: recovery never takes the pool back from a healthy incumbent, so an endpoint
-returning causes no switch of its own. There is no recovery probe and no exponential health backoff.
+returning causes no switch of its own. Recovery runs on the clock alone: no probe request is issued.
 
 `NewRouter` (and therefore both wrappers' constructors) rejects `recover_time <= base × 2^maxRetries`, along
 with a non-positive base or recover time and a negative retry count. A recovery window shorter than the backoff
