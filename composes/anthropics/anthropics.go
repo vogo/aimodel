@@ -26,8 +26,7 @@
 // A pool here is Anthropic-wire only, and this package neither imports nor is
 // imported by [github.com/vogo/aimodel/composes/openais]. There is no
 // cross-protocol failover and no shared request model: what the two wrappers
-// share is how a candidate is chosen and how health is recorded. See
-// doc/adr/0008-shared-routing-core-across-protocol-wrappers.md.
+// share is how a candidate is chosen and how health is recorded.
 package anthropics
 
 import (

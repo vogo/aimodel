@@ -84,7 +84,7 @@ type HTTPError struct {
 	//     own status (e.g. 200), since the transport itself succeeded;
 	//   - an error event delivered mid-stream: zero — there is no per-event
 	//     HTTP status. Consumers classifying 4xx/5xx must treat zero as "not an
-	//     HTTP-level rejection" (see ADR 0007).
+	//     HTTP-level rejection".
 	Status              int
 	Code, Type, Message string
 	Body                json.RawMessage

@@ -20,9 +20,7 @@ package openai
 import "encoding/json"
 
 // Native wire model for the OpenAI Responses API (POST /v1/responses), verified
-// against the official reference on 2026-08-01. See
-// doc/openai/openai-response-api.md for the dated inventory and the official
-// links behind every type below.
+// against the official reference on 2026-08-01.
 //
 // These types are OpenAI-only, like every type in this package: a protocol is
 // expressed where it is served.

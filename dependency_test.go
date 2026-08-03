@@ -30,9 +30,9 @@ import (
 	"github.com/vogo/aimodel/provider/openai"
 )
 
-// These tests enforce ADR 0007 in CI rather than by convention, because the
-// failure mode it guards against — a shared semantic layer growing back one
-// helper at a time — is gradual and reads as reasonable at every step.
+// These tests enforce provider isolation in CI rather than by convention,
+// because the failure mode they guard against — a shared semantic layer growing
+// back one helper at a time — is gradual and reads as reasonable at every step.
 
 // statusCoder is the interface a consumer declares locally to read a status
 // code off any provider's transport error. Declaring it here, rather than
@@ -125,13 +125,12 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	}
 }
 
-// TestComposesCoreImportsNoProvider verifies the routing core is what ADR 0008
-// declares it to be: protocol-neutral machinery, not a wire-format tool.
+// TestComposesCoreImportsNoProvider verifies the routing core is what it claims
+// to be: protocol-neutral machinery, not a wire-format tool.
 //
-// This is stricter than the rule ADR 0007 left in place ("composes depends on
-// provider/openai and on no other provider"). Once the core serves more than
-// one protocol, importing any single provider would make one wire format
-// privileged — and importing two would be a canonical layer with extra steps.
+// Once the core serves more than one protocol, importing any single provider
+// would make one wire format privileged — and importing two would be a
+// canonical layer with extra steps.
 func TestComposesCoreImportsNoProvider(t *testing.T) {
 	imports := packageImports(t, "composes")
 
@@ -257,7 +256,7 @@ func TestComposesCoreExportsNoProviderType(t *testing.T) {
 // TestRootPackageExportsNothing verifies the root package stays empty. It has
 // no unified client, no shared schema and no provider imports: a caller reaches
 // a protocol by importing its own package, which is what makes the two
-// protocols independent (ADR 0007).
+// protocols independent.
 func TestRootPackageExportsNothing(t *testing.T) {
 	imports := packageImports(t, ".")
 
@@ -325,7 +324,7 @@ func exportedDeclName(decl ast.Decl) (string, bool) {
 // that is not a loophole in this check: the core is downstream of both, imports
 // neither, and carries no type either provider names. The rule this test
 // enforces is about what a provider depends on, which is what a canonical layer
-// would have to change (ADR 0008).
+// would have to change.
 func TestNoSharedSemanticPackage(t *testing.T) {
 	openaiImports := packageImports(t, "provider/openai")
 	anthropicImports := packageImports(t, "provider/anthropic")
@@ -344,11 +343,10 @@ var protocolSemanticWords = []string{
 	"message", "content", "tool", "usage", "completion", "chat", "prompt", "token", "choice",
 }
 
-// neutralPackages are the packages this module declares vendor-neutral.
-// composes joined them in v0.8.0: ADR 0008 splits the OpenAI-wire surface out
-// into composes/openais, leaving a routing core that may not name a protocol
-// concept. The wrappers are deliberately absent — naming their own protocol is
-// their whole job.
+// neutralPackages are the packages this module declares vendor-neutral. composes
+// is one of them: its OpenAI-wire surface lives in composes/openais, leaving a
+// routing core that may not name a protocol concept. The wrappers are
+// deliberately absent — naming their own protocol is their whole job.
 var neutralPackages = []string{".", "composes"}
 
 // TestNeutralPackagesDeclareNoProtocolSemantics checks declared identifiers

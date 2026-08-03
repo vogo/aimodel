@@ -51,7 +51,7 @@ const noActive = -1
 // one attempt against one endpoint.
 //
 // That boundary is the whole point: routing *mechanism* is shared, protocol
-// *semantics* are not. See doc/adr/0008-shared-routing-core-across-protocol-wrappers.md.
+// *semantics* are not.
 //
 // # The active endpoint
 //
@@ -66,7 +66,6 @@ const noActive = -1
 // call arriving while one is in flight is rejected with [ErrCallInProgress]
 // rather than queued: concurrency here is a usage error, not a load to smooth
 // out. A caller that needs parallel requests builds one pool per worker.
-// See doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 type Router struct {
 	endpoints        []Endpoint
 	health           []*endpointHealth
@@ -117,7 +116,7 @@ type Option func(*Router)
 // The waits are synchronous — they block the caller's request for up to
 // base × (2^maxRetries − 1) in total — and interruptible: a cancelled context
 // ends the wait and the call immediately. This is the one place in this module
-// where a retry lives; provider packages stay retry-free (ADR 0001, ADR 0009).
+// where a retry lives; provider packages stay retry-free.
 func WithRetryPolicy(base time.Duration, maxRetries int) Option {
 	return func(r *Router) {
 		r.retryBase = base

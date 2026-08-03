@@ -31,8 +31,7 @@
 // A pool here is OpenAI-wire only. Composing Anthropic backends is
 // [github.com/vogo/aimodel/composes/anthropics] — a separate pool over the same
 // routing core, never a mixed one: what the two share is how a candidate is
-// chosen and how health is recorded, not what a request looks like. See
-// doc/adr/0008-shared-routing-core-across-protocol-wrappers.md.
+// chosen and how health is recorded, not what a request looks like.
 package openais
 
 import (

@@ -5,11 +5,9 @@
 
 Go clients for AI model APIs — one complete, independent client per protocol. Zero external dependencies.
 
-This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements. The single exception is the multi-backend `composes` layer, which retries an endpoint before judging it dead ([ADR 0009](./doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md)); the provider clients issue exactly one HTTP request per call.
+This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements. The single exception is the multi-backend `composes` layer, which retries an endpoint before judging it dead.
 
 There is no unified client and no shared schema. You pick a protocol by importing its package, and that package expresses its official API completely rather than the part another vendor happens to share. Architecture: [doc/architecture.md](./doc/architecture.md).
-
-> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.7.0; every removed symbol has a native counterpart on `provider/openai` or `provider/anthropic`. [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
 
 ## Documentation
 
@@ -255,5 +253,3 @@ answer, err := cc.Responses(ctx, responsesRequest)         // Responses — same
 A pool belongs to one conversation and serves it one call at a time: a concurrent second call is rejected with `composes.ErrCallInProgress` rather than queued, so parallel work means one pool per conversation.
 
 Anthropic backends use `composes/anthropics` the same way, with `Messages` / `MessagesStream`. The two pools are separate: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover.
-
-A `ComposeClient` is itself a backend, so pools nest. Details: [doc/design/compose.md](./doc/design/compose.md); the reasoning for the split: [ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md).

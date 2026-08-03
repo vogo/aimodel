@@ -121,7 +121,7 @@ const (
 const ResponseEventError = "error"
 
 // responseStreamEventTypes lists every event documented for the 2026-08-01
-// baseline, in the grouping used by doc/openai/openai-response-api.md.
+// baseline, grouped by lifecycle stage.
 var responseStreamEventTypes = []string{
 	ResponseEventCreated,
 	ResponseEventInProgress,

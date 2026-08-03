@@ -27,12 +27,9 @@
 //     [github.com/vogo/aimodel/composes/anthropics] binding it to their wire
 //     types.
 //
-// Up to v0.5.x this package held a unified client over a vendor-neutral
-// request/response model. v0.7.0 removed it: the two protocols are expressed
-// completely and independently instead of through a shared schema that could
-// only carry what both had in common. See
-// doc/adr/0007-provider-native-as-the-only-public-interface.md for the
-// reasoning.
+// This package holds no unified client and no vendor-neutral request/response
+// model: the two protocols are expressed completely and independently, rather
+// than through a shared schema that could only carry what both had in common.
 //
 // The package clause survives so the module's architectural guard tests have a
 // home; it declares no API of its own.

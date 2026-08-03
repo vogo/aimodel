@@ -51,8 +51,7 @@
 // A pool also belongs to one conversation and serves it one call at a time: a
 // second call arriving while one is in flight is rejected with
 // [ErrCallInProgress] rather than queued. Parallel work means one pool per
-// conversation. See
-// doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
+// conversation.
 //
 // # The boundary
 //
@@ -65,7 +64,5 @@
 // The consequence is that pools do not mix: an OpenAI pool and an Anthropic
 // pool are separate routers with separate health, and there is no
 // cross-protocol failover. Sharing the state machine is what this design
-// permits; sharing a request is what it forbids. See
-// doc/adr/0008-shared-routing-core-across-protocol-wrappers.md and
-// doc/design/compose.md.
+// permits; sharing a request is what it forbids.
 package composes
