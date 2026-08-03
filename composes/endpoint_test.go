@@ -27,7 +27,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 func specForServer(s *httptest.Server, alias, model string) EndpointSpec {
@@ -63,7 +63,7 @@ func TestNewFromEndpoints_Success(t *testing.T) {
 	}
 
 	// Same provider + model, distinct endpoints — a request must succeed.
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("chat error: %v", err)
 	}
@@ -104,39 +104,20 @@ func TestNewFromEndpoints_DuplicateAlias(t *testing.T) {
 	}
 }
 
-func TestNewFromEndpoints_UnknownProvider(t *testing.T) {
-	s := newTestServer(t)
-	defer s.Close()
-
-	_, err := NewFromEndpoints(StrategyFailover, []EndpointSpec{
-		{Provider: "does-not-exist", BaseURL: s.URL, APIKey: "k", Model: "m", Alias: "a"},
-	})
-	if err == nil {
-		t.Fatal("expected error for unknown provider")
-	}
-
-	// The error must be locatable: names the alias and position.
-	if !strings.Contains(err.Error(), `alias "a"`) || !strings.Contains(err.Error(), "endpoint 0") {
-		t.Fatalf("error not locatable: %v", err)
-	}
-
-	if !strings.Contains(err.Error(), "does-not-exist") {
-		t.Fatalf("error should retain root unknown-provider semantics: %v", err)
-	}
-}
-
-func TestNewFromEndpoints_EmptyAPIKeyFails(t *testing.T) {
-	// An empty credential must fail construction with a per-endpoint error
-	// rather than silently inheriting a global env fallback.
-	_, err := NewFromEndpoints(StrategyFailover, []EndpointSpec{
+// The native client performs no construction-time validation, so an empty
+// credential does not fail NewFromEndpoints — it surfaces at request time.
+// This records that behavior; there is also no global env fallback, so the
+// endpoint uses exactly the key it was given.
+func TestNewFromEndpoints_EmptyAPIKeyConstructs(t *testing.T) {
+	cc, err := NewFromEndpoints(StrategyFailover, []EndpointSpec{
 		{BaseURL: "http://localhost:1", APIKey: "", Model: "m", Alias: "nokey"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "API key") {
-		t.Fatalf("expected per-endpoint API-key error, got %v", err)
+	if err != nil {
+		t.Fatalf("native construction does not validate credentials: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), `alias "nokey"`) {
-		t.Fatalf("error should name the endpoint alias: %v", err)
+	if len(cc.entries) != 1 || cc.entries[0].Alias != "nokey" {
+		t.Fatalf("endpoint not built: %+v", cc.entries)
 	}
 }
 
@@ -147,10 +128,10 @@ func TestNewFromEndpoints_CredentialReachesEndpoint(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ais.ChatResponse{
+		_ = json.NewEncoder(w).Encode(openai.ChatCompletionResponse{
 			ID:      "id",
 			Model:   "m",
-			Choices: []ais.Choice{{Message: ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")}}},
+			Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("ok")}}},
 		})
 	}))
 	defer s.Close()
@@ -162,7 +143,7 @@ func TestNewFromEndpoints_CredentialReachesEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +167,7 @@ func TestEndpointError_Attribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 
 	var me *MultiError
 	if !errors.As(err, &me) {
@@ -202,7 +183,7 @@ func TestEndpointError_Attribution(t *testing.T) {
 	}
 
 	// The underlying APIError is reachable through the endpoint error.
-	var apiErr *ais.APIError
+	var apiErr *openai.HTTPError
 	if !errors.As(me.Errors[0], &apiErr) {
 		t.Fatal("expected to unwrap APIError from EndpointError")
 	}
@@ -234,7 +215,7 @@ func TestAttemptObserver_NonStreamingSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +245,7 @@ func TestAttemptObserver_FailoverAttributesBoth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -294,7 +275,7 @@ func TestAttemptObserver_StreamEstablished(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stream, err := cc.ChatCompletionStream(context.Background(), testRequest())
+	stream, err := cc.ChatCompletionsStream(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +308,7 @@ func TestAttemptObserver_StreamEstablishFail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stream, err := cc.ChatCompletionStream(context.Background(), testRequest())
+	stream, err := cc.ChatCompletionsStream(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +351,7 @@ func TestWeightFailover_Combo(t *testing.T) {
 	cc.rng = newRand(1)
 	cc.mu.Unlock()
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("expected failover success, got %v", err)
 	}
@@ -380,7 +361,7 @@ func TestWeightFailover_Combo(t *testing.T) {
 	}
 
 	// The heavy endpoint is now errored; subsequent calls go straight to m1.
-	resp, err = cc.ChatCompletion(context.Background(), testRequest())
+	resp, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +387,7 @@ func TestManualEntry_BackwardCompatible(t *testing.T) {
 		t.Fatalf("derived alias = %q, want m0", cc.entries[0].Alias)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -464,7 +445,7 @@ func TestContextCancellation_ObserverStillAttributes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before dispatch
 
-	_, err = cc.ChatCompletion(ctx, testRequest())
+	_, err = cc.ChatCompletions(ctx, testRequest())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}

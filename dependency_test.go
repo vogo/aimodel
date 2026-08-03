@@ -18,12 +18,33 @@
 package aimodel_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/provider/openai"
+)
+
+// These tests enforce ADR 0007 in CI rather than by convention, because the
+// failure mode it guards against — a shared semantic layer growing back one
+// helper at a time — is gradual and reads as reasonable at every step.
+
+// statusCoder is the interface a consumer declares locally to read a status
+// code off any provider's transport error. Declaring it here, rather than
+// importing an error type, is the pattern itself.
+type statusCoder interface{ StatusCode() int }
+
+// Guard: both providers' HTTP errors satisfy the structural error contract.
+// A compile-time assertion is the whole test — if either stops implementing
+// it, this file no longer builds.
+var (
+	_ statusCoder = (*openai.HTTPError)(nil)
+	_ statusCoder = (*anthropic.HTTPError)(nil)
 )
 
 // packageImports parses the non-test .go files in a package directory (relative
@@ -104,49 +125,191 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	}
 }
 
-// TestComposesDependsOnlyOnCapability verifies composes depends on the root
-// capability surface plus the canonical api package, never on the registry or
-// any vendor provider.
-func TestComposesDependsOnlyOnCapability(t *testing.T) {
+// TestComposesDependsOnOpenAIOnly verifies composes is what ADR 0007 declares
+// it to be: a tool for the OpenAI-compatible wire format, not a vendor-neutral
+// package.
+//
+// The earlier rule — composes may import no provider at all — existed to keep
+// canonical dispatch vendor-neutral. ADR 0007 gives that constraint up
+// deliberately, and replaces it with this narrower one: exactly one provider,
+// and no canonical layer. Dispatching Anthropic backends means an isomorphic
+// loop in that package, never a shared request model here.
+func TestComposesDependsOnOpenAIOnly(t *testing.T) {
 	imports := packageImports(t, "composes")
 
 	for path := range imports {
-		if strings.Contains(path, "/provider/") {
-			t.Errorf("composes must not import a provider subpackage, found %q", path)
-		}
-	}
-
-	if !imports["github.com/vogo/aimodel"] {
-		t.Error("composes should depend on the root capability interface")
-	}
-
-	if !imports["github.com/vogo/aimodel/ais"] {
-		t.Error("composes should take canonical types directly from the ais package")
-	}
-}
-
-// TestRootProviderImportsAreBuiltInsOnly verifies the root package only imports
-// the two built-in provider subpackages (for default registration) and no other
-// vendor package — no third-party vendor translation leaks into the root.
-func TestRootProviderImportsAreBuiltInsOnly(t *testing.T) {
-	imports := packageImports(t, ".")
-
-	allowed := map[string]bool{
-		"github.com/vogo/aimodel/provider/openai":    true,
-		"github.com/vogo/aimodel/provider/anthropic": true,
-	}
-
-	for path := range imports {
-		if strings.Contains(path, "/provider/") && !allowed[path] {
-			t.Errorf("root package imports unexpected provider package %q", path)
+		if strings.Contains(path, "/provider/") && path != "github.com/vogo/aimodel/provider/openai" {
+			t.Errorf("composes must import no provider other than openai, found %q", path)
 		}
 	}
 
 	if !hasProviderImport(imports, "openai") {
-		t.Error("root should import provider/openai (default provider)")
+		t.Error("composes dispatches over the OpenAI wire format and should import provider/openai")
 	}
 
-	if !hasProviderImport(imports, "anthropic") {
-		t.Error("root should import provider/anthropic (built-in registration)")
+	if imports["github.com/vogo/aimodel"] {
+		t.Error("composes must not depend on the root package")
 	}
+
+	if imports["github.com/vogo/aimodel/ais"] {
+		t.Error("composes must not depend on the canonical package")
+	}
+}
+
+// TestRootPackageExportsNothing verifies the root package stays empty. It has
+// no unified client, no shared schema and no provider imports: a caller reaches
+// a protocol by importing its own package, which is what makes the two
+// protocols independent (ADR 0007).
+func TestRootPackageExportsNothing(t *testing.T) {
+	imports := packageImports(t, ".")
+
+	for path := range imports {
+		if strings.HasPrefix(path, "github.com/vogo/aimodel") {
+			t.Errorf("root package must import nothing from this module, found %q", path)
+		}
+	}
+
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir with ImportsOnly is sufficient here.
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		name := fi.Name()
+
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse root package: %v", err)
+	}
+
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				if name, ok := exportedDeclName(decl); ok {
+					t.Errorf("%s declares exported %s; the root package exports nothing", path, name)
+				}
+			}
+		}
+	}
+}
+
+// exportedDeclName reports the name of an exported top-level declaration.
+func exportedDeclName(decl ast.Decl) (string, bool) {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if d.Name.IsExported() {
+			return d.Name.Name, true
+		}
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				if s.Name.IsExported() {
+					return s.Name.Name, true
+				}
+			case *ast.ValueSpec:
+				for _, name := range s.Names {
+					if name.IsExported() {
+						return name.Name, true
+					}
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+// TestNoSharedSemanticPackage verifies the two providers share no package from
+// this module. A type both of them reach for is a canonical layer by another
+// name, whatever it is called.
+func TestNoSharedSemanticPackage(t *testing.T) {
+	openaiImports := packageImports(t, "provider/openai")
+	anthropicImports := packageImports(t, "provider/anthropic")
+
+	for path := range openaiImports {
+		if anthropicImports[path] && strings.HasPrefix(path, "github.com/vogo/aimodel") {
+			t.Errorf("both providers import %q; a package they share is a shared semantic layer", path)
+		}
+	}
+}
+
+// protocolSemanticWords name concepts that belong to a protocol, not to a
+// neutral utility. A package declared vendor-neutral that starts speaking them
+// has stopped being neutral.
+var protocolSemanticWords = []string{
+	"message", "content", "tool", "usage", "completion", "chat", "prompt", "token", "choice",
+}
+
+// neutralPackages are the packages this module declares vendor-neutral.
+// composes is deliberately absent: ADR 0007 states it is an OpenAI-wire tool,
+// and its dependency guard says so explicitly.
+var neutralPackages = []string{"."}
+
+// TestNeutralPackagesDeclareNoProtocolSemantics checks declared identifiers
+// over the AST, so a word inside a comment or a string literal cannot fail the
+// build and a real declaration cannot hide in one.
+func TestNeutralPackagesDeclareNoProtocolSemantics(t *testing.T) {
+	for _, dir := range neutralPackages {
+		for name, pos := range declaredIdentifiers(t, dir) {
+			lower := strings.ToLower(name)
+
+			for _, word := range protocolSemanticWords {
+				if strings.Contains(lower, word) {
+					t.Errorf("%s: %s declares %q, a protocol concept; it belongs in a provider package",
+						dir, pos, name)
+				}
+			}
+		}
+	}
+}
+
+// declaredIdentifiers returns the names a package declares — top-level
+// declarations, struct fields and interface methods — mapped to their position.
+func declaredIdentifiers(t *testing.T, dir string) map[string]string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir is sufficient here; this SDK stays zero-dependency.
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+		name := fi.Name()
+
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", dir, err)
+	}
+
+	names := map[string]string{}
+
+	record := func(ident *ast.Ident) {
+		if ident != nil && ident.Name != "_" {
+			names[ident.Name] = fset.Position(ident.Pos()).String()
+		}
+	}
+
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch n := node.(type) {
+				case *ast.FuncDecl:
+					record(n.Name)
+				case *ast.TypeSpec:
+					record(n.Name)
+				case *ast.ValueSpec:
+					for _, name := range n.Names {
+						record(name)
+					}
+				case *ast.Field:
+					for _, name := range n.Names {
+						record(name)
+					}
+				}
+
+				return true
+			})
+		}
+	}
+
+	return names
 }

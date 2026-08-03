@@ -27,35 +27,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
-func toolsRequest() *ais.ChatRequest {
-	return &ais.ChatRequest{
+func toolsRequest() *openai.ChatCompletionRequest {
+	return &openai.ChatCompletionRequest{
 		Model: "placeholder",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("what is the weather?")},
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewTextContent("what is the weather?")},
 		},
-		Tools: []ais.Tool{
-			{Type: "function", Function: ais.FunctionDefinition{Name: "get_weather"}},
+		Tools: []openai.ChatCompletionTool{
+			{Type: "function", Function: openai.ChatCompletionFunction{Name: "get_weather"}},
 		},
 	}
 }
 
-func visionRequest() *ais.ChatRequest {
-	return &ais.ChatRequest{
+func visionRequest() *openai.ChatCompletionRequest {
+	return &openai.ChatCompletionRequest{
 		Model: "placeholder",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewPartsContent(
-				ais.ContentPart{Type: "text", Text: "describe"},
-				ais.ContentPart{Type: "image_url", ImageURL: &ais.ImageURL{URL: "https://x/y.png"}},
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewPartsContent(
+				openai.ChatCompletionContentPart{Type: "text", Text: "describe"},
+				openai.ChatCompletionContentPart{Type: "image_url", ImageURL: &openai.ImageURL{URL: "https://x/y.png"}},
 			)},
 		},
 	}
 }
 
-func selectReq(c *ComposeClient, req *ais.ChatRequest) []int {
+func selectReq(c *ComposeClient, req *openai.ChatCompletionRequest) []int {
 	return c.selectModels(context.Background(), req, c.capableIndices(req))
 }
 
@@ -72,10 +71,10 @@ func newToolsCapturingServer(t *testing.T, gotTools *atomic.Bool) *httptest.Serv
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ais.ChatResponse{
+		_ = json.NewEncoder(w).Encode(openai.ChatCompletionResponse{
 			ID:      "id",
 			Model:   "m",
-			Choices: []ais.Choice{{Message: ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")}}},
+			Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("ok")}}},
 		})
 	}))
 }
@@ -111,7 +110,7 @@ func TestCapability_AllIncapableErrorBeforeNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), toolsRequest())
+	_, err = cc.ChatCompletions(context.Background(), toolsRequest())
 
 	if !errors.Is(err, ErrCapabilityNotSatisfied) {
 		t.Fatalf("expected ErrCapabilityNotSatisfied, got %v", err)
@@ -149,7 +148,7 @@ func TestCapability_NoDowngradeToolsPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), toolsRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), toolsRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,11 +188,11 @@ type fakeCompleter struct {
 	cap Capability
 }
 
-func (f *fakeCompleter) ChatCompletion(context.Context, *ais.ChatRequest) (*ais.ChatResponse, error) {
-	return &ais.ChatResponse{}, nil
+func (f *fakeCompleter) ChatCompletions(context.Context, *openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error) {
+	return &openai.ChatCompletionResponse{}, nil
 }
 
-func (f *fakeCompleter) ChatCompletionStream(context.Context, *ais.ChatRequest) (*aimodel.Stream, error) {
+func (f *fakeCompleter) ChatCompletionsStream(context.Context, *openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
 	return nil, nil
 }
 
@@ -265,7 +264,7 @@ func TestCostStrategy_FailoverAfterCheapestFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("expected failover to pricey endpoint, got %v", err)
 	}
@@ -344,7 +343,7 @@ func TestCapability_UndeclaredDispatchesToolsRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cc.ChatCompletion(context.Background(), toolsRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), toolsRequest()); err != nil {
 		t.Fatalf("undeclared endpoint must serve a tools request, got %v", err)
 	}
 

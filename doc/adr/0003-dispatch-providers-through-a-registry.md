@@ -23,4 +23,4 @@ Registration is monotonic. Empty names, nil factories, and duplicate names panic
 ## References
 
 - [Architecture §3.4](../architecture.md#34-registry-dispatch-and-the-provider-contract)
-- [`ais/registry.go`](../../ais/registry.go)
+- ``ais/registry.go``

@@ -19,7 +19,10 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
+	"sync"
 )
 
 // ChatCompletionRequest is the native OpenAI POST /chat/completions body.
@@ -60,6 +63,111 @@ type ChatCompletionRequest struct {
 	Verbosity           string                   `json:"verbosity,omitempty"`
 	WebSearchOptions    *WebSearchOptions        `json:"web_search_options,omitempty"`
 	Thinking            *Thinking                `json:"thinking,omitempty"`
+
+	// ExtraBody carries top-level request parameters this package does not
+	// model — the private parameters OpenAI-compatible backends add to the
+	// protocol, such as `enable_thinking` or `chat_template_kwargs`. Entries
+	// are merged into the top level of the request body verbatim.
+	//
+	// It is additive only: a key that collides with a field modelled above is
+	// rejected by MarshalJSON rather than overriding or duplicating it, so a
+	// backend-private parameter can never silently change a documented one.
+	// Decoding a request body fills ExtraBody with every key this package does
+	// not model, which is what makes a request round-trip losslessly.
+	ExtraBody map[string]json.RawMessage `json:"-"`
+}
+
+// modelledRequestFields is the set of top-level JSON keys ChatCompletionRequest
+// models, derived from the struct tags so it cannot drift as fields are added.
+var modelledRequestFields = sync.OnceValue(func() map[string]bool {
+	requestType := reflect.TypeFor[ChatCompletionRequest]()
+	fields := make(map[string]bool, requestType.NumField())
+
+	for field := range requestType.Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			fields[name] = true
+		}
+	}
+
+	return fields
+})
+
+// MarshalJSON encodes the modelled fields and merges ExtraBody into the same
+// object. A key that collides with a modelled field, or a value that is not
+// valid JSON, fails the call — before any network I/O.
+func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
+	// wire drops the method set, so encoding it does not recurse.
+	type wire ChatCompletionRequest
+
+	modelled, err := json.Marshal((*wire)(&r))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(r.ExtraBody) == 0 {
+		return modelled, nil
+	}
+
+	body := map[string]json.RawMessage{}
+	if err = json.Unmarshal(modelled, &body); err != nil {
+		return nil, err
+	}
+
+	fields := modelledRequestFields()
+
+	for key, value := range r.ExtraBody {
+		if key == "" {
+			return nil, fmt.Errorf("openai: extra body key is empty")
+		}
+
+		if fields[key] {
+			return nil, fmt.Errorf("openai: extra body key %q collides with a modelled request field", key)
+		}
+
+		if !json.Valid(value) {
+			return nil, fmt.Errorf("openai: extra body key %q holds invalid JSON", key)
+		}
+
+		body[key] = value
+	}
+
+	return json.Marshal(body)
+}
+
+// UnmarshalJSON decodes the modelled fields and collects every other top-level
+// key into ExtraBody, so an encode → decode → encode round trip preserves the
+// whole body.
+func (r *ChatCompletionRequest) UnmarshalJSON(data []byte) error {
+	type wire ChatCompletionRequest
+
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*r = ChatCompletionRequest(decoded)
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(data, &body); err != nil {
+		return err
+	}
+
+	fields := modelledRequestFields()
+
+	for key, value := range body {
+		if fields[key] {
+			continue
+		}
+
+		if r.ExtraBody == nil {
+			r.ExtraBody = make(map[string]json.RawMessage, len(body))
+		}
+
+		r.ExtraBody[key] = value
+	}
+
+	return nil
 }
 
 type StreamOptions struct {

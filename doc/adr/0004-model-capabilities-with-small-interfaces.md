@@ -23,4 +23,4 @@ The compose layer depends on the smallest root capability it needs rather than o
 ## References
 
 - [Architecture §3.4](../architecture.md#34-registry-dispatch-and-the-provider-contract)
-- [`ais/provider.go`](../../ais/provider.go)
+- ``ais/provider.go``

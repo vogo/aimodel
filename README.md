@@ -3,11 +3,13 @@
 [![Build](https://github.com/vogo/aimodel/actions/workflows/build.yml/badge.svg)](https://github.com/vogo/aimodel/actions/workflows/build.yml)
 [![codecov](https://codecov.io/gh/vogo/aimodel/branch/main/graph/badge.svg)](https://codecov.io/gh/vogo/aimodel)
 
-A Go SDK for AI model APIs with multi-protocol support (OpenAI, Anthropic). Zero external dependencies.
+Go clients for AI model APIs — one complete, independent client per protocol. Zero external dependencies.
 
-This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
+This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements.
 
-The SDK is layered. The **canonical layer** exposes only semantics with verified mappings in at least two providers, so portable code switches backends without changes. It is built on a per-vendor **native layer** whose job is complete fidelity to each official API. The **compose layer** ([`composes`](./composes/)) dispatches across multiple models above both. Architecture details: [doc/architecture.md](./doc/architecture.md).
+There is no unified client and no shared schema. You pick a protocol by importing its package, and that package expresses its official API completely rather than the part another vendor happens to share. Architecture: [doc/architecture.md](./doc/architecture.md).
+
+> **Upgrading from v0.5.x?** The vendor-neutral canonical API (`aimodel.Client`, package `ais`) was removed in v0.7.0. [MIGRATION.md](./MIGRATION.md) maps every removed symbol to its native counterpart; [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) explains why.
 
 ## Documentation
 
@@ -15,20 +17,16 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 
 | Topic | Document |
 |---|---|
-| Architecture, canonical representation, client & dispatch | [doc/architecture.md](./doc/architecture.md) |
-| Request/response types, `Usage` | [doc/design/data-model.md](./doc/design/data-model.md) |
-| Streaming, delta merging, unmodelled blocks | [doc/design/streaming.md](./doc/design/streaming.md) |
-| Tool definitions, `tool_choice`, parallel tool results | [doc/design/tool-use.md](./doc/design/tool-use.md) |
-| Prompt caching | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) |
-| Error model | [doc/design/errors.md](./doc/design/errors.md) |
-| Multi-model composition | [doc/design/compose.md](./doc/design/compose.md) |
-| Anthropic wire mapping | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
-| OpenAI wire mapping | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
+| Architecture, package boundaries, what may be shared | [doc/architecture.md](./doc/architecture.md) |
+| OpenAI Chat Completions | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
 | OpenAI Responses API | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) |
+| Anthropic Messages API | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
+| Multi-backend composition | [doc/design/compose.md](./doc/design/compose.md) |
+| Migrating off the canonical API | [MIGRATION.md](./MIGRATION.md) |
 
 Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
-| Protocol | Official docs | Provider package |
+| Protocol | Official docs | Package |
 |---|---|---|
 | OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [`provider/openai/`](./provider/openai/README.md) |
 | OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [`provider/openai/`](./provider/openai/README.md) |
@@ -36,159 +34,178 @@ Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
 
 ## Usage
 
-```go
-import (
-    "github.com/vogo/aimodel"
-    "github.com/vogo/aimodel/ais"
-)
-```
-
-Set env vars `AI_API_KEY` and `AI_BASE_URL` (or `OPENAI_API_KEY` / `OPENAI_BASE_URL`).
-
-### Chat Completion
+### Chat Completions (OpenAI and OpenAI-compatible)
 
 ```go
-client, _ := aimodel.NewClient()
+import "github.com/vogo/aimodel/provider/openai"
 
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: ais.ModelOpenaiGPT41,
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
+client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
+
+response, err := client.ChatCompletions(ctx, &openai.ChatCompletionRequest{
+    Model: openai.ModelGPT41,
+    Messages: []openai.ChatCompletionMessage{
+        {Role: openai.RoleUser, Content: openai.NewTextContent("Hello!")},
     },
 })
 
-fmt.Println(resp.Choices[0].Message.Content.Text())
+fmt.Println(response.Choices[0].Message.Content.Text())
+```
+
+Point `WithBaseURL` at any compatible backend:
+
+```go
+client := openai.NewClient(apiKey,
+    openai.WithBaseURL("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    openai.WithTimeout(90*time.Second),
+)
 ```
 
 Use `MaxCompletionTokens` rather than the deprecated `MaxTokens` — it is the only token cap reasoning models accept:
 
 ```go
-maxCompletionTokens := 1024
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:               ais.ModelOpenaiO3, // reasoning model
-    MaxCompletionTokens: &maxCompletionTokens,
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
-    },
-})
+request := &openai.ChatCompletionRequest{
+    Model:               openai.ModelO3,
+    MaxCompletionTokens: new(1024),
+    ReasoningEffort:     openai.ReasoningEffortHigh,   // none/minimal/low/medium/high/xhigh
+    Messages:            messages,
+}
 ```
 
-### Reasoning effort
+Backend-private parameters go through `ExtraBody`, which can add top-level fields but never override a modelled one:
 
 ```go
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model:           ais.ModelOpenaiGPT41,
-    ReasoningEffort: aimodel.ReasoningEffortHigh, // none/minimal/low/medium/high/xhigh
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
-    },
-})
+request.ExtraBody = map[string]json.RawMessage{
+    "enable_thinking": json.RawMessage(`true`),
+}
 ```
-
-The value stays a plain `string`. For Anthropic extended thinking, set `Thinking` (`Type` is `enabled` / `disabled` / `adaptive`; `Display: "omitted"` suppresses thinking content). See [doc/design/data-model.md](./doc/design/data-model.md) §1.3.
-
-Provider-only parameters use the provider's native API or an established extension surface. For example, Anthropic prompt-cache breakpoints and automatic caching use helpers:
-
-```go
-import "github.com/vogo/aimodel/provider/anthropic"
-
-anthropic.ExtendRequest(req, &anthropic.RequestExtension{AutoCache: true})
-anthropic.ExtendMessage(&req.Messages[0], &anthropic.MessageExtension{CacheBreakpoint: true})
-```
-
-See [doc/architecture.md](./doc/architecture.md) §2 for the extension-channel contract and [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) for the caching API.
-
-`resp.Usage` normalizes token counts across protocols (cache read/write, reasoning tokens, server-tool counts, inference geography, service tier); see [doc/design/data-model.md](./doc/design/data-model.md) §4.
 
 ### Multimodal input
 
-`Content` is polymorphic — `NewTextContent` for plain text, `NewPartsContent` for a shared multimodal array (`text` / `image_url`).
-
 ```go
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: ais.ModelOpenaiGPT41,
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewPartsContent(
-            aimodel.ContentPart{Type: "text", Text: "Describe this image"},
-            aimodel.ContentPart{Type: "image_url", ImageURL: &aimodel.ImageURL{URL: imageURL}},
-        )},
-    },
-})
+Content: openai.NewPartsContent(
+    openai.ChatCompletionContentPart{Type: openai.ContentPartTypeText, Text: "Describe this image"},
+    openai.ChatCompletionContentPart{Type: openai.ContentPartTypeImageURL,
+        ImageURL: &openai.ImageURL{URL: imageURL, Detail: "high"}},
+)
 ```
 
 ### Streaming
 
 ```go
-stream, _ := client.ChatCompletionStream(context.Background(), &aimodel.ChatRequest{
-    Model: ais.ModelOpenaiGPT41,
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
-    },
-})
-defer stream.Close()
+stream, err := client.ChatCompletionsStream(ctx, request)
+defer func() { _ = stream.Close() }()
 
 for {
     chunk, err := stream.Recv()
     if errors.Is(err, io.EOF) {
         break
     }
+    if err != nil {
+        return err
+    }
     fmt.Print(chunk.Choices[0].Delta.Content.Text())
 }
+
+response := stream.Response()   // assembled message: text, reasoning, tool calls
+usage := stream.Usage()         // set stream_options.include_usage to get this
 ```
 
-Accumulate a full message with `Message.AppendDelta`, and read the final token counts from `stream.Usage()` after the stream ends. See [doc/design/streaming.md](./doc/design/streaming.md).
+The stream accumulates while you read, so you never merge deltas yourself.
 
-### Anthropic Protocol
+### Tools
 
-Select the Anthropic provider by name with `WithProvider(anthropic.Name)`:
+```go
+request.Tools = []openai.ChatCompletionTool{{
+    Type: openai.ToolTypeFunction,
+    Function: openai.ChatCompletionFunction{
+        Name:        "get_weather",
+        Description: "Get the current weather in a city",
+        Parameters:  schema,          // your JSON Schema, passed through as-is
+    },
+}}
+request.ToolChoice = "auto"
+```
+
+### Anthropic Messages
 
 ```go
 import "github.com/vogo/aimodel/provider/anthropic"
 
-client, _ := aimodel.NewClient(
-    aimodel.WithAPIKey("sk-ant-xxx"),
-    aimodel.WithProvider(anthropic.Name),
-)
+client := anthropic.NewClient(os.Getenv("ANTHROPIC_API_KEY"))
 
-resp, _ := client.ChatCompletion(context.Background(), &aimodel.ChatRequest{
-    Model: ais.ModelAnthropicClaudeSonnet5,
-    Messages: []aimodel.Message{
-        {Role: aimodel.RoleUser, Content: aimodel.NewTextContent("Hello!")},
+response, err := client.Messages(ctx, &anthropic.MessagesRequest{
+    Model:     anthropic.ModelClaudeSonnet5,
+    MaxTokens: 1024,
+    Messages: []anthropic.MessagesMessage{
+        {Role: anthropic.RoleUser, Content: json.RawMessage(`"Hello!"`)},
     },
 })
+
+fmt.Println(response.Content[0].Text)
 ```
 
-The same `ChatCompletion` / `ChatCompletionStream` methods work for every provider — the client delegates to the resolved provider while the canonical types remain provider-neutral.
+`MaxTokens` is required by this API. `Content` is `json.RawMessage` because the protocol accepts both a bare string and a content-block array there — pass a quoted string, or a marshalled `[]anthropic.ContentBlock`. Header options are the package's own:
 
-Translation behavior worth knowing about when you switch protocols — system-message positioning, `tool_choice` mapping, parallel tool results, `output_config`, and how unrecognized content blocks are preserved — is documented in [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md).
+```go
+client := anthropic.NewClient(apiKey,
+    anthropic.WithBeta("context-1m-2025-08-07"),
+    anthropic.WithVersion("2023-06-01"),
+    anthropic.WithUserProfileID("user_abc123"),
+)
+```
+
+Streaming works the same way as OpenAI's, over this protocol's events:
+
+```go
+stream, err := client.MessagesStream(ctx, request)
+defer func() { _ = stream.Close() }()
+
+for {
+    event, err := stream.Recv()
+    if errors.Is(err, io.EOF) {
+        break
+    }
+    if err != nil {
+        return err
+    }
+    if event.ContentBlockDelta != nil {
+        fmt.Print(event.ContentBlockDelta.Delta.Text)
+    }
+}
+
+message := stream.Message()   // assembled content blocks
+usage := stream.Usage()       // message_start baseline merged with the terminal counts
+```
+
+Prompt caching is explicit in this protocol — mark where the cacheable prefix ends, or let the server maintain the breakpoint:
+
+```go
+request.CacheControl = &anthropic.CacheControl{
+    Type: anthropic.CacheControlTypeEphemeral,
+    TTL:  anthropic.CacheControlTTL1h,
+}
+```
 
 ### OpenAI Responses API
 
-`POST /v1/responses` is OpenAI's forward-looking interface — hosted tools, response chaining and server-side conversations live there. It is a separate capability (`aimodel.Responder`), not an extension of `ChatCompletion`, and because only OpenAI has this interaction form it uses OpenAI-native types rather than the canonical ones ([ADR 0006](./doc/adr/0006-responses-capability-on-provider-native-types.md)):
+`POST /v1/responses` is OpenAI's forward-looking interface — hosted tools, response chaining and server-side conversations live there. It is a separate method set on the same client:
 
 ```go
-import "github.com/vogo/aimodel/provider/openai"
-
-client, _ := aimodel.NewClient(
-    aimodel.WithAPIKey("sk-xxx"),
-    aimodel.WithBaseURL("https://api.openai.com/v1"),
-)
-
-resp, err := client.Responses(context.Background(), &openai.ResponsesRequest{
+response, err := client.Responses(ctx, &openai.ResponsesRequest{
     Model:        "gpt-5",
     Instructions: "Answer in one sentence.",
     Input:        openai.NewResponseTextInput("What changed in the Responses API?"),
     Tools:        []openai.ResponseTool{{Type: openai.ResponseToolTypeWebSearch}},
 })
 
-fmt.Println(resp.OutputText) // aggregated from the output_text parts
+fmt.Println(response.OutputText) // aggregated from the output_text parts
 ```
 
 Streaming yields one typed event at a time and ends with `io.EOF`:
 
 ```go
-stream, _ := client.ResponsesStream(ctx, req)
-defer stream.Close()
+stream, _ := client.ResponsesStream(ctx, request)
+defer func() { _ = stream.Close() }()
 
 for {
     event, err := stream.Recv()
@@ -204,61 +221,34 @@ for {
 }
 ```
 
-`openai.NewClient(apiKey, ...)` exposes the same two methods for callers who want the native client directly. Calling `Responses` on a client whose provider is not OpenAI returns `*ais.CapabilityError` (matching `ais.ErrCapabilityNotSupported`) without making a request. Full wire reference: [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md).
+Full wire reference: [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md).
 
-### Client Options
+### Errors
 
-```go
-client, _ := aimodel.NewClient(
-    aimodel.WithAPIKey("your-key"),
-    aimodel.WithBaseURL("https://api.example.com/v1"),
-    aimodel.WithProvider(anthropic.Name),
-    aimodel.WithTimeout(30 * time.Second),
-)
-```
-
-**Anthropic header options** travel through the unified `WithProviderOptions` channel as an `anthropic.Options` value (only the Anthropic provider reads it):
+Each package returns its own `*HTTPError`, and both implement the same tiny interface, so status-code handling needs no provider import:
 
 ```go
-import "github.com/vogo/aimodel/provider/anthropic"
+type statusCoder interface{ StatusCode() int }
 
-client, _ := aimodel.NewClient(
-    aimodel.WithAPIKey("sk-ant-xxx"),
-    aimodel.WithProvider(anthropic.Name),
-    aimodel.WithProviderOptions(anthropic.Options{
-        // Opt into beta capabilities via the "anthropic-beta" header.
-        // Empty strings are ignored; values are comma-joined on the wire.
-        Beta: []string{"context-1m-2025-08-07"},
-        // Override the "anthropic-version" header (default "2023-06-01").
-        Version: "2023-06-01",
-        // Associate requests with an end-user profile via
-        // the "anthropic-user-profile-id" header.
-        UserProfileID: "user_abc123",
-    }),
-)
+var sc statusCoder
+if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
+    // back off
+}
 ```
 
-Each field ignores an empty value and omits its header entirely when unset. The full option table is in [doc/architecture.md](./doc/architecture.md) §3.1.
+### Multi-backend composition
 
-### Multi-Model Compose
-
-The `composes` package dispatches requests across multiple backends with failover, random, or weighted strategies:
+`composes` dispatches across several OpenAI-compatible backends with failover, random or weighted strategies, health tracking and recovery probes:
 
 ```go
 import "github.com/vogo/aimodel/composes"
 
-openaiClient, _ := aimodel.NewClient(aimodel.WithAPIKey("sk-openai"), aimodel.WithBaseURL("https://api.openai.com/v1"))
-anthropicClient, _ := aimodel.NewClient(
-    aimodel.WithAPIKey("sk-ant"),
-    aimodel.WithProvider(anthropic.Name),
-)
-
-cc, _ := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
-    {Name: "gpt-4o", Client: openaiClient},
-    {Name: "claude-sonnet", Client: anthropicClient},
+cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
+    {Name: "gpt-4o",       Client: openai.NewClient(openaiKey), Weight: 3},
+    {Name: "qwen3.7-plus", Client: openai.NewClient(qwenKey, openai.WithBaseURL(qwenURL)), Weight: 1},
 })
 
-resp, _ := cc.ChatCompletion(ctx, req)
+response, err := cc.ChatCompletions(ctx, request)
 ```
 
-Health tracking, exponential-backoff recovery probes, and cancellation semantics are documented in [doc/design/compose.md](./doc/design/compose.md).
+A `ComposeClient` is itself a backend, so pools nest. Details: [doc/design/compose.md](./doc/design/compose.md).

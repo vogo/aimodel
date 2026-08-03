@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // newStatusServer returns a server that always replies with the given HTTP
@@ -56,12 +56,12 @@ func TestClassifyHealth(t *testing.T) {
 		err  error
 		want healthOutcome
 	}{
-		{"429 cools", &ais.APIError{StatusCode: 429}, outcomeCooling},
-		{"500 errors", &ais.APIError{StatusCode: 500}, outcomeError},
-		{"503 errors", &ais.APIError{StatusCode: 503}, outcomeError},
-		{"400 request failure", &ais.APIError{StatusCode: 400}, outcomeRequestFailure},
-		{"404 request failure", &ais.APIError{StatusCode: 404}, outcomeRequestFailure},
-		{"status 0 errors", &ais.APIError{StatusCode: 0}, outcomeError},
+		{"429 cools", &openai.HTTPError{Status: 429}, outcomeCooling},
+		{"500 errors", &openai.HTTPError{Status: 500}, outcomeError},
+		{"503 errors", &openai.HTTPError{Status: 503}, outcomeError},
+		{"400 request failure", &openai.HTTPError{Status: 400}, outcomeRequestFailure},
+		{"404 request failure", &openai.HTTPError{Status: 404}, outcomeRequestFailure},
+		{"status 0 errors", &openai.HTTPError{Status: 0}, outcomeError},
 		{"transport errors", errors.New("connection refused"), outcomeError},
 	}
 
@@ -131,7 +131,7 @@ func TestCooling_429SkippedThenRejoin(t *testing.T) {
 	cc.nowFunc = func() time.Time { return now }
 
 	// First request: ep0 hits 429 → cooling; failover to ep1 succeeds.
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCooling_429SkippedThenRejoin(t *testing.T) {
 	assertIntSlice(t, got, []int{1})
 
 	// A request inside the cooling window goes only to ep1.
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +183,7 @@ func TestError_5xxEntersErrorAndBackoff(t *testing.T) {
 
 	cc.nowFunc = func() time.Time { return now }
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,7 +204,7 @@ func TestError_5xxEntersErrorAndBackoff(t *testing.T) {
 	// backoff (1x the recovery interval) so the errored endpoint is probed.
 	cc.nowFunc = func() time.Time { return now.Add(time.Minute + time.Second) }
 
-	if _, err := cc.ChatCompletion(context.Background(), testRequest()); err != nil {
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,7 +225,7 @@ func TestRequestFailure_4xxStaysActive(t *testing.T) {
 	}
 
 	// The request fails and is attributed...
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 
 	var ee *EndpointError
 	if !errors.As(err, &ee) || ee.Alias != "badreq" {
@@ -257,7 +257,7 @@ func TestStats_SnapshotPerAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = cc.ChatCompletion(context.Background(), testRequest())
+	_, _ = cc.ChatCompletions(context.Background(), testRequest())
 
 	stats := cc.Stats()
 	if len(stats) != 2 {
@@ -335,7 +335,7 @@ func TestStats_ConcurrentSafe(t *testing.T) {
 
 	for range 30 {
 		wg.Go(func() {
-			_, _ = cc.ChatCompletion(context.Background(), testRequest())
+			_, _ = cc.ChatCompletions(context.Background(), testRequest())
 			_ = cc.Stats()
 		})
 	}
@@ -359,7 +359,7 @@ func TestStats_ElapsedCoolingReportsActive(t *testing.T) {
 
 	now := time.Now()
 	cc.nowFunc = func() time.Time { return now }
-	cc.health[0].markCooling(&ais.APIError{StatusCode: 429}, now)
+	cc.health[0].markCooling(&openai.HTTPError{Status: 429}, now)
 
 	if got := cc.Stats()[0].Status; got != "cooling" {
 		t.Fatalf("status right after 429 = %q, want cooling", got)
@@ -389,7 +389,7 @@ func TestModelHealth_429OnErroredKeepsBackoff(t *testing.T) {
 
 	// The probe fires after the 4x backoff (errorCount=3 → 2^2) and gets a 429.
 	probeAt := now.Add(4 * time.Minute)
-	h.markCooling(&ais.APIError{StatusCode: 429}, probeAt)
+	h.markCooling(&openai.HTTPError{Status: 429}, probeAt)
 
 	snap := h.snapshot()
 	if snap.state != stateError {

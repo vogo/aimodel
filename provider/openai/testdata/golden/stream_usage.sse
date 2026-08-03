@@ -1,0 +1,8 @@
+data: {"id":"chat-1","object":"chat.completion.chunk","created":7,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"}}]}
+
+data: {"id":"chat-1","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":"stop"}]}
+
+data: {"id":"chat-1","choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":896,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":8}}}
+
+data: [DONE]
+

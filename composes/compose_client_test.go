@@ -25,15 +25,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
-	"github.com/vogo/aimodel/provider/anthropic"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // newTestServer creates an httptest server that returns a valid OpenAI chat response
@@ -49,14 +46,13 @@ func newTestServer(t *testing.T) *httptest.Server {
 			return
 		}
 
-		resp := ais.ChatResponse{
+		resp := openai.ChatCompletionResponse{
 			ID:    "test-id",
 			Model: fmt.Sprintf("%v", req["model"]),
-			Choices: []ais.Choice{
+			Choices: []openai.ChatCompletionChoice{
 				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
-					FinishReason: ais.FinishReasonStop,
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("hello from " + fmt.Sprintf("%v", req["model"]))},
 				},
 			},
 		}
@@ -104,15 +100,15 @@ func newStreamServer(t *testing.T) *httptest.Server {
 			return
 		}
 
-		chunk := ais.StreamChunk{
+		chunk := openai.ChatCompletionChunk{
 			ID:    "chunk-1",
 			Model: modelName,
-			Choices: []ais.StreamChunkChoice{
+			Choices: []openai.ChatCompletionChunkChoice{
 				{
 					Index: 0,
-					Delta: ais.Message{
-						Role:    ais.RoleAssistant,
-						Content: ais.NewTextContent("hello stream"),
+					Delta: openai.ChatCompletionMessage{
+						Role:    "assistant",
+						Content: openai.NewTextContent("hello stream"),
 					},
 				},
 			},
@@ -127,25 +123,17 @@ func newStreamServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func newClientForServer(t *testing.T, server *httptest.Server) *aimodel.Client {
+func newClientForServer(t *testing.T, server *httptest.Server) *openai.Client {
 	t.Helper()
 
-	c, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(server.URL),
-	)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-
-	return c
+	return openai.NewClient("test-key", openai.WithBaseURL(server.URL), openai.WithHTTPClient(server.Client()))
 }
 
-func testRequest() *ais.ChatRequest {
-	return &ais.ChatRequest{
+func testRequest() *openai.ChatCompletionRequest {
+	return &openai.ChatCompletionRequest{
 		Model: "placeholder",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewTextContent("hi")},
 		},
 	}
 }
@@ -166,59 +154,27 @@ func TestNewComposeClient_NilClient(t *testing.T) {
 	}
 }
 
-func TestNewComposeClient_EmptyName_UsesClientDefault(t *testing.T) {
-	var receivedModel string
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		receivedModel = fmt.Sprintf("%v", req["model"])
-
-		w.Header().Set("Content-Type", "application/json")
-
-		resp := ais.ChatResponse{
-			ID:    "test",
-			Model: receivedModel,
-			Choices: []ais.Choice{
-				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
-					FinishReason: ais.FinishReasonStop,
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+// TestEmptyEntryName_KeepsTheRequestModel verifies an entry without a name
+// leaves the request's own model alone. There is no client-level default model
+// to fall back to.
+func TestEmptyEntryName_KeepsTheRequestModel(t *testing.T) {
+	s := newTestServer(t)
 	defer s.Close()
 
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(s.URL),
-		aimodel.WithDefaultModel("my-default-model"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "", Client: client},
+		{Name: "", Client: newClientForServer(t, s)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Use empty model in request so the client default is applied.
-	_, err = cc.ChatCompletion(context.Background(), &ais.ChatRequest{
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
-		},
-	})
+	response, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if receivedModel != "my-default-model" {
-		t.Fatalf("model = %s, want my-default-model", receivedModel)
+	if response.Model != "placeholder" {
+		t.Fatalf("model = %s, want the request's own model", response.Model)
 	}
 }
 
@@ -253,7 +209,7 @@ func TestFailover_FirstModelSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,7 +234,7 @@ func TestFailover_Fallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +259,7 @@ func TestFailover_AllFail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err == nil {
 		t.Fatal("expected error when all models fail")
 	}
@@ -338,7 +294,7 @@ func TestFailover_StreamFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stream, err := cc.ChatCompletionStream(context.Background(), testRequest())
+	stream, err := cc.ChatCompletionsStream(context.Background(), testRequest())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,14 +330,13 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := ais.ChatResponse{
+		resp := openai.ChatCompletionResponse{
 			ID:    "probe-id",
 			Model: "m0",
-			Choices: []ais.Choice{
+			Choices: []openai.ChatCompletionChoice{
 				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
-					FinishReason: ais.FinishReasonStop,
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("recovered")},
 				},
 			},
 		}
@@ -406,7 +361,7 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 	cc.health[0].markError(errors.New("initial failure"), now)
 
 	// Request should use m1 (primary is errored).
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +374,7 @@ func TestFailover_RecoveryProbe(t *testing.T) {
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
 	// Now primary should be probed first and succeed.
-	resp, err = cc.ChatCompletion(context.Background(), testRequest())
+	resp, err = cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,14 +397,13 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := ais.ChatResponse{
+		resp := openai.ChatCompletionResponse{
 			ID:    "probe-id",
 			Model: "m0",
-			Choices: []ais.Choice{
+			Choices: []openai.ChatCompletionChoice{
 				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("recovered")},
-					FinishReason: ais.FinishReasonStop,
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("recovered")},
 				},
 			},
 		}
@@ -476,7 +430,7 @@ func TestRandom_RecoveryProbe(t *testing.T) {
 	// Advance time past recovery interval and probe should fire.
 	cc.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
 
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	resp, err := cc.ChatCompletions(context.Background(), testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,14 +455,13 @@ func TestModelOverride(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		resp := ais.ChatResponse{
+		resp := openai.ChatCompletionResponse{
 			ID:    "test",
 			Model: receivedModel,
-			Choices: []ais.Choice{
+			Choices: []openai.ChatCompletionChoice{
 				{
-					Index:        0,
-					Message:      ais.Message{Role: ais.RoleAssistant, Content: ais.NewTextContent("ok")},
-					FinishReason: ais.FinishReasonStop,
+					Index:   0,
+					Message: openai.ChatCompletionMessage{Role: "assistant", Content: openai.NewTextContent("ok")},
 				},
 			},
 		}
@@ -523,14 +476,14 @@ func TestModelOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := &ais.ChatRequest{
+	req := &openai.ChatCompletionRequest{
 		Model: "original-model",
-		Messages: []ais.Message{
-			{Role: ais.RoleUser, Content: ais.NewTextContent("hi")},
+		Messages: []openai.ChatCompletionMessage{
+			{Role: "user", Content: openai.NewTextContent("hi")},
 		},
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), req)
+	_, err = cc.ChatCompletions(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,67 +498,38 @@ func TestModelOverride(t *testing.T) {
 	}
 }
 
-func TestAnthropicChatCompletion(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that Anthropic headers are set.
-		if r.Header.Get("x-api-key") == "" {
-			http.Error(w, "missing api key", http.StatusUnauthorized)
-			return
-		}
+// TestNestedComposeClients verifies a ComposeClient is itself a backend, so
+// pools can be layered (for example a fast pool that falls back to a slower
+// one).
+func TestNestedComposeClients(t *testing.T) {
+	sFail := newFailServer(t)
+	defer sFail.Close()
 
-		if !strings.Contains(r.URL.Path, "/v1/messages") {
-			http.Error(w, "wrong path", http.StatusNotFound)
-			return
-		}
+	sOK := newTestServer(t)
+	defer sOK.Close()
 
-		w.Header().Set("Content-Type", "application/json")
-
-		resp := map[string]any{
-			"id":    "msg-test",
-			"type":  "message",
-			"role":  "assistant",
-			"model": "claude-test",
-			"content": []map[string]any{
-				{"type": "text", "text": "hello from anthropic"},
-			},
-			"stop_reason": "end_turn",
-			"usage": map[string]any{
-				"input_tokens":  10,
-				"output_tokens": 5,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer s.Close()
-
-	client, err := aimodel.NewClient(
-		aimodel.WithAPIKey("test-key"),
-		aimodel.WithBaseURL(s.URL),
-		aimodel.WithProvider(anthropic.Name),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cc, err := NewComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "claude-test", Client: client},
+	inner, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "inner", Client: newClientForServer(t, sFail)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// ChatCompletion with the Anthropic provider should route via the Anthropic protocol.
-	resp, err := cc.ChatCompletion(context.Background(), testRequest())
+	outer, err := NewComposeClient(StrategyFailover, []ModelEntry{
+		{Name: "pool", Client: inner},
+		{Name: "m1", Client: newClientForServer(t, sOK)},
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 
-	if len(resp.Choices) == 0 {
-		t.Fatal("expected at least one choice")
+	response, err := outer.ChatCompletions(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if resp.Choices[0].Message.Content.Text() != "hello from anthropic" {
-		t.Fatalf("got content = %s", resp.Choices[0].Message.Content.Text())
+	if response.Model != "m1" {
+		t.Fatalf("model = %s, want the outer fallback m1", response.Model)
 	}
 }
 
@@ -626,7 +550,7 @@ func TestConcurrentRequests(t *testing.T) {
 
 	for range 50 {
 		wg.Go(func() {
-			_, err := cc.ChatCompletion(context.Background(), testRequest())
+			_, err := cc.ChatCompletions(context.Background(), testRequest())
 			if err != nil {
 				errCh <- err
 			}
@@ -656,7 +580,7 @@ func TestContextCancellation_DoesNotPoisonHealth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = cc.ChatCompletion(ctx, testRequest())
+	_, err = cc.ChatCompletions(ctx, testRequest())
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -682,7 +606,7 @@ func TestMultiError_UnwrapAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
 
 	var me *MultiError
 	if !errors.As(err, &me) {
@@ -700,7 +624,7 @@ func TestMultiError_UnwrapAll(t *testing.T) {
 	}
 
 	// errors.As should find APIError from any endpoint's error in the chain.
-	var apiErr *ais.APIError
+	var apiErr *openai.HTTPError
 	if !errors.As(err, &apiErr) {
 		t.Fatal("expected errors.As to find APIError in multi-error chain")
 	}
@@ -718,11 +642,11 @@ func TestNoActiveModels_Error(t *testing.T) {
 	}
 
 	// First call fails and marks model as error.
-	_, _ = cc.ChatCompletion(context.Background(), testRequest())
+	_, _ = cc.ChatCompletions(context.Background(), testRequest())
 
 	// Second call should return ErrNoActiveModels since no active models remain.
-	_, err = cc.ChatCompletion(context.Background(), testRequest())
-	if !errors.Is(err, ais.ErrNoActiveModels) {
+	_, err = cc.ChatCompletions(context.Background(), testRequest())
+	if !errors.Is(err, ErrNoActiveModels) {
 		t.Fatalf("expected ErrNoActiveModels, got %v", err)
 	}
 }

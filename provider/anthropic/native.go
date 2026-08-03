@@ -27,11 +27,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxNativeBodySize = 1 << 20
 
-// Client calls Anthropic's Messages API without canonical translation.
+// Client calls Anthropic's Messages API over its own wire types.
 type Client struct {
 	apiKey, baseURL, version, userProfileID string
 	beta                                    []string
@@ -52,6 +53,19 @@ func WithHTTPClient(client *http.Client) ClientOption {
 		panic("aimodel/anthropic: nil HTTP client")
 	}
 	return func(c *Client) { c.httpClient = client }
+}
+
+// WithTimeout bounds the total duration of each call, including reading a
+// streaming body. It copies the HTTP client configured so far and sets its
+// Timeout, so the caller's own *http.Client is never mutated and a transport
+// installed by an earlier WithHTTPClient is preserved. Apply it after
+// WithHTTPClient; the reverse order discards the timeout.
+func WithTimeout(d time.Duration) ClientOption {
+	return func(c *Client) {
+		client := *c.httpClient
+		client.Timeout = d
+		c.httpClient = &client
+	}
 }
 
 // WithVersion overrides the anthropic-version header.
@@ -95,19 +109,30 @@ func NewClient(apiKey string, options ...ClientOption) *Client {
 }
 
 // HTTPError reports a non-2xx Anthropic response and retains its bounded body.
+// A mid-stream `error` event is not surfaced as an HTTPError — it arrives as
+// StreamEvent.Error — so every HTTPError carries a real non-2xx Status.
 type HTTPError struct {
-	StatusCode int
-	Type       string
-	Message    string
-	Body       json.RawMessage
-	Err        error
+	// Status is the HTTP status code. It is named Status rather than
+	// StatusCode so the accessor below can carry that name: consumers match
+	// any provider's transport error with
+	// errors.As(err, &interface{ StatusCode() int }) without importing this
+	// package.
+	Status  int
+	Type    string
+	Message string
+	Body    json.RawMessage
+	Err     error
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("anthropic: HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("anthropic: HTTP %d: %s", e.Status, e.Message)
 }
 
 func (e *HTTPError) Unwrap() error { return e.Err }
+
+// StatusCode returns the HTTP status code, satisfying the
+// interface{ StatusCode() int } a consumer can declare locally.
+func (e *HTTPError) StatusCode() int { return e.Status }
 
 func (c *Client) request(ctx context.Context, input *MessagesRequest, stream bool) (*http.Response, error) {
 	if input == nil {
@@ -149,10 +174,10 @@ func (c *Client) request(ctx context.Context, input *MessagesRequest, stream boo
 func parseNativeError(response *http.Response) error {
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxNativeBodySize))
 	result := &HTTPError{
-		StatusCode: response.StatusCode,
-		Body:       append(json.RawMessage(nil), body...),
-		Message:    string(body),
-		Err:        err,
+		Status:  response.StatusCode,
+		Body:    append(json.RawMessage(nil), body...),
+		Message: string(body),
+		Err:     err,
 	}
 	if err != nil {
 		result.Message = "failed to read error response"
@@ -194,11 +219,18 @@ type StreamEvent struct {
 	Raw               json.RawMessage
 }
 
-// MessageStream reads native events without canonical aggregation.
+// MessageStream reads the native SSE event stream. While the caller reads
+// events, the stream also folds each one into the message it reconstructs, so
+// Message and Usage are available without the caller tracking deltas. A stream
+// has a single reader; Close may be called concurrently with Recv and is
+// idempotent.
 type MessageStream struct {
 	body io.ReadCloser
 	scan *bufio.Scanner
 	once sync.Once
+
+	mu  sync.Mutex // guards acc against concurrent Recv/Message/Usage
+	acc messageAccumulator
 }
 
 // MessagesStream starts a native streaming Messages call.
@@ -227,7 +259,7 @@ func (s *MessageStream) Recv() (*StreamEvent, error) {
 				eventType = ""
 				continue
 			}
-			return decodeNativeEvent(eventType, strings.Join(data, "\n"))
+			return s.decode(eventType, strings.Join(data, "\n"))
 		}
 		if strings.HasPrefix(line, ":") {
 			continue
@@ -245,10 +277,57 @@ func (s *MessageStream) Recv() (*StreamEvent, error) {
 		return nil, fmt.Errorf("anthropic: read stream: %w", err)
 	}
 	if len(data) != 0 {
-		return decodeNativeEvent(eventType, strings.Join(data, "\n"))
+		return s.decode(eventType, strings.Join(data, "\n"))
 	}
 	_ = s.Close()
 	return nil, io.EOF
+}
+
+// decode parses one SSE payload and folds it into the accumulated message.
+func (s *MessageStream) decode(eventType, payload string) (*StreamEvent, error) {
+	event, err := decodeNativeEvent(eventType, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.acc.fold(event)
+	s.mu.Unlock()
+
+	return event, nil
+}
+
+// Message returns the message assembled from the events read so far: content
+// blocks in index order, with text and thinking deltas concatenated and tool
+// inputs reassembled from their partial-JSON fragments. Call it after Recv
+// reports io.EOF for the final result; before that it is a live snapshot, in
+// which a tool block's Input may still be an incomplete JSON fragment. It
+// returns nil when no event carried message content.
+//
+// ResponseContentBlock.Raw holds the block as it first arrived and is not
+// rewritten by later deltas.
+func (s *MessageStream) Message() *MessagesResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.acc.result()
+}
+
+// Usage returns the token accounting of the stream, merging the baseline
+// Anthropic reports on message_start with the terminal counts on
+// message_delta. A later event overwrites only the fields it actually carries,
+// so a terminal event reporting just output_tokens leaves the input, cache,
+// geography, tier and server-tool numbers from the start event intact. It
+// returns nil before the first message_start.
+func (s *MessageStream) Usage() *MessagesUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.acc.started {
+		return nil
+	}
+
+	return &s.acc.response.Usage
 }
 
 func decodeNativeEvent(eventType, payload string) (*StreamEvent, error) {
@@ -265,19 +344,19 @@ func decodeNativeEvent(eventType, payload string) (*StreamEvent, error) {
 	}
 	var target any
 	switch event.Type {
-	case "message_start":
+	case StreamEventTypeMessageStart:
 		event.MessageStart = &MessageStartEvent{}
 		target = event.MessageStart
-	case "content_block_start":
+	case StreamEventTypeContentBlockStart:
 		event.ContentBlockStart = &ContentBlockStartEvent{}
 		target = event.ContentBlockStart
-	case "content_block_delta":
+	case StreamEventTypeContentBlockDelta:
 		event.ContentBlockDelta = &ContentBlockDeltaEvent{}
 		target = event.ContentBlockDelta
-	case "message_delta":
+	case StreamEventTypeMessageDelta:
 		event.MessageDelta = &MessageDeltaEvent{}
 		target = event.MessageDelta
-	case "error":
+	case StreamEventTypeError:
 		event.Error = &MessagesErrorResponse{}
 		target = event.Error
 	default:

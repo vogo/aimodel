@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 func newTestComposeClient(strategy Strategy, entries []ModelEntry) *ComposeClient {
@@ -51,7 +51,7 @@ func newTestComposeClient(strategy Strategy, entries []ModelEntry) *ComposeClien
 // selectAll runs capability filtering + strategy selection for a bare request,
 // mirroring the dispatch path for tests that predate capability routing.
 func selectAll(c *ComposeClient) []int {
-	req := &ais.ChatRequest{}
+	req := &openai.ChatCompletionRequest{}
 	return c.selectModels(context.Background(), req, c.capableIndices(req))
 }
 

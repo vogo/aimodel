@@ -19,7 +19,6 @@ package anthropic
 
 // Anthropic Messages API reference: https://platform.claude.com/docs/en/api/messages
 const (
-	anthropicDefaultBaseURL   = "https://api.anthropic.com"
-	anthropicAPIVersion       = "2023-06-01"
-	anthropicDefaultMaxTokens = 4096
+	anthropicDefaultBaseURL = "https://api.anthropic.com"
+	anthropicAPIVersion     = "2023-06-01"
 )

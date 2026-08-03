@@ -1,0 +1,16 @@
+{
+  "model": "gpt-5.6",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Solve it step by step."
+    }
+  ],
+  "max_completion_tokens": 4096,
+  "reasoning_effort": "high",
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048,
+    "display": "omitted"
+  }
+}

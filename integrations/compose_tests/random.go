@@ -22,40 +22,42 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
-func testRandom(clients []*aimodel.Client) {
+func testRandom(entries []composes.ModelEntry) {
 	fmt.Println("=== Compose Random ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyRandom, []composes.ModelEntry{
-		{Client: clients[0]},
-		{Client: clients[1]},
-		{Client: clients[2]},
-	})
+	cc, err := composes.NewComposeClient(composes.StrategyRandom, entries)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Send 5 requests to show the random distribution.
 	for i := range 5 {
-		resp, err := cc.ChatCompletion(context.Background(), &ais.ChatRequest{
-			Messages: []ais.Message{
-				{Role: ais.RoleUser, Content: ais.NewTextContent("Say hello!")},
-			},
-		})
+		response, err := cc.ChatCompletions(context.Background(), helloRequest())
 		if err != nil {
 			log.Printf("request %d: %v", i+1, err)
+
 			continue
 		}
 
-		if len(resp.Choices) == 0 {
+		if len(response.Choices) == 0 {
 			log.Printf("request %d: no choices", i+1)
+
 			continue
 		}
 
-		fmt.Printf("request %d [%s]: %s\n", i+1, resp.Model, resp.Choices[0].Message.Content.Text())
+		fmt.Printf("request %d [%s]: %s\n", i+1, response.Model, response.Choices[0].Message.Content.Text())
+	}
+}
+
+// helloRequest is the one request body every backend in the pool receives.
+func helloRequest() *openai.ChatCompletionRequest {
+	return &openai.ChatCompletionRequest{
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.RoleUser, Content: openai.NewTextContent("Say hello!")},
+		},
 	}
 }

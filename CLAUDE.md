@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`github.com/vogo/aimodel` — A unified Go SDK for AI model APIs with multi-protocol support (OpenAI-compatible, Anthropic) and composable multi-model dispatching. Zero external dependencies.
+`github.com/vogo/aimodel` — Go clients for AI model APIs. Each supported protocol gets its own
+complete, independent client: OpenAI-compatible (`provider/openai`, covering Chat Completions and
+Responses) and Anthropic Messages (`provider/anthropic`). Zero external dependencies.
 
-This SDK is a **thin API wrapper** — it translates requests, manages connections, and normalizes responses across protocols.
+This SDK is a **thin API wrapper** — it builds requests, manages connections, and decodes responses.
 It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
 
 ## Rules
@@ -14,21 +16,74 @@ It intentionally does **not** include retry, rate limiting, request validation, 
 - delete build binary after test
 - current file only contains core api/model dispatching logic, and core rules, not add any other logic.
 
+## Canonical layer removed (v0.7.0)
+
+The vendor-neutral canonical layer (`ais`, the root `Client`/`Stream`/`Responder`, and both
+providers' translation code) **was removed in v0.7.0**, after being marked `Deprecated:` in v0.6.1
+— see [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) and
+[MIGRATION.md](./MIGRATION.md). Do not reintroduce a shared request/response model, a translation
+layer, or a provider registry; the guard tests fail if one grows back. New work goes into a
+provider package. The principles below are in force for every change.
+
 ## Design Principles
 
 Three principles arbitrate every interface decision. When a new vendor or a new interaction form arrives, judge the change against them in this order.
 
-1. **Universality (通用性)** — the canonical interface is the stable layer. Adding a vendor or a new interaction form must require **zero changes** to existing canonical types and signatures; new capability surfaces are **additive only** (new interfaces / new optional fields), never modifications to existing exported signatures.
-2. **Extensibility (扩展性)** — vendor protocols are isolated from each other and evolve independently. A vendor API change touches only that vendor's subpackage (`provider/anthropic/` / `provider/openai/`), never the core abstraction. Vendor-specific parameters go through the unified extension channel — `ais.Extensions`, a per-provider-namespace map (`json:"-"`) on every extendable canonical node, with strongly-typed values and set/read helpers owned by the provider package (e.g. `anthropic.ExtendRequest` / `anthropic.RequestExtensionOf`); client-level vendor options go through `WithProviderOptions` (e.g. `anthropic.Options`). See [doc/architecture.md](./doc/architecture.md) §2. Vendor concepts never appear in canonical types — enforced by `ais/schema_vendor_test.go` (no vendor-named identifiers in `ais`; the only `json:"-"` fields are the `Extensions` channel itself).
-3. **Customization (定制化)** — each vendor provides a public, native, full-fidelity client and types that pursue complete coverage of the official API and stay continuously synced with it. The canonical translation layer is built **on top of** the native layer, not the other way around.
+1. **Fidelity (协议保真性)** — each provider package expresses its official API completely and
+   losslessly. Nothing is withheld pending another vendor's equivalent, nothing is reshaped to
+   resemble another vendor's spelling, and no field is dropped because it has no counterpart
+   elsewhere. There is no greatest common denominator to respect: the API a package wraps is the
+   whole specification for that package. Unmodelled response shapes are preserved verbatim (raw
+   JSON) rather than discarded.
+2. **Isolation (隔离性)** — provider protocols are isolated from each other and evolve
+   independently. `provider/openai` and `provider/anthropic` import neither each other nor the root
+   package, and a vendor API change touches only that vendor's subpackage. Vendor-specific
+   parameters are ordinary fields of that vendor's types; client configuration is that package's own
+   options (e.g. `anthropic.WithBeta`, `openai.WithBaseURL`). The one controlled escape hatch is
+   `openai.ChatCompletionRequest.ExtraBody`, for private top-level parameters of OpenAI-*compatible*
+   backends — additive only, and a collision with a modelled field is a marshal-time error.
+3. **Customization (定制化)** — a provider owns its whole surface: client, wire types, SSE decoding,
+   usage aggregation, errors and options. Capabilities are narrow method sets on that provider's
+   client (a new interaction form gets a new method set, never a widened existing one). A provider
+   that lacks a capability simply does not have the method — absence is a compile error, not a
+   runtime error value.
 
-**Single-vendor interaction forms**: the attribution test below applies to whole interaction forms too. A form only one vendor has gets its own capability interface on the unified client, speaking that vendor's **native** types, with nothing entering `ais` — today the OpenAI Responses API (`aimodel.Responder`). This is the one documented exception to "the unified client is canonical in, canonical out", recorded in [ADR 0006](./doc/adr/0006-responses-capability-on-provider-native-types.md); do not generalize it into "the root package may use vendor types".
+**Neutrality test** — the rule that decides whether code may live outside a provider package:
 
-**Field-attribution test**: a semantic enters the canonical types only when **≥ 2 vendors** share a mappable common semantic. Similar names or wire shapes alone are **not** consensus, and a field is never promoted to canonical for implementation convenience — nor kept there because "it's the OpenAI shape" when only one vendor implements it (fields that are part of the OpenAI-compatible protocol surface count as multi-vendor via protocol adoption; record the evidence in [doc/architecture.md](./doc/architecture.md) §2). Everything single-vendor lives in that provider's package and rides the `Extensions` channel (request side) or is written into it by the provider's response translation (response side); vendor convenience constants (e.g. Anthropic pass-through finish reasons) are named in the provider package. Canonical is the greatest common denominator; completeness is the native layer's responsibility.
+> An enhancement is legitimate outside a provider package **if and only if** it can be implemented
+> inside a single package without introducing a semantic data type that another provider imports.
+> Anything requiring a shared request/response model, bidirectional field mapping, or a
+> cross-provider decision about which fields to keep **is a canonical layer being rebuilt** — reject
+> it.
 
-**Four-way sync**: when an official API changes, update in order — ① the vendor's native layer → ② the canonical translation → ③ the relevant `doc/` document → ④ the protocol's change log plus the `CHANGES.md` index. When a step does not apply, state so explicitly — never shortcut by writing a vendor-specific change directly into canonical. Details in [doc/architecture.md](./doc/architecture.md) §6.
+Consequences to apply directly:
 
-Step ③ includes the ADRs: if a change contradicts an invariant an accepted ADR states, the ADR is part of the sync, not an afterthought. Accepted ADRs are immutable — add a new ADR that supersedes it and update the [ADR index](./doc/adr.md), rather than rewriting the old decision.
+- **Duplication between the two providers is expected and accepted.** Timeout options, stream
+  aggregation, SSE scanning and error parsing exist twice, on purpose. Do not factor them into a
+  shared package; "removing duplication" is not a sufficient reason to create a cross-provider type.
+- **Nothing is vendor-neutral by default.** Model names, finish/stop reasons, usage shapes and error
+  bodies are protocol facts and belong to the provider package that serves them.
+- **Errors are matched structurally.** There is no shared error type. Both `*HTTPError` types
+  implement `interface { StatusCode() int }`; a consumer declares that interface locally and uses
+  `errors.As`. `composes` does exactly this — it aggregates backend errors without naming any
+  provider's error type, even though it imports that provider for its wire types.
+- **`composes` is an OpenAI-wire tool, not a neutral package.** It dispatches across several
+  OpenAI-compatible backends using `provider/openai` types. Composing Anthropic backends means an
+  isomorphic loop in that package or in the caller's code — never a shared abstraction over both.
+
+Guard tests enforce this in CI rather than leaving it to convention: providers import neither each
+other nor the root package; no public API references a shared semantic package; both `*HTTPError`
+types satisfy `StatusCode() int`; packages declared vendor-neutral contain no protocol-semantic
+identifiers (`message`, `content`, `tool`, `usage`, …), checked over the AST; and every public wire
+type survives a marshal → unmarshal → marshal round trip unchanged.
+
+**Three-way sync**: when an official API changes, update in order — ① the provider's wire types and
+client → ② the relevant `doc/` document → ③ the protocol's change log plus the `CHANGES.md` index.
+When a step does not apply, state so explicitly. Details in [doc/architecture.md](./doc/architecture.md).
+
+Step ② includes the ADRs: if a change contradicts an invariant an accepted ADR states, the ADR is
+part of the sync, not an afterthought. Accepted ADRs are immutable — add a new ADR that supersedes
+it and update the [ADR index](./doc/adr.md), rather than rewriting the old decision.
 
 ## Build & Test Commands
 
@@ -53,37 +108,32 @@ go tool cover -func=coverage.out
 
 | If you are touching… | Read | Code |
 |---|---|---|
-| Anything cross-cutting: canonical representation, registry dispatch, client options, env fallback | [doc/architecture.md](./doc/architecture.md) | `client.go`, `chat.go`, `ais/provider.go`, `ais/registry.go` |
-| Request/response types, `Usage`, `Content`, `Clone()` | [doc/design/data-model.md](./doc/design/data-model.md) | `ais/schema.go` |
-| `Stream`, SSE, `AppendDelta`, `ExtraBlocks`, interception | [doc/design/streaming.md](./doc/design/streaming.md) | `stream.go`, `intercept.go`, `provider/*/stream.go` |
-| Tool definitions, `tool_choice`, parallel tool results | [doc/design/tool-use.md](./doc/design/tool-use.md) | `ais/schema.go`, `provider/anthropic/anthropic.go` |
-| Prompt caching (breakpoints, auto-cache, cache accounting) | [doc/design/prompt-caching.md](./doc/design/prompt-caching.md) | `ais/schema.go`, `provider/anthropic/anthropic.go` |
-| Errors | [doc/design/errors.md](./doc/design/errors.md) | `ais/errors.go` |
-| Multi-model dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
-| Anthropic request/response translation, SSE events | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/` |
-| OpenAI native wire types, canonical translation, SSE parsing | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/` |
-| OpenAI Responses API: native wire types, typed SSE events, hosted tools, the `Responder` capability | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `provider/openai/responses*.go`, `responder.go` |
+| Anything cross-cutting: package boundaries, what may be shared, why there is no unified client | [doc/architecture.md](./doc/architecture.md) | `provider/*/`, `composes/` |
+| OpenAI Chat Completions: wire types, client, SSE, usage, errors, `ExtraBody` | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/native.go`, `wire.go` |
+| OpenAI Responses: wire types, typed SSE events, hosted tools | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `provider/openai/responses*.go` |
+| Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/native.go`, `wire.go` |
+| Multi-backend dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
+| Migrating off the removed canonical API | [MIGRATION.md](./MIGRATION.md) | — |
 
 ## Architecture at a glance
 
-`Client` implements the `ChatCompleter` capability and delegates to a **provider** resolved by name from a registry at construction time. The default provider (`openai.Name`) is OpenAI-compatible; `anthropic.Name` selects Anthropic. Both built-ins register themselves on import.
+There is no unified client and no shared schema. A caller picks a protocol by importing its package:
 
-Both providers have the same two-layer shape — a public native client over its own wire types, with canonical translation layered **on top** of it ([ADR 0005](./doc/adr/0005-canonical-shared-semantics-over-provider-native-wire.md)). No provider gets a zero-translation path; canonical is the shared semantic layer, not any vendor's wire format.
+- **`provider/openai`** — native `/chat/completions` and `/v1/responses` clients over their own wire
+  types (`native.go` / `wire.go` / `responses*.go`). Serves OpenAI and every OpenAI-compatible
+  backend; `ExtraBody` carries backend-private top-level parameters.
+- **`provider/anthropic`** — native `/v1/messages` client and wire types, including SSE event
+  decoding and stream usage merging.
 
-- **openai** (default) — public native `/chat/completions` client and wire types (`wire.go` / `native.go`), with bidirectional canonical translation in `translate.go` (`toOpenAIRequest` / `fromOpenAIResponse` / `fromOpenAIChunk`). It also owns the native `/v1/responses` surface (`responses*.go`), which has **no** canonical translation.
-- **anthropic** — public native `/v1/messages` client and wire types, with bidirectional canonical translation on the same types.
-
-Two entry points: the unified `aimodel.Client` is canonical in / canonical out **on the chat capability** and translates at the provider boundary; a provider's native client (`openai.NewClient` / `anthropic.NewClient`) uses native types end to end, bypasses canonical translation, and is the way to reach vendor-only features. The `Responder` capability is the exception noted above: it is on the unified client but speaks OpenAI-native types.
-
-`chat.go` runs one shared pipeline (clone → default model → build → single HTTP call → parse/stream); the vendor boundary is the `ais.ChatProvider` contract, implemented per subpackage. Adding a protocol = new subpackage that calls `ais.Register` in `init`, with **zero root-package change**. New interaction forms are added as new capability interfaces, never by widening `ChatCompleter`.
+Adding a protocol = a new subpackage with its own client, with **zero change** to any existing
+package. There is nothing to register with and no contract to satisfy — and correspondingly no
+automatic interoperability between protocols.
 
 Packages:
 
-- `ais/` — vendor-neutral canonical schema, error model, `ChatProvider` contract, and registry (no vendor deps)
-- Root package `aimodel` — `Client` facade, shared pipeline, capability interfaces (`ChatCompleter`, `Responder`), `Stream`; canonical types used directly from `ais`
-- `provider/openai/`, `provider/anthropic/` — the two built-in providers (each self-registers on import)
-- `composes/` — multi-model dispatch strategies and health tracking (depends on the root capability interface + canonical `ais/schema` types)
-- `integrations/` — integration tests and usage examples for openai, anthropic, and compose patterns
+- `provider/openai`, `provider/anthropic` — the two protocol clients, mutually independent
+- `composes/` — dispatch strategies and health tracking across several OpenAI-compatible backends
+- `integrations/` — integration tests and usage examples per provider and for compose patterns
 
 ## Official API References
 
@@ -93,4 +143,4 @@ Packages:
 | OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [doc/openai/openai-api-changes.md](./doc/openai/openai-api-changes.md) |
 | Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [doc/anthropic/anthropic-api-changes.md](./doc/anthropic/anthropic-api-changes.md) |
 
-**Maintenance convention**: follow the four-way sync in [Design Principles](#design-principles) (native layer → canonical translation → `doc/` → change log). See [doc/architecture.md](./doc/architecture.md) §6 — root docs link to `doc/`, they do not duplicate it.
+**Maintenance convention**: follow the three-way sync in [Design Principles](#design-principles) (provider code → `doc/` → change log). See [doc/architecture.md](./doc/architecture.md) — root docs link to `doc/`, they do not duplicate it.

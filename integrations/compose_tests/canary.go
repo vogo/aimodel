@@ -21,10 +21,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // testCanary demonstrates the declarative same-provider multi-endpoint path:
@@ -38,26 +38,26 @@ func testCanary() {
 
 	// This example needs two real endpoints; skip gracefully when the canary
 	// coordinates are not configured.
-	if aimodel.GetEnv("CANARY_BASE_URL") == "" || aimodel.GetEnv("CANARY_API_KEY") == "" {
+	if os.Getenv("CANARY_BASE_URL") == "" || os.Getenv("CANARY_API_KEY") == "" {
 		fmt.Println("  (skipped: set CANARY_BASE_URL and CANARY_API_KEY to run)")
 		return
 	}
 
-	model := aimodel.GetEnv("OPENAI_MODEL")
+	model := os.Getenv("OPENAI_MODEL")
 
 	cc, err := composes.NewFromEndpoints(composes.StrategyWeight, []composes.EndpointSpec{
 		{
 			Alias:   "stable",
-			BaseURL: aimodel.GetEnv("OPENAI_BASE_URL"),
-			APIKey:  aimodel.GetEnv("OPENAI_API_KEY"),
+			BaseURL: os.Getenv("OPENAI_BASE_URL"),
+			APIKey:  os.Getenv("OPENAI_API_KEY"),
 			Model:   model,
 			Weight:  9, // 90% of traffic
 			Tags:    map[string]string{"tier": "stable"},
 		},
 		{
 			Alias:   "canary",
-			BaseURL: aimodel.GetEnv("CANARY_BASE_URL"),
-			APIKey:  aimodel.GetEnv("CANARY_API_KEY"),
+			BaseURL: os.Getenv("CANARY_BASE_URL"),
+			APIKey:  os.Getenv("CANARY_API_KEY"),
 			Model:   model,
 			Weight:  1, // 10% of traffic
 			Tags:    map[string]string{"tier": "canary"},
@@ -75,9 +75,9 @@ func testCanary() {
 	}
 
 	for i := range 5 {
-		resp, err := cc.ChatCompletion(context.Background(), &ais.ChatRequest{
-			Messages: []ais.Message{
-				{Role: ais.RoleUser, Content: ais.NewTextContent("Say hello!")},
+		resp, err := cc.ChatCompletions(context.Background(), &openai.ChatCompletionRequest{
+			Messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: openai.NewTextContent("Say hello!")},
 			},
 		})
 		if err != nil {

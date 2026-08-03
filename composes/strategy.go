@@ -21,7 +21,7 @@ import (
 	"context"
 	"math/rand"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // Strategy determines how candidate endpoints are ordered for a request. Every
@@ -50,7 +50,7 @@ const (
 // selectModels returns the ordered list of endpoint indices to try. It first
 // narrows the capability-filtered set to the health-available endpoints, then
 // orders them according to the configured strategy.
-func (c *ComposeClient) selectModels(ctx context.Context, req *ais.ChatRequest, capable []int) []int {
+func (c *ComposeClient) selectModels(ctx context.Context, req *openai.ChatCompletionRequest, capable []int) []int {
 	now := c.nowFunc()
 
 	available := make([]int, 0, len(capable))
@@ -66,7 +66,7 @@ func (c *ComposeClient) selectModels(ctx context.Context, req *ais.ChatRequest, 
 
 // orderByStrategy orders an already-available candidate slice per the given
 // strategy. The input slice is in definition order and is not mutated.
-func (c *ComposeClient) orderByStrategy(ctx context.Context, req *ais.ChatRequest, s Strategy, available []int) []int {
+func (c *ComposeClient) orderByStrategy(ctx context.Context, req *openai.ChatCompletionRequest, s Strategy, available []int) []int {
 	switch s {
 	case StrategyRandom:
 		return c.orderRandom(available)

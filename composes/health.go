@@ -21,9 +21,13 @@ import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/vogo/aimodel/ais"
 )
+
+// statusCoder is the structural contract a provider's transport error
+// satisfies. Declaring it locally — rather than importing a provider's error
+// type — is what keeps this package free of any provider dependency while still
+// classifying failures by status code (ADR 0007).
+type statusCoder interface{ StatusCode() int }
 
 // modelState represents the health state of a model endpoint.
 //
@@ -61,22 +65,23 @@ const (
 //
 //   - HTTP 429                       → cooling
 //   - HTTP 5xx (or status 0, e.g. an
-//     SSE error event)                → error
+//     error embedded in a 2xx body)  → error
 //   - other HTTP 4xx                 → request failure (endpoint stays healthy)
-//   - no APIError (transport, etc.)  → error
+//   - no status-carrying error
+//     (transport, etc.)              → error
 func classifyHealth(err error) healthOutcome {
-	var apiErr *ais.APIError
-	if !errors.As(err, &apiErr) {
+	var sc statusCoder
+	if !errors.As(err, &sc) {
 		return outcomeError
 	}
 
-	switch {
-	case apiErr.StatusCode == 429:
+	switch code := sc.StatusCode(); {
+	case code == 429:
 		return outcomeCooling
-	case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500:
+	case code >= 400 && code < 500:
 		return outcomeRequestFailure
 	default:
-		// 5xx, or status 0 (stream-level error without an HTTP code).
+		// 5xx, or status 0 (an error carried in a body the HTTP layer accepted).
 		return outcomeError
 	}
 }

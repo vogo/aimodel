@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // Capability is the strong-typed contract an endpoint exposes to the router.
@@ -112,19 +112,29 @@ func (c *ComposeClient) resolvedCapability(i int) (Capability, bool) {
 
 // requestRequiresTools reports whether the request needs a tools-capable
 // endpoint: it defines tools, or sets an explicit tool_choice other than "none".
-func requestRequiresTools(req *ais.ChatRequest) bool {
+func requestRequiresTools(req *openai.ChatCompletionRequest) bool {
 	if len(req.Tools) > 0 {
 		return true
 	}
 
-	return req.ToolChoice != nil && req.ToolChoice != "none"
+	// ToolChoice is polymorphic (a string or an object). A nil or "none"
+	// choice needs no tools; any other value does.
+	if req.ToolChoice == nil {
+		return false
+	}
+
+	if s, ok := req.ToolChoice.(string); ok && s == "none" {
+		return false
+	}
+
+	return true
 }
 
 // requestRequiresVision reports whether any message carries an image part.
-func requestRequiresVision(req *ais.ChatRequest) bool {
+func requestRequiresVision(req *openai.ChatCompletionRequest) bool {
 	for i := range req.Messages {
 		for _, part := range req.Messages[i].Content.Parts() {
-			if part.ImageURL != nil || part.Type == "image_url" {
+			if part.ImageURL != nil || part.Type == openai.ContentPartTypeImageURL {
 				return true
 			}
 		}
@@ -134,7 +144,7 @@ func requestRequiresVision(req *ais.ChatRequest) bool {
 }
 
 // requiredCapabilities returns the capability names the request demands.
-func requiredCapabilities(req *ais.ChatRequest) []string {
+func requiredCapabilities(req *openai.ChatCompletionRequest) []string {
 	var reqs []string
 
 	if requestRequiresTools(req) {
@@ -153,7 +163,7 @@ func requiredCapabilities(req *ais.ChatRequest) []string {
 // unknown, not incapable: they always stay in the candidate list. Health is
 // intentionally ignored here — the capability filter runs before health skipping
 // and strategy ordering.
-func (c *ComposeClient) capableIndices(req *ais.ChatRequest) []int {
+func (c *ComposeClient) capableIndices(req *openai.ChatCompletionRequest) []int {
 	needTools := requestRequiresTools(req)
 	needVision := requestRequiresVision(req)
 
@@ -182,14 +192,14 @@ func (c *ComposeClient) capableIndices(req *ais.ChatRequest) []int {
 // unit and the output volume is the request's output cap when present; both are
 // constant across endpoints for a given request, so ordering reduces to the
 // injected static pricing.
-func costKey(e *ModelEntry, req *ais.ChatRequest) float64 {
+func costKey(e *ModelEntry, req *openai.ChatCompletionRequest) float64 {
 	const inputUnits = 1.0
 
 	outputUnits := 1.0
 	if req.MaxCompletionTokens != nil {
 		outputUnits = float64(*req.MaxCompletionTokens)
-	} else if req.MaxTokens != nil { //nolint:staticcheck // fallback for pre-max_completion_tokens models
-		outputUnits = float64(*req.MaxTokens) //nolint:staticcheck // see above
+	} else if req.MaxTokens != nil { // fallback for pre-max_completion_tokens models
+		outputUnits = float64(*req.MaxTokens)
 	}
 
 	return e.Cost.InputPrice*inputUnits + e.Cost.OutputPrice*outputUnits
@@ -198,7 +208,7 @@ func costKey(e *ModelEntry, req *ais.ChatRequest) float64 {
 // sortByCost orders candidate indices by ascending static cost. Endpoints
 // without pricing metadata sort after priced ones; equal keys tie-break on
 // alias so identical inputs always yield an identical order.
-func (c *ComposeClient) sortByCost(indices []int, req *ais.ChatRequest) []int {
+func (c *ComposeClient) sortByCost(indices []int, req *openai.ChatCompletionRequest) []int {
 	sort.Slice(indices, func(a, b int) bool {
 		ea, eb := &c.entries[indices[a]], &c.entries[indices[b]]
 

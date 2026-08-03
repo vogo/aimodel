@@ -1,6 +1,6 @@
 # aimodel Documentation
 
-`aimodel` is a Go SDK for multi-protocol (OpenAI-compatible, Anthropic) AI model APIs — a zero-dependency **thin API wrapper** that only translates requests, manages connections, and normalizes responses. It carries no retry, rate limiting, validation, caching, or logging/metrics.
+`aimodel` is a set of Go clients for AI model APIs, one per protocol — a zero-dependency **thin API wrapper** that builds requests, manages connections and decodes responses. It carries no retry, rate limiting, validation, caching, or logging/metrics.
 
 This directory holds the design documentation. The root [README.md](../README.md) covers usage.
 
@@ -8,35 +8,31 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 | Document | Contents |
 |---|---|
-| [architecture.md](./architecture.md) | **Start here** — design scope, the shared canonical representation, client construction and protocol dispatch, repository layout, maintenance convention |
+| [architecture.md](./architecture.md) | **Start here** — design scope, the two independent protocol clients, the neutrality test and the guards behind it, repository layout, maintenance convention |
 | [adr.md](./adr.md) | Architecture Decision Record index — accepted decisions and their rationale |
-
-## Design topics (cross-protocol)
-
-| Document | Contents |
-|---|---|
-| [design/data-model.md](./design/data-model.md) | Canonical `ChatRequest` / `Message` / `Content` / `ChatResponse` / `Usage`, field by field |
-| [design/streaming.md](./design/streaming.md) | The `Stream` abstraction, delta merging, `ExtraBlocks`, stream interception |
-| [design/tool-use.md](./design/tool-use.md) | Tool definitions and their Anthropic extensions, `tool_choice`, parallel tool results |
-| [design/prompt-caching.md](./design/prompt-caching.md) | Per-block breakpoints, automatic caching, cache accounting |
-| [design/errors.md](./design/errors.md) | Sentinel errors, `APIError`, `ModelError`, `MultiError` |
-| [design/compose.md](./design/compose.md) | Selection strategies, health tracking, recovery probes, cancellation |
 
 ## Protocols
 
 | Document | Contents |
 |---|---|
-| [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: bidirectional translation, headers, SSE events |
-| [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
-| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: provider mapping, field alignment, SSE |
-| [openai/openai-response-api.md](./openai/openai-response-api.md) | OpenAI Responses API: dated wire baseline, items, typed SSE events, hosted tools, the native-type `Responder` capability |
+| [openai/openai-chat-api.md](./openai/openai-chat-api.md) | OpenAI Chat Completions: client, wire types, `ExtraBody`, SSE and stream accumulation, usage and prompt caching, errors |
+| [openai/openai-response-api.md](./openai/openai-response-api.md) | OpenAI Responses API: dated wire baseline, items, typed SSE events, hosted tools |
 | [openai/openai-api-changes.md](./openai/openai-api-changes.md) | OpenAI change log (Chat Completions and Responses) |
+| [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: client and headers, content blocks, tools, prompt caching, SSE events, two-part usage merging, errors |
+| [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
+
+## Tools
+
+| Document | Contents |
+|---|---|
+| [design/compose.md](./design/compose.md) | Dispatch across several OpenAI-compatible backends: selection strategies, health tracking, recovery probes, cancellation, aggregate errors |
 
 ## Root documents
 
-- [../README.md](../README.md) — usage: installation, chat completion, reasoning effort, multimodal, streaming, the Anthropic protocol, client options, multi-model compose.
+- [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API, multi-backend compose.
+- [../MIGRATION.md](../MIGRATION.md) — migrating off the canonical API removed in v0.7.0.
 - [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
-- [../CHANGES.md](../CHANGES.md) — index and merged timeline of both protocols' change logs.
+- [../CHANGES.md](../CHANGES.md) — release index and the merged timeline of both protocols' change logs.
 
 ## Official API references
 
@@ -50,7 +46,8 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 When an official API changes, update these in sync:
 
-1. the wrapper code;
-2. the relevant document here — a `design/` topic and/or the protocol's `*-chat-api.md`;
-3. that protocol's change log (`*-api-changes.md`);
-4. the root `README.md` / `CLAUDE.md` **only if** the public usage surface or the agent-facing guidance changed — they link here rather than restating design.
+1. the provider's wire types and client;
+2. the relevant document here — the protocol's own page, and [architecture.md](./architecture.md) if a package boundary moved;
+3. that protocol's change log (`*-api-changes.md`) plus the [CHANGES.md](../CHANGES.md) index.
+
+When a step does not apply, say so explicitly rather than skipping it silently. The root `README.md` / `CLAUDE.md` change only when the public usage surface or the agent-facing guidance does — they link here rather than restating design.

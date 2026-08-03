@@ -40,4 +40,4 @@ Concretely:
 - [Architecture §6 — maintenance convention](../architecture.md#6-maintenance-convention)
 - [OpenAI Chat Completions wrapper design](../openai/openai-chat-api.md)
 - [Anthropic Messages API wrapper design](../anthropic/anthropic-message-api.md)
-- [Canonical data model](../design/data-model.md)
+- `Canonical data model`

@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 func stickyClient(aliases ...string) *ComposeClient {
@@ -42,7 +42,7 @@ func selectWithSession(c *ComposeClient, sessionID string) []int {
 		ctx = WithSessionID(ctx, sessionID)
 	}
 
-	req := &ais.ChatRequest{}
+	req := &openai.ChatCompletionRequest{}
 
 	return c.selectModels(ctx, req, c.capableIndices(req))
 }
@@ -179,7 +179,7 @@ func TestSticky_IntegrationRoutesToPreferred(t *testing.T) {
 
 	ctx := WithSessionID(context.Background(), "session-xyz")
 
-	resp, err := cc.ChatCompletion(ctx, testRequest())
+	resp, err := cc.ChatCompletions(ctx, testRequest())
 	if err != nil {
 		t.Fatal(err)
 	}

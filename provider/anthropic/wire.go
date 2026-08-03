@@ -36,28 +36,21 @@ type MessagesRequest struct {
 	Tools         []MessagesTool    `json:"tools,omitempty"`
 	ToolChoice    *ToolChoice       `json:"tool_choice,omitempty"`
 	Thinking      *MessagesThinking `json:"thinking,omitempty"`
-	// Effort is Anthropic's former top-level reasoning-depth control.
-	//
-	// Deprecated: superseded by OutputConfig.Effort — reasoning depth now
-	// lives inside output_config. Kept only so existing internal callers keep
-	// compiling; toAnthropicRequest no longer assigns it, so it is never sent
-	// alongside output_config.effort.
-	Effort string `json:"effort,omitempty"`
-	// OutputConfig carries Anthropic's output configuration: the reasoning
-	// effort (mapped from ais.ChatRequest.ReasoningEffort) and the structured
-	// output format (mapped from ais.ChatRequest.ResponseFormat). Omitted when
-	// both are absent.
+	// OutputConfig carries the output configuration: how deeply the model
+	// reasons (Effort) and how its answer is shaped (Format). It supersedes
+	// the former top-level `effort` parameter.
 	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 	// Container reuses a server-side execution container across requests,
-	// mapped straight through from RequestExtension.Container.
+	// keeping code-execution state alive. Pass back the ID from a previous
+	// response's Container.
 	Container string `json:"container,omitempty"`
-	// InferenceGeo pins the inference geography for data residency, mapped
-	// straight through from RequestExtension.InferenceGeo.
+	// InferenceGeo pins where inference runs for data residency (e.g. "us" /
+	// "eu"). Kept a plain string for pass-through.
 	InferenceGeo string `json:"inference_geo,omitempty"`
-	// CacheControl, when set, is the request-root automatic-caching marker
-	// (mapped from RequestExtension.AutoCache). The server caches the last
-	// cacheable block and advances the breakpoint as the conversation grows.
-	// It coexists with per-block cache_control markers.
+	// CacheControl, when set, is the request-root automatic-caching marker:
+	// the server caches the last cacheable block and advances the breakpoint
+	// as the conversation grows, with no per-block marker needed. It coexists
+	// with the per-block cache_control markers on content and tools.
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
@@ -116,12 +109,6 @@ type CacheControl struct {
 	TTL string `json:"ttl,omitempty"`
 }
 
-// ephemeralCache returns the canonical 5-minute ephemeral marker used on
-// both message content blocks and tool definitions.
-func ephemeralCache() *CacheControl {
-	return &CacheControl{Type: "ephemeral"}
-}
-
 // ContentSource represents the source of an image or document in Anthropic's API format.
 // Supported source types: "base64", "url", "text", "content".
 type ContentSource struct {
@@ -136,25 +123,23 @@ type MessagesTool struct {
 	// Type selects the tool kind. Empty means the default custom tool;
 	// versioned built-in types ("web_search_20260209",
 	// "code_execution_20260521", …) pass through unvalidated.
-	Type         string        `json:"type,omitempty"`
-	Name         string        `json:"name"`
-	Description  string        `json:"description,omitempty"`
-	InputSchema  any           `json:"input_schema"`
-	CacheControl *CacheControl `json:"cache_control,omitempty"`
-	// The following mirror the canonical Tool fields one-to-one; see their
-	// documentation on Tool (schema.go).
-	Strict              *bool    `json:"strict,omitempty"`
-	DeferLoading        *bool    `json:"defer_loading,omitempty"`
-	AllowedCallers      []string `json:"allowed_callers,omitempty"`
-	EagerInputStreaming *bool    `json:"eager_input_streaming,omitempty"`
-	InputExamples       []any    `json:"input_examples,omitempty"`
+	Type                string        `json:"type,omitempty"`
+	Name                string        `json:"name"`
+	Description         string        `json:"description,omitempty"`
+	InputSchema         any           `json:"input_schema"`
+	CacheControl        *CacheControl `json:"cache_control,omitempty"`
+	Strict              *bool         `json:"strict,omitempty"`
+	DeferLoading        *bool         `json:"defer_loading,omitempty"`
+	AllowedCallers      []string      `json:"allowed_callers,omitempty"`
+	EagerInputStreaming *bool         `json:"eager_input_streaming,omitempty"`
+	InputExamples       []any         `json:"input_examples,omitempty"`
 }
 
 type ToolChoice struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
-	// DisableParallelToolUse maps the canonical ParallelToolCalls=false:
-	// when set true, Anthropic emits at most one tool call per turn.
+	// DisableParallelToolUse, when true, limits the model to one tool call
+	// per turn.
 	DisableParallelToolUse *bool `json:"disable_parallel_tool_use,omitempty"`
 }
 
@@ -169,14 +154,41 @@ type MessagesResponse struct {
 	StopReason   string                 `json:"stop_reason"`
 	StopSequence *string                `json:"stop_sequence"`
 	// StopDetails carries the structured stop classification (e.g. the refusal
-	// category) returned alongside stop_reason "refusal". The public extension
-	// type's JSON tags match the wire shape, so it deserializes directly.
+	// category) returned alongside stop_reason "refusal"; nil when absent.
 	StopDetails *StopDetails  `json:"stop_details"`
 	Usage       MessagesUsage `json:"usage"`
-	// Container is the server-side execution container the response used. The
-	// public extension type's JSON tags match the wire shape; nil when absent
-	// or null.
+	// Container is the server-side execution container the response used; nil
+	// when absent or null. Pass its ID back through MessagesRequest.Container
+	// to reuse the container on the next turn.
 	Container *ResponseContainer `json:"container"`
+}
+
+// StopDetails is Anthropic's structured stop classification, returned
+// alongside stop_reason "refusal". All fields are best-effort and may be
+// empty; Explanation in particular is not guaranteed stable across model
+// versions.
+type StopDetails struct {
+	// Type discriminates the stop classification, e.g. "refusal".
+	Type string `json:"type,omitempty"`
+	// Category is the policy category that triggered the stop, e.g. "cyber" /
+	// "bio"; empty when the stop maps to no named category.
+	Category string `json:"category,omitempty"`
+	// Explanation is a human-readable description of the stop.
+	Explanation string `json:"explanation,omitempty"`
+}
+
+// ResponseContainer is the server-side execution container a response used.
+// ExpiresAt is kept as the server-supplied string — this wrapper neither
+// parses nor acts on the expiry.
+type ResponseContainer struct {
+	ID        string `json:"id"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// ServerToolUse counts server-side tool invocations billed with a request.
+type ServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests"`
+	WebFetchRequests  int `json:"web_fetch_requests"`
 }
 
 // ResponseContentBlock is a response-side content block: the known fields
@@ -226,8 +238,7 @@ type MessagesUsage struct {
 	// CacheCreation breaks CacheCreationInputTokens down by TTL. Anthropic
 	// returns it when 1-hour caching or mixed TTLs are in play; nil otherwise.
 	CacheCreation *CacheCreation `json:"cache_creation,omitempty"`
-	// OutputTokensDetails breaks the output tokens down; its thinking_tokens
-	// is Anthropic's source for the canonical Usage.ReasoningTokens.
+	// OutputTokensDetails breaks the output tokens down by category.
 	OutputTokensDetails *OutputTokensDetails `json:"output_tokens_details,omitempty"`
 	// ServerToolUse counts the server-side tool invocations billed with this
 	// request; nil when no server tool ran.
@@ -250,8 +261,10 @@ type CacheCreation struct {
 	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
-// totalInputTokens returns the total input tokens including cached tokens.
-func (u MessagesUsage) totalInputTokens() int {
+// TotalInputTokens returns the billable input total. Anthropic reports the
+// cache counts alongside input_tokens rather than inside it, so the three add
+// up rather than overlapping.
+func (u MessagesUsage) TotalInputTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 

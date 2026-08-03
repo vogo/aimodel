@@ -23,8 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vogo/aimodel"
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // blockingCompleter blocks in ChatCompletion until the context is cancelled,
@@ -34,14 +33,14 @@ type blockingCompleter struct {
 	started chan struct{}
 }
 
-func (b blockingCompleter) ChatCompletion(ctx context.Context, _ *ais.ChatRequest) (*ais.ChatResponse, error) {
+func (b blockingCompleter) ChatCompletions(ctx context.Context, _ *openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error) {
 	close(b.started)
 	<-ctx.Done()
 
 	return nil, ctx.Err()
 }
 
-func (b blockingCompleter) ChatCompletionStream(ctx context.Context, _ *ais.ChatRequest) (*aimodel.Stream, error) {
+func (b blockingCompleter) ChatCompletionsStream(ctx context.Context, _ *openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
 	<-ctx.Done()
 
 	return nil, ctx.Err()
@@ -67,7 +66,7 @@ func TestCancellation_MidFlightAttributesAlias(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		_, err := cc.ChatCompletion(ctx, testRequest())
+		_, err := cc.ChatCompletions(ctx, testRequest())
 		errCh <- err
 	}()
 
@@ -103,7 +102,7 @@ func TestCapabilityError_VisionRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = cc.ChatCompletion(context.Background(), visionRequest())
+	_, err = cc.ChatCompletions(context.Background(), visionRequest())
 
 	var capErr *CapabilityError
 	if !errors.As(err, &capErr) {

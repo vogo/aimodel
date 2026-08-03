@@ -22,15 +22,15 @@ import (
 	"hash/fnv"
 	"sort"
 
-	"github.com/vogo/aimodel/ais"
+	"github.com/vogo/aimodel/provider/openai"
 )
 
 // sessionIDKey is the context key carrying the sticky-routing session id.
 type sessionIDKey struct{}
 
 // WithSessionID attaches a session id used by StrategySticky to pin a request
-// stream to a stable endpoint. It lives in composes context, never on
-// ais.ChatRequest, so the canonical request type stays untouched.
+// stream to a stable endpoint. It lives in composes context, never on the
+// request, so the wire request type stays untouched.
 func WithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, sessionIDKey{}, sessionID)
 }
@@ -83,7 +83,7 @@ func (c *ComposeClient) stickyPreferredAlias(sessionID string) string {
 // preferred alias first (when it is among the available candidates) and lists
 // the remaining available candidates in definition order, giving a deterministic
 // failover order when the preferred endpoint is unhealthy.
-func (c *ComposeClient) selectSticky(ctx context.Context, req *ais.ChatRequest, available []int) []int {
+func (c *ComposeClient) selectSticky(ctx context.Context, req *openai.ChatCompletionRequest, available []int) []int {
 	sessionID := sessionIDFromContext(ctx)
 	if sessionID == "" {
 		fallback := c.stickyFallback

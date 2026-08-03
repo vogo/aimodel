@@ -1,0 +1,33 @@
+{
+  "model": "claude-sonnet-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Answer from the cached context."
+    }
+  ],
+  "system": [
+    {
+      "type": "text",
+      "text": "A long, reusable system prompt.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search the knowledge base",
+      "input_schema": null,
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "cache_control": {
+    "type": "ephemeral",
+    "ttl": "1h"
+  }
+}

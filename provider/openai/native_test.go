@@ -122,7 +122,7 @@ func TestNativeClientErrors(t *testing.T) {
 	defer server.Close()
 	_, err := NewClient("key", WithBaseURL(server.URL), WithHTTPClient(server.Client())).ChatCompletions(context.Background(), &ChatCompletionRequest{})
 	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.Code != "bad" || httpErr.StatusCode != 400 {
+	if !errors.As(err, &httpErr) || httpErr.Code != "bad" || httpErr.StatusCode() != 400 {
 		t.Fatalf("error=%T %+v", err, err)
 	}
 }
