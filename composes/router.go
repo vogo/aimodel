@@ -58,8 +58,14 @@ const noActive = -1
 // A router serves every call from one endpoint — its *active* endpoint — and
 // re-selects only when it has none yet or the current one is judged dead. A
 // strategy therefore decides who serves the pool, not who serves a call: it runs
-// at selection time, not on every dispatch. See
-// doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
+// at selection time, not on every dispatch.
+//
+// # One call at a time
+//
+// A router also serves one dispatch at a time: concurrent callers queue, so a
+// pool never has two backend requests in flight. Throughput per pool is
+// therefore one request — build one pool per concurrent worker if you need
+// parallelism. See doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 type Router struct {
 	endpoints        []Endpoint
 	health           []*endpointHealth
@@ -73,8 +79,16 @@ type Router struct {
 	// It is a field so tests can assert the retry wait sequence without sleeping.
 	waitFunc func(ctx context.Context, d time.Duration) error
 
+	// callSlot serialises dispatches: it holds exactly one token, so a router
+	// serves one call at a time and concurrent callers queue. It is a channel
+	// rather than a mutex because a caller waiting for it must be released by its
+	// own context ending — a queue behind a long retry round would otherwise be
+	// uncancellable.
+	callSlot chan struct{}
+
 	// mu protects rng, active and generation — everything about *which* endpoint
-	// serves the pool. It is never held across an attempt or a retry wait.
+	// serves the pool. It is held only for those decisions, never across an
+	// attempt or a retry wait, so Stats stays callable while a call is in flight.
 	mu  sync.Mutex
 	rng *rand.Rand
 	// active is the index of the endpoint currently serving the pool, or
@@ -172,6 +186,7 @@ func NewRouter(strategy Strategy, endpoints []Endpoint, opts ...Option) (*Router
 		recoverTime: defaultRecoverTime,
 		nowFunc:     time.Now,
 		waitFunc:    waitFor,
+		callSlot:    make(chan struct{}, 1),
 		rng:         newRand(time.Now().UnixNano()),
 		active:      noActive,
 	}
@@ -318,6 +333,12 @@ type Call struct {
 // error, not one entry per retry — and returned as a *MultiError; having no
 // candidate to try at all yields ErrNoActiveModels; an unsatisfiable Requires
 // set yields a *CapabilityError before any attempt is made.
+//
+// A router serves one dispatch at a time. Concurrent callers queue for the
+// router's single call slot, and a caller waiting in that queue is released by
+// its own context ending. The capability filter runs before the queue, so a call
+// no endpoint can serve fails fast instead of waiting for a slot it would only
+// give straight back.
 func Dispatch[T any](
 	ctx context.Context,
 	r *Router,
@@ -328,11 +349,16 @@ func Dispatch[T any](
 
 	// The capability filter runs before health, the active endpoint and the
 	// strategy alike. A call whose required labels no endpoint declares fails
-	// fast, before any attempt.
+	// fast, before any attempt — and before queueing for the call slot.
 	capable := r.capableIndices(call)
 	if len(call.Requires) > 0 && len(capable) == 0 {
 		return zero, &CapabilityError{Required: slices.Clone(call.Requires), Considered: r.Aliases()}
 	}
+
+	if err := r.acquire(ctx); err != nil {
+		return zero, err
+	}
+	defer r.release()
 
 	var errs []*EndpointError
 
@@ -489,6 +515,21 @@ func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (end
 
 	return endpointPick{endpoint: pick, generation: r.generation, serving: true}, true
 }
+
+// acquire takes the router's single call slot, waiting for the call in front to
+// finish. It returns the context's error instead if the caller gives up first,
+// so queueing behind a long retry round never makes a call uncancellable.
+func (r *Router) acquire(ctx context.Context) error {
+	select {
+	case r.callSlot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release hands the call slot to whoever is waiting.
+func (r *Router) release() { <-r.callSlot }
 
 // retireActive gives up the pool's active endpoint, but only if it is still the
 // endpoint and generation the caller observed. That condition is what keeps

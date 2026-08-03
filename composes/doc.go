@@ -46,7 +46,11 @@
 // under [StrategyRandom] or [StrategyWeight]. A failing endpoint is retried in
 // place with exponential waits, then marked dead and replaced — and a dead
 // endpoint returns to candidacy after the recover time without displacing
-// whoever took its place. See
+// whoever took its place.
+//
+// A router also serves one dispatch at a time; concurrent callers queue for it,
+// and a queued caller is released by its own context. Throughput per pool is one
+// request, so parallelism means one pool per worker. See
 // doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 //
 // # The boundary

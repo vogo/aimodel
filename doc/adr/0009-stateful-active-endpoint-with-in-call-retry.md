@@ -1,4 +1,4 @@
-# ADR 0009: A pool has one active endpoint, retried in place before it is replaced
+# ADR 0009: A pool has one active endpoint, serves one call at a time, and retries in place before replacing it
 
 - Status: Accepted
 - Date: 2026-08-03
@@ -66,6 +66,14 @@ may leak in. And [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md) says this SDK
    from a capability-restricted call — a pool has to start somewhere — but an established one is never
    displaced by a rarer capability's traffic.
 
+8. **One dispatch at a time.** A router holds a single call slot; concurrent callers queue for it, so a pool
+   never has two backend requests in flight. Waiting for the slot is released by the waiter's own context, and
+   the capability filter runs *before* the queue so an unservable call fails fast rather than occupying it.
+   `Stats()` reads pool state under a different lock and is never blocked by a call.
+
+   The serialisation covers a streaming call **up to establishment**, not for the stream's lifetime — see the
+   consequences below.
+
 `StrategySticky`, `WithSessionID`, `WithStickyFallback`, `WithRecoveryInterval`, `WithCoolingInterval` and the
 recovery-probe mechanism are deleted outright in v0.9.0, with no compatibility aliases — the same treatment
 v0.7.0 gave the canonical layer. `WithRetryPolicy` and `WithRecoverTime` replace the two interval options;
@@ -120,6 +128,21 @@ context, and the policy is explicit at construction.
 - **Concurrency is now a stated guarantee, not an emergent one.** Active-endpoint transitions are
   generation-conditioned under a single lock, so concurrent failures of one endpoint commit exactly one
   switch. No lock is held across a network attempt or a retry wait. A `-race` test asserts the switch count.
+
+- **Throughput per pool is one request.** Serialising dispatch makes a pool's behaviour easy to reason about —
+  one active endpoint, one request, one health transition at a time — at the cost of concurrency. A slow
+  endpoint's retry round delays every queued caller by up to `base × (2^maxRetries − 1)`. Callers wanting
+  parallelism build one pool per worker; pools are cheap and each keeps its own active endpoint and health.
+
+- **A streaming call is serialised only until the stream is established.** Holding the slot until the caller
+  closed the stream would be the stricter reading of "one request at a time", and it is not implemented,
+  because it cannot be done within this ADR's other constraints. `*openai.ChatCompletionStream` and
+  `*anthropic.MessageStream` expose no completion hook — `Close` merely closes a private body — so the only
+  ways to learn that a stream ended are to add a hook to the provider packages (which would make them carry
+  the compose layer's concurrency semantics, against ADR 0007's isolation rule) or to return a wrapper type
+  from `…Stream` (which would break the method sets that let pools nest). Both were rejected. The residual
+  risk of the unimplemented option is also worth recording: a caller who abandons a stream without closing it
+  would hold the slot forever and deadlock the pool, converting a leaked stream into a total outage.
 
 ## References
 

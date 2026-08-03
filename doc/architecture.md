@@ -173,7 +173,7 @@ When an official API changes, update these in sync:
 
 1. the provider's wire types and client;
 2. the relevant `doc/` document — the protocol's own page, and this one if a package boundary moved;
-3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md) — plus the [CHANGES.md](../CHANGES.md) index.
+3. the protocol's change log — [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) or [openai/openai-api-changes.md](./openai/openai-api-changes.md).
 
 When a step does not apply, say so explicitly rather than skipping it silently.
 

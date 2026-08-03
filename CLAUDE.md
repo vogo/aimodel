@@ -94,7 +94,7 @@ other's provider; and every public wire type survives a marshal → unmarshal �
 unchanged.
 
 **Three-way sync**: when an official API changes, update in order — ① the provider's wire types and
-client → ② the relevant `doc/` document → ③ the protocol's change log plus the `CHANGES.md` index.
+client → ② the relevant `doc/` document → ③ the protocol's change log (`doc/*/**-api-changes.md`).
 When a step does not apply, state so explicitly. Details in [doc/architecture.md](./doc/architecture.md).
 
 Step ② includes the ADRs: if a change contradicts an invariant an accepted ADR states, the ADR is

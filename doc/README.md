@@ -31,7 +31,6 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 - [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API, multi-backend compose.
 - [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
-- [../CHANGES.md](../CHANGES.md) — release index and the merged timeline of both protocols' change logs.
 
 ## Official API references
 
@@ -47,6 +46,6 @@ When an official API changes, update these in sync:
 
 1. the provider's wire types and client;
 2. the relevant document here — the protocol's own page, and [architecture.md](./architecture.md) if a package boundary moved;
-3. that protocol's change log (`*-api-changes.md`) plus the [CHANGES.md](../CHANGES.md) index.
+3. that protocol's change log (`*-api-changes.md`).
 
 When a step does not apply, say so explicitly rather than skipping it silently. The root `README.md` / `CLAUDE.md` change only when the public usage surface or the agent-facing guidance does — they link here rather than restating design.

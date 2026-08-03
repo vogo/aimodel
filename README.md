@@ -23,8 +23,6 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 | Anthropic Messages API | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
 | Multi-backend composition | [doc/design/compose.md](./doc/design/compose.md) |
 
-Sync status against the official APIs: [CHANGES.md](./CHANGES.md).
-
 | Protocol | Official docs | Package |
 |---|---|---|
 | OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [`provider/openai/`](./provider/openai/README.md) |

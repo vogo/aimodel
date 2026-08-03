@@ -7,7 +7,6 @@ This file records **how aimodel's OpenAI wrapper tracks the official OpenAI APIs
 - **Official protocols**: Chat Completions (`POST /chat/completions`) and, since 2026-08-01, Responses (`POST /v1/responses`) — neither carries a standalone version number, both are keyed by the endpoint
 - **Official docs**: https://platform.openai.com/docs/api-reference/chat · https://platform.openai.com/docs/api-reference/responses
 - **Implementation notes**: [openai-chat-api.md](./openai-chat-api.md) · [openai-response-api.md](./openai-response-api.md)
-- **Index of both protocols**: [../../CHANGES.md](../../CHANGES.md)
 
 **Maintenance convention**: see [../architecture.md](../architecture.md) §6. Every entry carries at least a date, the official change, and a wrapper change summary.
 

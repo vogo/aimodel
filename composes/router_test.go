@@ -21,8 +21,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -818,6 +820,161 @@ func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
 	if alias := activeAlias(r); alias != "healthy" {
 		t.Fatalf("active = %q, want healthy", alias)
 	}
+}
+
+// A router serves one dispatch at a time: the attempt closure is never running
+// for two callers at once.
+func TestDispatch_SerialisesConcurrentCalls(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
+
+	var (
+		inFlight atomic.Int32
+		peak     atomic.Int32
+		served   atomic.Int32
+	)
+
+	var wg sync.WaitGroup
+
+	for range 50 {
+		wg.Go(func() {
+			_, err := Dispatch(context.Background(), r, Call{}, func(context.Context, int) (int, error) {
+				n := inFlight.Add(1)
+				for {
+					high := peak.Load()
+					if n <= high || peak.CompareAndSwap(high, n) {
+						break
+					}
+				}
+
+				// Widen the window a real overlap would land in.
+				runtime.Gosched()
+
+				inFlight.Add(-1)
+				served.Add(1)
+
+				return 0, nil
+			})
+			if err != nil {
+				t.Errorf("dispatch: %v", err)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if peak.Load() != 1 {
+		t.Fatalf("peak concurrent attempts = %d, want 1", peak.Load())
+	}
+
+	if served.Load() != 50 {
+		t.Fatalf("served = %d, want all 50 calls", served.Load())
+	}
+}
+
+// Waiting for the call slot must stay cancellable: a caller queued behind a slow
+// call gives up on its own context rather than being pinned to it.
+func TestDispatch_CancelWhileQueuedForTheCallSlot(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"))
+
+	holding := make(chan struct{})
+	finish := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		_, err := Dispatch(context.Background(), r, Call{}, func(context.Context, int) (int, error) {
+			close(holding)
+			<-finish
+
+			return 0, nil
+		})
+		if err != nil {
+			t.Errorf("holder dispatch: %v", err)
+		}
+	})
+
+	<-holding
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	log := &attemptLog{}
+
+	_, err := dispatchTo(ctx, r, Call{}, log, nil, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled while queued, got %v", err)
+	}
+
+	if len(log.seen()) != 0 {
+		t.Fatalf("a queued call must not attempt anything, saw %v", log.seen())
+	}
+
+	close(finish)
+	wg.Wait()
+}
+
+// The slot is released on every exit path, including the failing ones — a router
+// that leaked it would deadlock on the next call.
+func TestDispatch_ReleasesTheCallSlotOnFailure(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"))
+	log := &attemptLog{}
+
+	// Exhausting every endpoint returns a *MultiError.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}); err == nil {
+		t.Fatal("expected the dispatch to fail")
+	}
+
+	// Nothing left to try returns the sentinel.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0); !errors.Is(err, ErrNoActiveModels) {
+		t.Fatalf("expected ErrNoActiveModels, got %v", err)
+	}
+
+	// The slot must be free: taking it here would block forever if it leaked.
+	select {
+	case r.callSlot <- struct{}{}:
+		<-r.callSlot
+	default:
+		t.Fatal("the call slot leaked across a failing dispatch")
+	}
+}
+
+// Stats reads pool state, not the call slot: it must answer while a call is in
+// flight rather than queueing behind it.
+func TestStats_NotBlockedByAnInFlightCall(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"))
+
+	holding := make(chan struct{})
+	observed := make(chan []EndpointStat, 1)
+	finish := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		_, err := Dispatch(context.Background(), r, Call{}, func(context.Context, int) (int, error) {
+			close(holding)
+			observed <- r.Stats() // would deadlock if Stats waited for the slot
+			<-finish
+
+			return 0, nil
+		})
+		if err != nil {
+			t.Errorf("dispatch: %v", err)
+		}
+	})
+
+	<-holding
+
+	select {
+	case stats := <-observed:
+		if len(stats) != 1 {
+			t.Fatalf("stats len = %d, want 1", len(stats))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stats blocked behind an in-flight call")
+	}
+
+	close(finish)
+	wg.Wait()
 }
 
 func TestDispatch_ObserverSeesEveryAttempt(t *testing.T) {
