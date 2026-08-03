@@ -30,6 +30,15 @@ import (
 // not this sentinel.
 var ErrNoActiveModels = errors.New("aimodel/composes: no active models available")
 
+// ErrCallInProgress reports that the router is already serving a call. A pool
+// belongs to one conversation and serves it one call at a time, so a second
+// concurrent call is a usage error rather than something to queue: it is
+// rejected immediately, without touching any endpoint or any health state.
+//
+// A caller that genuinely needs concurrent requests builds one pool per
+// concurrent worker; pools are cheap and each keeps its own active endpoint.
+var ErrCallInProgress = errors.New("aimodel/composes: a call is already in progress on this pool")
+
 // ErrCapabilityNotSatisfied reports that no endpoint declares the labels a call
 // required. It is returned before any attempt is made. Match with errors.Is;
 // the wrapping CapabilityError names the labels.

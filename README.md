@@ -252,6 +252,8 @@ response, err := cc.ChatCompletions(ctx, request)          // Chat Completions
 answer, err := cc.Responses(ctx, responsesRequest)         // Responses — same pool, same health
 ```
 
+A pool belongs to one conversation and serves it one call at a time: a concurrent second call is rejected with `composes.ErrCallInProgress` rather than queued, so parallel work means one pool per conversation.
+
 Anthropic backends use `composes/anthropics` the same way, with `Messages` / `MessagesStream`. The two pools are separate: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover.
 
 A `ComposeClient` is itself a backend, so pools nest. Details: [doc/design/compose.md](./doc/design/compose.md); the reasoning for the split: [ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md).

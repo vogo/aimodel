@@ -48,9 +48,10 @@
 // endpoint returns to candidacy after the recover time without displacing
 // whoever took its place.
 //
-// A router also serves one dispatch at a time; concurrent callers queue for it,
-// and a queued caller is released by its own context. Throughput per pool is one
-// request, so parallelism means one pool per worker. See
+// A pool also belongs to one conversation and serves it one call at a time: a
+// second call arriving while one is in flight is rejected with
+// [ErrCallInProgress] rather than queued. Parallel work means one pool per
+// conversation. See
 // doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 //
 // # The boundary

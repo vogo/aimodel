@@ -142,29 +142,41 @@ not update health.
 
 ### One call at a time
 
-A router serves **one dispatch at a time**. Concurrent callers queue for its single call slot, so a pool is
-never running two backend requests at once. Three properties make that safe to rely on:
+A pool belongs to **one conversation** and serves it **one call at a time**. A second call arriving while one
+is in flight does not queue — it is rejected immediately with `composes.ErrCallInProgress`, having contacted
+no endpoint and changed no health state. Concurrency on a single pool is a usage error, not a load to smooth
+out, so it is reported rather than hidden behind latency.
 
-- **Queueing is cancellable.** A caller waiting for the slot is released by its own context ending, so it
-  never gets pinned behind another call's retry round.
-- **The capability filter runs before the queue.** A call no endpoint can serve fails with a
-  `*CapabilityError` immediately instead of waiting for a slot it would only hand straight back.
-- **`Stats()` does not queue.** It reads pool state under a different lock and answers while a call is in
-  flight.
+```go
+_, err := cc.ChatCompletions(ctx, request)
+if errors.Is(err, composes.ErrCallInProgress) {
+    // Another call owns this pool. Build one pool per concurrent conversation.
+}
+```
 
-The cost is explicit: throughput per pool is one request, and a slow endpoint's retry round (up to
-`base × (2^maxRetries − 1)`) delays every queued caller. Callers wanting parallelism build one pool per
-concurrent worker — pools are cheap, and each keeps its own active endpoint and health.
+Three properties round this out:
 
-> **Streaming is serialised up to establishment, not for the stream's lifetime.** The slot is released when
-> `…Stream` returns, so the caller reads the stream while the next call proceeds. Holding it until the stream
-> was closed would require a hook the provider stream types do not have, and a caller who abandoned a stream
-> without closing it would deadlock the pool permanently.
+- **The capability filter runs before the busy check.** A call no endpoint can serve is reported as a
+  `*CapabilityError`, never as a busy pool — the two failures mean different things to a caller.
+- **The slot is released on every exit path**, including `*MultiError` and `ErrNoActiveModels`, so a failed
+  call never strands the pool.
+- **`Stats()` does not contend for it.** It reads pool state under a different lock and answers while a call
+  is in flight.
+
+Callers that genuinely need parallel requests build **one pool per concurrent conversation**. Pools are cheap,
+and each keeps its own active endpoint and health — which is the point: a shared pool would give the two
+conversations a shared active endpoint anyway.
+
+> **Streaming holds the pool only until the stream is established.** The slot is released when `…Stream`
+> returns, so the caller reads the stream while a subsequent call may proceed. Holding it until the stream was
+> closed would need a completion hook the provider stream types do not expose, and an abandoned stream would
+> then wedge the pool permanently. For the one-conversation-per-pool usage this package targets, the caller is
+> reading the stream before it issues the next call anyway.
 
 Within a call, the active endpoint and its *generation* change together under a separate short-held lock, and
-a caller may only retire the active endpoint it observed at the generation it saw. That is what keeps a nested
-pool — where the outer pool's attempt calls an inner one — from switching twice. No lock is held across a
-network attempt or a retry wait.
+a caller may only retire the active endpoint it observed at the generation it saw. That guard is what keeps
+the switch count at one even when calls race for the pool. No lock is held across a network attempt or a
+retry wait.
 
 ## 4. Selection strategies
 
@@ -284,7 +296,8 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests { /* eve
 
 Declaring that interface locally, rather than importing a provider's error type, is the pattern the core itself
 uses. When there was nothing to try at all — every relevant endpoint dead and none recovered — the result is
-`composes.ErrNoActiveModels` instead.
+`composes.ErrNoActiveModels` instead. Two further sentinels never reach a backend at all:
+`composes.ErrCapabilityNotSatisfied` (wrapped by `*CapabilityError`) and `composes.ErrCallInProgress`.
 
 ## 9. Adding a protocol
 

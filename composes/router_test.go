@@ -785,8 +785,10 @@ func TestDispatch_CancelledDuringRetryWait(t *testing.T) {
 	}
 }
 
-// Many callers watching the same active endpoint fail must produce exactly one
-// switch between them, not one per caller.
+// Callers racing on a pool whose active endpoint is failing must produce exactly
+// one switch between them, not one per caller. Serialisation makes the common
+// case trivial; the generation guard is what holds when a call is rejected
+// between another call's retirement and its replacement.
 func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, endpointsNamed("dying", "healthy"))
 
@@ -797,6 +799,10 @@ func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
 			log := &attemptLog{}
 
 			got, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1)
+			if errors.Is(err, ErrCallInProgress) {
+				return // lost the race for the pool; nothing to assert
+			}
+
 			if err != nil {
 				t.Errorf("dispatch: %v", err)
 
@@ -822,15 +828,17 @@ func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
 	}
 }
 
-// A router serves one dispatch at a time: the attempt closure is never running
-// for two callers at once.
-func TestDispatch_SerialisesConcurrentCalls(t *testing.T) {
+// A pool serves one conversation: a second call arriving while one is in flight
+// is rejected outright, so the attempt closure never runs for two callers at
+// once and nobody queues.
+func TestDispatch_RejectsAConcurrentCall(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
 
 	var (
 		inFlight atomic.Int32
 		peak     atomic.Int32
 		served   atomic.Int32
+		rejected atomic.Int32
 	)
 
 	var wg sync.WaitGroup
@@ -854,7 +862,12 @@ func TestDispatch_SerialisesConcurrentCalls(t *testing.T) {
 
 				return 0, nil
 			})
-			if err != nil {
+
+			switch {
+			case err == nil:
+			case errors.Is(err, ErrCallInProgress):
+				rejected.Add(1)
+			default:
 				t.Errorf("dispatch: %v", err)
 			}
 		})
@@ -866,15 +879,21 @@ func TestDispatch_SerialisesConcurrentCalls(t *testing.T) {
 		t.Fatalf("peak concurrent attempts = %d, want 1", peak.Load())
 	}
 
-	if served.Load() != 50 {
-		t.Fatalf("served = %d, want all 50 calls", served.Load())
+	if served.Load()+rejected.Load() != 50 {
+		t.Fatalf("served %d + rejected %d, want 50 accounted for", served.Load(), rejected.Load())
+	}
+
+	// The slot is free again once the storm passes, so the pool is still usable.
+	log := &attemptLog{}
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1); err != nil {
+		t.Fatalf("pool unusable after concurrent rejection: %v", err)
 	}
 }
 
-// Waiting for the call slot must stay cancellable: a caller queued behind a slow
-// call gives up on its own context rather than being pinned to it.
-func TestDispatch_CancelWhileQueuedForTheCallSlot(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"))
+// The rejection is immediate and inert: no endpoint is contacted, no health
+// changes, and the in-flight call is undisturbed.
+func TestDispatch_ConcurrentCallIsRejectedWithoutSideEffects(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
 
 	holding := make(chan struct{})
 	finish := make(chan struct{})
@@ -895,18 +914,61 @@ func TestDispatch_CancelWhileQueuedForTheCallSlot(t *testing.T) {
 
 	<-holding
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	before := r.Stats()
 
 	log := &attemptLog{}
 
-	_, err := dispatchTo(ctx, r, Call{}, log, nil, 0)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled while queued, got %v", err)
+	_, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1)
+	if !errors.Is(err, ErrCallInProgress) {
+		t.Fatalf("expected ErrCallInProgress, got %v", err)
 	}
 
 	if len(log.seen()) != 0 {
-		t.Fatalf("a queued call must not attempt anything, saw %v", log.seen())
+		t.Fatalf("a rejected call must not attempt anything, saw %v", log.seen())
+	}
+
+	after := r.Stats()
+	for i := range after {
+		if after[i].Status != before[i].Status || after[i].ErrorCount != before[i].ErrorCount {
+			t.Fatalf("a rejected call changed health: %+v → %+v", before[i], after[i])
+		}
+	}
+
+	close(finish)
+	wg.Wait()
+}
+
+// An unservable call is reported as unservable, not as a busy pool: the
+// capability filter runs before the slot is claimed.
+func TestDispatch_CapabilityFailureOutranksTheBusyCheck(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "plain", Declares: Declare()},
+	})
+
+	holding := make(chan struct{})
+	finish := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		_, err := Dispatch(context.Background(), r, Call{}, func(context.Context, int) (int, error) {
+			close(holding)
+			<-finish
+
+			return 0, nil
+		})
+		if err != nil {
+			t.Errorf("holder dispatch: %v", err)
+		}
+	})
+
+	<-holding
+
+	log := &attemptLog{}
+
+	_, err := dispatchTo(context.Background(), r, Call{Requires: []string{"tools"}}, log, nil, 0)
+	if !errors.Is(err, ErrCapabilityNotSatisfied) {
+		t.Fatalf("expected ErrCapabilityNotSatisfied, got %v", err)
 	}
 
 	close(finish)

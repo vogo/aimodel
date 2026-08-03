@@ -719,7 +719,9 @@ func TestNestedComposeClients(t *testing.T) {
 	}
 }
 
-func TestConcurrentRequests(t *testing.T) {
+// A pool serves one conversation: concurrent callers do not queue, they are
+// rejected with composes.ErrCallInProgress and the pool stays usable.
+func TestConcurrentRequests_AreRejectedNotQueued(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
 
@@ -730,16 +732,26 @@ func TestConcurrentRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var wg sync.WaitGroup
+	var (
+		wg       sync.WaitGroup
+		served   atomic.Int64
+		rejected atomic.Int64
+	)
 
 	errCh := make(chan error, 50)
 
 	for range 50 {
 		wg.Go(func() {
-			if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
+			switch _, err := cc.ChatCompletions(context.Background(), testRequest()); {
+			case err == nil:
+				served.Add(1)
+			case errors.Is(err, composes.ErrCallInProgress):
+				rejected.Add(1)
+			default:
 				errCh <- err
 			}
 
+			// Stats never queues behind a call, so it answers throughout.
 			_ = cc.Stats()
 		})
 	}
@@ -748,7 +760,20 @@ func TestConcurrentRequests(t *testing.T) {
 	close(errCh)
 
 	for err := range errCh {
-		t.Errorf("concurrent request error: %v", err)
+		t.Errorf("unexpected concurrent request error: %v", err)
+	}
+
+	if served.Load()+rejected.Load() != 50 {
+		t.Fatalf("served %d + rejected %d, want 50 accounted for", served.Load(), rejected.Load())
+	}
+
+	if served.Load() == 0 {
+		t.Fatal("no request was served at all")
+	}
+
+	// The pool is usable again once the storm passes.
+	if _, err := cc.ChatCompletions(context.Background(), testRequest()); err != nil {
+		t.Fatalf("pool unusable after concurrent rejection: %v", err)
 	}
 }
 

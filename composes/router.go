@@ -62,10 +62,11 @@ const noActive = -1
 //
 // # One call at a time
 //
-// A router also serves one dispatch at a time: concurrent callers queue, so a
-// pool never has two backend requests in flight. Throughput per pool is
-// therefore one request — build one pool per concurrent worker if you need
-// parallelism. See doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
+// A pool belongs to one conversation and serves it one call at a time. A second
+// call arriving while one is in flight is rejected with [ErrCallInProgress]
+// rather than queued: concurrency here is a usage error, not a load to smooth
+// out. A caller that needs parallel requests builds one pool per worker.
+// See doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 type Router struct {
 	endpoints        []Endpoint
 	health           []*endpointHealth
@@ -80,10 +81,9 @@ type Router struct {
 	waitFunc func(ctx context.Context, d time.Duration) error
 
 	// callSlot serialises dispatches: it holds exactly one token, so a router
-	// serves one call at a time and concurrent callers queue. It is a channel
-	// rather than a mutex because a caller waiting for it must be released by its
-	// own context ending — a queue behind a long retry round would otherwise be
-	// uncancellable.
+	// serves one call at a time. It is a channel rather than a mutex because the
+	// claim is a *try*, not a wait — a second concurrent call is rejected with
+	// ErrCallInProgress rather than queued.
 	callSlot chan struct{}
 
 	// mu protects rng, active and generation — everything about *which* endpoint
@@ -334,11 +334,10 @@ type Call struct {
 // candidate to try at all yields ErrNoActiveModels; an unsatisfiable Requires
 // set yields a *CapabilityError before any attempt is made.
 //
-// A router serves one dispatch at a time. Concurrent callers queue for the
-// router's single call slot, and a caller waiting in that queue is released by
-// its own context ending. The capability filter runs before the queue, so a call
-// no endpoint can serve fails fast instead of waiting for a slot it would only
-// give straight back.
+// A router serves one dispatch at a time: a call arriving while another is in
+// flight is rejected with ErrCallInProgress, having touched no endpoint and no
+// health state. The capability filter runs before that check, so an unservable
+// call is reported as such rather than as a busy pool.
 func Dispatch[T any](
 	ctx context.Context,
 	r *Router,
@@ -349,7 +348,8 @@ func Dispatch[T any](
 
 	// The capability filter runs before health, the active endpoint and the
 	// strategy alike. A call whose required labels no endpoint declares fails
-	// fast, before any attempt — and before queueing for the call slot.
+	// fast, before any attempt — and before the call slot is claimed, so an
+	// unservable call is never reported as a busy pool.
 	capable := r.capableIndices(call)
 	if len(call.Requires) > 0 && len(capable) == 0 {
 		return zero, &CapabilityError{Required: slices.Clone(call.Requires), Considered: r.Aliases()}
@@ -516,19 +516,24 @@ func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (end
 	return endpointPick{endpoint: pick, generation: r.generation, serving: true}, true
 }
 
-// acquire takes the router's single call slot, waiting for the call in front to
-// finish. It returns the context's error instead if the caller gives up first,
-// so queueing behind a long retry round never makes a call uncancellable.
+// acquire claims the router's single call slot, or reports ErrCallInProgress if
+// another call already holds it. It never waits: a pool serves one conversation,
+// so a second concurrent call is a usage error, and queueing would only convert
+// that error into unbounded latency.
 func (r *Router) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	select {
 	case r.callSlot <- struct{}{}:
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		return ErrCallInProgress
 	}
 }
 
-// release hands the call slot to whoever is waiting.
+// release gives the call slot back.
 func (r *Router) release() { <-r.callSlot }
 
 // retireActive gives up the pool's active endpoint, but only if it is still the
