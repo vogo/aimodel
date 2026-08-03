@@ -125,34 +125,132 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	}
 }
 
-// TestComposesDependsOnOpenAIOnly verifies composes is what ADR 0007 declares
-// it to be: a tool for the OpenAI-compatible wire format, not a vendor-neutral
-// package.
+// TestComposesCoreImportsNoProvider verifies the routing core is what ADR 0008
+// declares it to be: protocol-neutral machinery, not a wire-format tool.
 //
-// The earlier rule — composes may import no provider at all — existed to keep
-// canonical dispatch vendor-neutral. ADR 0007 gives that constraint up
-// deliberately, and replaces it with this narrower one: exactly one provider,
-// and no canonical layer. Dispatching Anthropic backends means an isomorphic
-// loop in that package, never a shared request model here.
-func TestComposesDependsOnOpenAIOnly(t *testing.T) {
+// This is stricter than the rule ADR 0007 left in place ("composes depends on
+// provider/openai and on no other provider"). Once the core serves more than
+// one protocol, importing any single provider would make one wire format
+// privileged — and importing two would be a canonical layer with extra steps.
+func TestComposesCoreImportsNoProvider(t *testing.T) {
 	imports := packageImports(t, "composes")
 
 	for path := range imports {
-		if strings.Contains(path, "/provider/") && path != "github.com/vogo/aimodel/provider/openai" {
-			t.Errorf("composes must import no provider other than openai, found %q", path)
+		if strings.HasPrefix(path, "github.com/vogo/aimodel") {
+			t.Errorf("the composes core must import nothing from this module, found %q", path)
 		}
 	}
+}
 
-	if !hasProviderImport(imports, "openai") {
-		t.Error("composes dispatches over the OpenAI wire format and should import provider/openai")
+// TestComposeWrappersAreIsolated verifies the two protocol wrappers stay
+// independent of each other: each sees exactly its own provider, neither sees
+// the other's package, and neither reaches the module root. A wrapper that
+// imported the other would be the first half of a cross-protocol request model.
+func TestComposeWrappersAreIsolated(t *testing.T) {
+	wrappers := map[string]struct{ own, forbidden string }{
+		"composes/openais":    {own: "openai", forbidden: "anthropic"},
+		"composes/anthropics": {own: "anthropic", forbidden: "openai"},
 	}
 
-	if imports["github.com/vogo/aimodel"] {
-		t.Error("composes must not depend on the root package")
+	for dir, want := range wrappers {
+		imports := packageImports(t, dir)
+
+		if !hasProviderImport(imports, want.own) {
+			t.Errorf("%s should import provider/%s, the protocol it wraps", dir, want.own)
+		}
+
+		if hasProviderImport(imports, want.forbidden) {
+			t.Errorf("%s must not import provider/%s", dir, want.forbidden)
+		}
+
+		if !imports["github.com/vogo/aimodel/composes"] {
+			t.Errorf("%s should build on the neutral composes core", dir)
+		}
+
+		if imports["github.com/vogo/aimodel"] {
+			t.Errorf("%s must not depend on the root package", dir)
+		}
+
+		for other := range wrappers {
+			if other != dir && imports["github.com/vogo/aimodel/"+other] {
+				t.Errorf("%s must not import %s; the two pools share routing, never types", dir, other)
+			}
+		}
+	}
+}
+
+// TestComposesCoreExportsNoProviderType verifies the routing core's public API
+// carries no provider request or response type. The import check above already
+// makes that impossible today; this guard states the invariant directly, so a
+// future import of a provider fails here as a *public API* violation rather
+// than looking like a mere dependency question.
+func TestComposesCoreExportsNoProviderType(t *testing.T) {
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir is sufficient here; this SDK stays zero-dependency.
+	pkgs, err := parser.ParseDir(fset, "composes", func(fi fs.FileInfo) bool {
+		name := fi.Name()
+
+		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
+	}, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse composes: %v", err)
 	}
 
-	if imports["github.com/vogo/aimodel/ais"] {
-		t.Error("composes must not depend on the canonical package")
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			// Local names bound to a package inside this module. A qualified
+			// identifier using one of these in an exported declaration is a
+			// module type crossing into the neutral API.
+			moduleAliases := map[string]string{}
+
+			for _, imp := range file.Imports {
+				importPath, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					t.Fatalf("unquote import %s: %v", imp.Path.Value, err)
+				}
+
+				if !strings.HasPrefix(importPath, "github.com/vogo/aimodel") {
+					continue
+				}
+
+				name := importPath[strings.LastIndex(importPath, "/")+1:]
+				if imp.Name != nil {
+					name = imp.Name.Name
+				}
+
+				moduleAliases[name] = importPath
+			}
+
+			if len(moduleAliases) == 0 {
+				continue
+			}
+
+			for _, decl := range file.Decls {
+				if _, exported := exportedDeclName(decl); !exported {
+					continue
+				}
+
+				ast.Inspect(decl, func(node ast.Node) bool {
+					sel, ok := node.(*ast.SelectorExpr)
+					if !ok {
+						return true
+					}
+
+					ident, ok := sel.X.(*ast.Ident)
+					if !ok {
+						return true
+					}
+
+					if importPath, found := moduleAliases[ident.Name]; found {
+						t.Errorf("%s: exported API references %s.%s from %q; the routing core's public API is protocol-neutral",
+							path, ident.Name, sel.Sel.Name, importPath)
+					}
+
+					return true
+				})
+			}
+		}
 	}
 }
 
@@ -219,9 +317,15 @@ func exportedDeclName(decl ast.Decl) (string, bool) {
 	return "", false
 }
 
-// TestNoSharedSemanticPackage verifies the two providers share no package from
-// this module. A type both of them reach for is a canonical layer by another
-// name, whatever it is called.
+// TestNoSharedSemanticPackage verifies the two *providers* share no package
+// from this module. A type both of them reach for is a canonical layer by
+// another name, whatever it is called.
+//
+// The compose wrappers do share one package — the neutral routing core — and
+// that is not a loophole in this check: the core is downstream of both, imports
+// neither, and carries no type either provider names. The rule this test
+// enforces is about what a provider depends on, which is what a canonical layer
+// would have to change (ADR 0008).
 func TestNoSharedSemanticPackage(t *testing.T) {
 	openaiImports := packageImports(t, "provider/openai")
 	anthropicImports := packageImports(t, "provider/anthropic")
@@ -241,9 +345,11 @@ var protocolSemanticWords = []string{
 }
 
 // neutralPackages are the packages this module declares vendor-neutral.
-// composes is deliberately absent: ADR 0007 states it is an OpenAI-wire tool,
-// and its dependency guard says so explicitly.
-var neutralPackages = []string{"."}
+// composes joined them in v0.8.0: ADR 0008 splits the OpenAI-wire surface out
+// into composes/openais, leaving a routing core that may not name a protocol
+// concept. The wrappers are deliberately absent — naming their own protocol is
+// their whole job.
+var neutralPackages = []string{".", "composes"}
 
 // TestNeutralPackagesDeclareNoProtocolSemantics checks declared identifiers
 // over the AST, so a word inside a comment or a string literal cannot fail the

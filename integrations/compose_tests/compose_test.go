@@ -21,13 +21,15 @@ import (
 	"os"
 	"testing"
 
-	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/composes/openais"
 	"github.com/vogo/aimodel/provider/openai"
 )
 
-// Compose dispatches across backends that speak one wire format. These
-// examples use several OpenAI-compatible endpoints, which is the shape real
-// deployments have: one request body, many endpoints that can serve it.
+// Compose dispatches across backends that speak one wire format. A pool is
+// built with the wrapper for that protocol — composes/openais here,
+// composes/anthropics in TestComposeAnthropicClient — and configured with the
+// neutral core's strategies and options. The two pools share the routing core,
+// never a request: there is no cross-protocol failover.
 
 // backendPrefixes names the environment groups a backend is configured from:
 // <PREFIX>_API_KEY, <PREFIX>_BASE_URL and <PREFIX>_MODEL.
@@ -43,12 +45,24 @@ func TestComposeClient(t *testing.T) {
 	testWeight(entries)
 	testRandom(entries)
 	testCanary()
+	testResponses(entries)
+}
+
+// TestComposeAnthropicClient is the same operational machinery over the
+// Anthropic Messages protocol: its own pool, its own wire types, one shared
+// routing core.
+func TestComposeAnthropicClient(t *testing.T) {
+	if len(buildAnthropicSpecs()) == 0 {
+		t.Skip("no Anthropic backend configured; set ANTHROPIC_API_KEY and ANTHROPIC_MODEL")
+	}
+
+	testMessages()
 }
 
 // buildComposeEntries configures one entry per fully-specified environment
 // group and skips the rest, so the examples run with whatever is available.
-func buildComposeEntries() []composes.ModelEntry {
-	var entries []composes.ModelEntry
+func buildComposeEntries() []openais.ModelEntry {
+	var entries []openais.ModelEntry
 
 	for _, prefix := range backendPrefixes {
 		apiKey, model := os.Getenv(prefix+"_API_KEY"), os.Getenv(prefix+"_MODEL")
@@ -61,7 +75,7 @@ func buildComposeEntries() []composes.ModelEntry {
 			options = append(options, openai.WithBaseURL(baseURL))
 		}
 
-		entries = append(entries, composes.ModelEntry{
+		entries = append(entries, openais.ModelEntry{
 			Name:   model,
 			Client: openai.NewClient(apiKey, options...),
 		})

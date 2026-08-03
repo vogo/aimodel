@@ -23,14 +23,15 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/composes/openais"
 )
 
-func testWeight(entries []composes.ModelEntry) {
+func testWeight(entries []openais.ModelEntry) {
 	fmt.Println("=== Compose Weight ===")
 
 	// Send three times as much traffic to the first backend as to each of the
 	// others.
-	weighted := make([]composes.ModelEntry, len(entries))
+	weighted := make([]openais.ModelEntry, len(entries))
 	for i, entry := range entries {
 		entry.Weight = 1
 		if i == 0 {
@@ -40,7 +41,7 @@ func testWeight(entries []composes.ModelEntry) {
 		weighted[i] = entry
 	}
 
-	cc, err := composes.NewComposeClient(composes.StrategyWeight, weighted)
+	cc, err := openais.NewComposeClient(composes.StrategyWeight, weighted)
 	if err != nil {
 		log.Fatal(err)
 	}

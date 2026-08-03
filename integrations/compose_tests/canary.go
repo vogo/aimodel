@@ -24,6 +24,7 @@ import (
 	"os"
 
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/composes/openais"
 	"github.com/vogo/aimodel/provider/openai"
 )
 
@@ -45,7 +46,7 @@ func testCanary() {
 
 	model := os.Getenv("OPENAI_MODEL")
 
-	cc, err := composes.NewFromEndpoints(composes.StrategyWeight, []composes.EndpointSpec{
+	cc, err := openais.NewFromEndpoints(composes.StrategyWeight, []openais.EndpointSpec{
 		{
 			Alias:   "stable",
 			BaseURL: os.Getenv("OPENAI_BASE_URL"),

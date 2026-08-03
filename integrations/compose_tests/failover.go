@@ -24,12 +24,13 @@ import (
 	"time"
 
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/composes/openais"
 )
 
-func testFailover(entries []composes.ModelEntry) {
+func testFailover(entries []openais.ModelEntry) {
 	fmt.Println("=== Compose Failover ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyFailover, entries,
+	cc, err := openais.NewComposeClient(composes.StrategyFailover, entries,
 		composes.WithRecoveryInterval(30*time.Second))
 	if err != nil {
 		log.Fatal(err)
