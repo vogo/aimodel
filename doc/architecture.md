@@ -47,7 +47,7 @@ There is no unified client and no shared request/response model. A caller picks 
 
 Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
 
-This is a reversal. Up to v0.5.x a vendor-neutral layer (`ais`) held a shared schema that both protocols translated to and from. It was removed in v0.7.0 because its one differentiating capability — delivering one request to either protocol — was used nowhere, while its admission rule ("a field is canonical when ≥ 2 providers map it") kept most of each vendor's API out of reach, and everything excluded had to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md).
+There is deliberately no vendor-neutral layer holding a shared schema for both protocols to translate to and from. Its one differentiating capability — delivering one request to either protocol — is needed nowhere here, while its admission rule ("a field is shared when ≥ 2 providers map it") keeps most of each vendor's API out of reach, and everything excluded has to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md).
 
 ### 2.1 What the three principles mean here
 
@@ -87,7 +87,7 @@ The failure mode this architecture risks is gradual: duplicated helpers get fact
 1. Providers import neither each other nor the root package.
 2. No package from this module is imported by both providers.
 3. Both `*HTTPError` types satisfy `interface { StatusCode() int }` (compile-time assertion).
-4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. Since v0.8.0 `composes` is one of those packages; its two wrappers deliberately are not.
+4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. `composes` is one of those packages; its two wrappers deliberately are not.
 5. Every exported wire type round-trips losslessly, and every exported struct is either round-tripped or explicitly declared not to be a wire type.
 6. The routing core imports nothing from this module — not one provider, not two — and its exported API references no type from this module.
 7. The two compose wrappers import neither each other nor the other's provider, and neither imports the root package.

@@ -72,7 +72,7 @@ Guard tests enforce this in CI rather than leaving it to convention: providers i
 other nor the root package; no public API references a shared semantic package; both `*HTTPError`
 types satisfy `StatusCode() int`; packages declared vendor-neutral contain no protocol-semantic
 identifiers (`message`, `content`, `tool`, `usage`, …), checked over the AST — `composes` is one of
-them since v0.8.0, its wrappers deliberately are not; the routing core imports nothing from this
+them, its wrappers deliberately are not; the routing core imports nothing from this
 module and exports no type from it; the two compose wrappers import neither each other nor the
 other's provider; and every public wire type survives a marshal → unmarshal → marshal round trip
 unchanged.
@@ -135,7 +135,7 @@ automatic interoperability between protocols.
 Packages:
 
 - `provider/openai`, `provider/anthropic` — the two protocol clients, mutually independent
-- `composes/` — the neutral routing core: strategies, health, probes, aliases, observers, attribution
+- `composes/` — the neutral routing core: strategies, active endpoint, health, retries, aliases, observers, attribution
 - `composes/openais/` — OpenAI-wire pools: Chat Completions **and** Responses
 - `composes/anthropics/` — Anthropic Messages pools
 - `integrations/` — integration tests and usage examples per provider and for compose patterns

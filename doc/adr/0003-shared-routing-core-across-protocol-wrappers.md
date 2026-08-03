@@ -25,7 +25,7 @@ The narrow reading — every protocol writes its own dispatch loop — was rejec
    Responses, and `provider/anthropic` has Messages. Writing the loop per protocol means the same
    state machine, the same timing arithmetic and the same strategy ordering written three times —
    each evolving, breaking and being tested separately. ADR 0002 accepts duplication as the price of
-   removing the shared model, and that price is right for SSE scanning and error parsing, which are
+   having no shared model, and that price is right for SSE scanning and error parsing, which are
    genuinely per-protocol. A health state machine is not.
 
 3. **The neutrality test already draws the right line, one layer up.** ADR 0002 §3 admits an
@@ -35,8 +35,8 @@ The narrow reading — every protocol writes its own dispatch loop — was rejec
    temptation to forbid it comes from the loop and the request type being one piece of code —
    separate them and the test passes cleanly.
 
-The failure mode ADR 0002 exists to prevent is a shared *request/response model* growing back. That
-risk is unchanged by this decision, and the guards below are what keep it unchanged.
+The failure mode ADR 0002 exists to prevent is a shared *request/response model*. That risk is
+unchanged by this decision, and the guards below are what keep it unchanged.
 
 ## Decision
 
@@ -108,7 +108,7 @@ Two smaller costs, recorded so they are not mistaken for oversights:
 
 ### Guards
 
-ADR 0002's five guards stand — with guard 4 now applying to `composes` itself — and two are added:
+ADR 0002's five guards stand — guard 4 applies to `composes` itself — and two are added:
 
 1. `provider/openai` and `provider/anthropic` import neither each other nor the root package.
 2. No public API mentions a shared semantic package.
@@ -144,8 +144,8 @@ ADR 0002's five guards stand — with guard 4 now applying to `composes` itself 
   and its per-endpoint request copy — a few hundred lines — and inherits every operational feature.
   It still gets no interoperability with the other pools, correctly, since there is none to give.
 
-- **The regrowth risk moves, and is guarded where it moved to.** The tempting shortcut is no longer
-  "share a request model"; it is "let the core peek at the request, just this once" — a `Call` field
+- **The regrowth risk has a different shape here, and is guarded in that shape.** The tempting
+  shortcut is not "share a request model" but "let the core peek at the request, just this once" — a `Call` field
   holding a message, or a type parameter constrained to something protocol-shaped. Guards 4, 6 and 7
   fail in CI on all three shapes.
 

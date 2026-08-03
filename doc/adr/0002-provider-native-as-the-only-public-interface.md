@@ -7,39 +7,33 @@
 
 ## Context
 
-The SDK used to put a provider-neutral canonical layer (`ais`) on top of per-vendor native wire
-models: one shared request/response schema, plus a bidirectional translation per provider. Reviewed
-against actual use, that layer cost more than it returned.
+The obvious way to serve two protocols from one API is a provider-neutral canonical layer: one shared
+request/response schema, plus a bidirectional translation per provider. That layer is rejected here,
+because it costs more than it returns.
 
-1. **Its one differentiating capability was never used.** A shared request model exists so the same
-   request can be delivered to different protocols. No caller in this repository did that — the
-   compose tests and every documented strategy dispatched within a single protocol. The real
-   requirement was failover across several backends speaking *one* wire format.
+1. **Its one differentiating capability has no demand.** A shared request model exists so the same
+   request can be delivered to different protocols. No caller in this repository does that — the
+   compose pools and every documented strategy dispatch within a single protocol. The real requirement
+   is failover across several backends speaking *one* wire format.
 
-2. **It is lossy by construction, and the loss grows.** A shared type can only admit a field when
-   two or more providers have a real, verifiable mapping for it. That rule is correct for a shared
-   type and, precisely because it is correct, keeps most of each vendor's API out. Everything
-   excluded had to travel through a `map[string]any` side channel with per-provider typed accessors,
-   merge rules for streaming, and its own error type. At that point the "portable" request is a
-   partial request plus a vendor-specific bag, which is not portability.
+2. **It is lossy by construction, and the loss grows.** A shared type can only admit a field when two
+   or more providers have a real, verifiable mapping for it. That rule is correct for a shared type
+   and, precisely because it is correct, keeps most of each vendor's API out. Everything excluded has
+   to travel through a `map[string]any` side channel with per-provider typed accessors, merge rules
+   for streaming, and its own error type. At that point the "portable" request is a partial request
+   plus a vendor-specific bag, which is not portability.
 
-3. **It delays access to shipped features.** A field documented upstream today could not reach
-   canonical callers until a second vendor shipped a mappable equivalent. The native layer had it on
-   day one; the shared layer's admission rule made the wrapper slower than the API it wraps.
+3. **It delays access to shipped features.** A field documented upstream today cannot reach a
+   canonical caller until a second vendor ships a mappable equivalent. A native surface has it on day
+   one; the shared layer's admission rule makes the wrapper slower than the API it wraps.
 
-4. **The exception was already spreading.** OpenAI's Responses API had to be exposed on
-   provider-native types, because no honest shared shape can be minted from one vendor. That is the
-   general case, not a special one: interaction forms and fields arrive per vendor and converge
-   later, if ever.
+4. **Its exceptions spread.** OpenAI's Responses API can only be exposed on provider-native types,
+   because no honest shared shape can be minted from one vendor. That is the general case, not a
+   special one: interaction forms and fields arrive per vendor and converge later, if ever.
 
-5. **The seam is unguarded.** A canonical field not wired into a translation is dropped silently,
-   compiles, and returns 200. The mitigation was procedural — a sync convention plus a field-count
-   sentinel that only ensures somebody is *asked*.
-
-The alternative considered and rejected was extracting the canonical types and their translations
-into a separate module, so any existing user would keep a maintained canonical API. There was no
-evidence of external canonical users, and two modules cost more to maintain than the option is
-worth.
+5. **Its seam is unguarded.** A canonical field not wired into a translation is dropped silently,
+   compiles, and returns 200. The only mitigation is procedural — a sync convention plus a sentinel
+   that ensures somebody is *asked* when a shared shape changes.
 
 ## Decision
 
@@ -59,7 +53,7 @@ vendor-neutral request/response model, no canonical translation, and no provider
    **if and only if** it can be implemented inside a single package without introducing a semantic
    data type that another provider imports. Anything requiring a shared request/response model,
    bidirectional field mapping, or a cross-provider decision about which fields to keep *is* a
-   canonical layer being rebuilt, and is rejected. Duplicating a small amount of logic between the
+   canonical layer, and is rejected. Duplicating a small amount of logic between the
    two providers is the accepted price.
 
    [ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md) applies this test to
@@ -91,8 +85,8 @@ vendor-neutral request/response model, no canonical translation, and no provider
 
 ### Guards
 
-The decision is enforced by tests rather than by convention, because the failure mode is gradual
-re-growth of a shared layer:
+The decision is enforced by tests rather than by convention, because the failure mode is the gradual
+growth of a shared layer:
 
 1. `provider/openai` and `provider/anthropic` import neither each other nor the root package.
 2. No public API mentions a shared semantic package.
@@ -110,17 +104,17 @@ settles which packages guard 4 applies to.
 
 - **Delivering one request to two protocols is not possible, and is not a goal.** A caller needing
   that writes the mapping, where it has the context to decide what each field should become — the
-  decision the canonical layer had to make blindly. A deployment that must fail a request over from
+  decision a shared layer would have to make blindly. A deployment that must fail a request over from
   an OpenAI-compatible backend to Anthropic runs two pools and maps the request itself.
 
 - **Duplication is expected.** Timeout options, stream aggregation, SSE scanning and error parsing
-  exist twice. The honest risk is that someone later factors them back into a shared package and
-  the canonical layer regrows under a new name. Guards 4 and 5 make that visible in CI rather than
+  exist twice. The honest risk is that someone factors them into a shared package and a canonical
+  layer grows there under a new name. Guards 4 and 5 make that visible in CI rather than
   gradual; the neutrality test above is the standard to apply.
 
-- **Anthropic's native surface carries what the canonical layer used to hide.** The "start usage +
-  terminal delta" merge is an observable `MessageStream.Usage()` instead of a private helper, and
-  unmodelled content blocks are the response's own blocks rather than entries in an extension bag.
+- **A native surface exposes what a shared one would have to hide.** Anthropic's "start usage +
+  terminal delta" merge is an observable `MessageStream.Usage()`, and unmodelled content blocks are
+  the response's own blocks.
 
 - **Adding a provider is cheap and local.** A new vendor is a new package with no contract to
   satisfy, no registration, and no negotiation about which of its fields are "shared enough". It

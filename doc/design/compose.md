@@ -22,13 +22,8 @@ The line between them is the rule from [ADR 0003](../adr/0003-shared-routing-cor
 The core sees endpoint indices, opaque capability labels, ordering metadata and a closure. It never sees
 a request, a response or a stream — not through a field, not through a type parameter. That is why it can
 be shared without becoming the canonical layer [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md)
-removed, and why the two wrappers form **separate pools**: one shares *how a candidate is chosen*, never
+rejects, and why the two wrappers form **separate pools**: one shares *how a candidate is chosen*, never
 *what a request is*. There is no cross-protocol failover, and a pool may not mix endpoints of two protocols.
-
-> **Note for readers of earlier versions.** Up to v0.7.x, `composes` itself carried `ChatCompleter`,
-> `ModelEntry`, `NewComposeClient` and `NewFromEndpoints` over `provider/openai` types. v0.8.0 moved all of
-> them, unchanged in behaviour, to `composes/openais`, and the root package kept only the neutral core — with
-> no compatibility aliases.
 
 ## 1. Choosing a package
 
@@ -180,9 +175,9 @@ retry wait.
 
 ## 4. Selection strategies
 
-A strategy decides **who becomes the active endpoint**, not who serves each call. That is the substantive
-change from earlier versions: `StrategyRandom` and `StrategyWeight` no longer spread load across requests —
-they draw once, when the pool needs an endpoint. A pool is not a load balancer.
+A strategy decides **who becomes the active endpoint**, not who serves each call. `StrategyRandom` and
+`StrategyWeight` therefore do not spread load across requests — they draw once, when the pool needs an
+endpoint. A pool is not a load balancer.
 
 | Strategy | Behavior when selecting |
 |---|---|
@@ -228,7 +223,7 @@ is the one retry in this module — provider packages remain retry-free ([ADR 00
 
 **Recovery.** `composes.WithRecoverTime(d)` sets how long a dead endpoint stays out. When `d` has elapsed it is
 a candidate again — that is *all*: recovery never takes the pool back from a healthy incumbent, so an endpoint
-returning causes no switch of its own. There is no recovery probe and no exponential health backoff.
+returning causes no switch of its own. Recovery runs on the clock alone: no probe request is issued.
 
 `NewRouter` (and therefore both wrappers' constructors) rejects `recover_time <= base × 2^maxRetries`, along
 with a non-positive base or recover time and a negative retry count. A recovery window shorter than the backoff
