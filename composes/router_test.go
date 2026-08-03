@@ -331,6 +331,112 @@ func TestDispatch_ActiveEndpointServesEveryCall(t *testing.T) {
 	}
 }
 
+// A failing call walks the strategy ordering frozen when selection is needed —
+// Random and Weight do not re-draw after each death. Two routers with the same
+// seed must agree: the attempt sequence equals that frozen full order.
+func TestDispatch_FrozenOrderingWalkedOnFailover(t *testing.T) {
+	for _, strategy := range []Strategy{StrategyRandom, StrategyWeight} {
+		t.Run(string(strategy), func(t *testing.T) {
+			endpoints := []Endpoint{
+				{Alias: "a", Weight: 3},
+				{Alias: "b", Weight: 1},
+				{Alias: "c", Weight: 2},
+			}
+
+			peek := newTestRouter(t, strategy, endpoints)
+			want := peek.freezeOrdering(Call{}, peek.capableIndices(Call{}))
+
+			r := newTestRouter(t, strategy, endpoints)
+			log := &attemptLog{}
+
+			_, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500})
+
+			var multi *MultiError
+			if !errors.As(err, &multi) {
+				t.Fatalf("expected *MultiError after exhausting the pool, got %v", err)
+			}
+
+			assertIntSlice(t, log.seen(), want)
+
+			if len(multi.Errors) != len(want) {
+				t.Fatalf("MultiError has %d entries, want %d", len(multi.Errors), len(want))
+			}
+
+			for i, idx := range want {
+				if multi.Errors[i].Alias != r.endpoints[idx].Alias {
+					t.Fatalf("MultiError[%d] alias = %q, want %q", i, multi.Errors[i].Alias, r.endpoints[idx].Alias)
+				}
+			}
+		})
+	}
+}
+
+// Successful reuse of the active endpoint must not run the strategy. Otherwise
+// Random / Weight RNG advances on every happy-path call and later switches
+// depend on how many successes happened to precede them.
+func TestDispatch_SuccessfulReuseDoesNotAdvanceRNG(t *testing.T) {
+	for _, strategy := range []Strategy{StrategyRandom, StrategyWeight} {
+		t.Run(string(strategy), func(t *testing.T) {
+			endpoints := []Endpoint{
+				{Alias: "a", Weight: 3},
+				{Alias: "b", Weight: 1},
+				{Alias: "c", Weight: 2},
+			}
+
+			selectThenReplace := func(reuseCount int) int {
+				r := newTestRouter(t, strategy, endpoints)
+				log := &attemptLog{}
+
+				first, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				for range reuseCount {
+					got, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1, 2)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					if got != first {
+						t.Fatalf("reuse served by %d, want active %d", got, first)
+					}
+				}
+
+				// Kill the active endpoint; the replacement is chosen by a fresh
+				// freeze of the remaining candidates.
+				replacement, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500},
+					excludeIndex(first)...)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if replacement == first {
+					t.Fatal("expected a replacement other than the dead active endpoint")
+				}
+
+				return replacement
+			}
+
+			if got, want := selectThenReplace(20), selectThenReplace(0); got != want {
+				t.Fatalf("replacement after 20 successful reuses = %d, after none = %d — RNG leaked", got, want)
+			}
+		})
+	}
+}
+
+func excludeIndex(skip int) []int {
+	out := make([]int, 0, 2)
+
+	for i := range 3 {
+		if i != skip {
+			out = append(out, i)
+		}
+	}
+
+	return out
+}
+
 // A failing active endpoint is retried in place on a doubling schedule, judged
 // dead once the retries run out, and replaced without failing the call.
 func TestDispatch_RetriesThenReplacesTheActiveEndpoint(t *testing.T) {
@@ -786,9 +892,9 @@ func TestDispatch_CancelledDuringRetryWait(t *testing.T) {
 }
 
 // Callers racing on a pool whose active endpoint is failing must produce exactly
-// one switch between them, not one per caller. Serialisation makes the common
-// case trivial; the generation guard is what holds when a call is rejected
-// between another call's retirement and its replacement.
+// one switch between them, not one per caller. Call-slot serialisation rejects
+// concurrent dispatches; successive winners reuse the replacement already
+// committed, so the commit count stays at two (initial selection plus one switch).
 func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, endpointsNamed("dying", "healthy"))
 

@@ -25,13 +25,13 @@ import (
 )
 
 // selectAll runs the capability filter plus strategy ordering for a bare call,
-// which is the decision the router makes whenever it needs an active endpoint.
+// which is the decision the router freezes whenever it starts a dispatch.
 func selectAll(r *Router) []int {
 	return selectFor(r, Call{})
 }
 
 func selectFor(r *Router, call Call) []int {
-	return r.selectEndpoints(call, r.capableIndices(call))
+	return r.freezeOrdering(call, r.capableIndices(call))
 }
 
 // markDeadNow takes an endpoint out of rotation for the ordering tests, which

@@ -91,6 +91,7 @@ Every endpoint carries two identities that must not be confused:
 |---|---|
 | `Name` | the **model** name sent to the backend in the request's `Model` field. |
 | `Alias` | the endpoint's **operational identity**, used for health snapshots and error attribution. |
+| `Tags` | optional operational attributes (region/tier/workspace) for observation; they never participate in routing. |
 
 `Alias` is required and unique on the declarative path (errors name the offending position). On the manual
 path an empty alias is derived — from `Name` when free, otherwise `entry-<index>` — so every entry is always
@@ -104,12 +105,15 @@ stably addressable; explicit aliases must still be unique. The alias is what let
 A pool serves its calls from **one endpoint at a time** — its *active* endpoint. The strategy chooses that
 endpoint when the pool has none, or when the current one has been judged dead; it does not run per call. So a
 run of successful calls all land on the same backend, whatever the strategy, and a caller gets a stable
-attribution rather than a fresh draw each time.
+attribution rather than a fresh draw each time. "Does not run per call" means successful reuse of a healthy
+active endpoint never invokes the strategy (and never advances Random / Weight RNG). When a call *does* need
+to select, temporarily pick, or fail over, the strategy runs once for that moment and its ordering is frozen
+for the rest of the walk (§4).
 
 Every call flows through the same chain, in the core:
 
 ```
-capability filter → active endpoint (reuse · select · switch) → attempt + retries → next endpoint
+capability filter → reuse active if capable → else freeze ordering once → attempt + retries → walk ordering
 ```
 
 1. **Capability filter** (§6) drops endpoints that have *declared* they cannot serve the call, and endpoints
@@ -169,8 +173,9 @@ conversations a shared active endpoint anyway.
 > reading the stream before it issues the next call anyway.
 
 Within a call, the active endpoint and its *generation* change together under a separate short-held lock, and
-a caller may only retire the active endpoint it observed at the generation it saw. That guard is what keeps
-the switch count at one even when calls race for the pool. No lock is held across a network attempt or a
+a caller may only retire the active endpoint it observed at the generation it saw. Call-slot serialisation
+already keeps dispatches from overlapping; the generation guard keeps retirement conditional on that
+observation so a stale retire cannot clear a replacement. No lock is held across a network attempt or a
 retry wait.
 
 ## 4. Selection strategies
@@ -187,8 +192,11 @@ endpoint. A pool is not a load balancer.
 | `StrategyCost` | The lowest static cost from `EndpointCost`; unpriced endpoints sort last; alias tie-break |
 | `StrategyLatency` | The lowest injected `Latency`; endpoints without latency sort last; alias tie-break |
 
-Each strategy still produces a full ordering, which is also the deterministic sequence a single call walks
-through as endpoints die under it.
+Each strategy still produces a full ordering. When a call cannot reuse a healthy, capable active
+endpoint, `Dispatch` freezes that ordering once (over the capable, health-available endpoints at that
+moment) and walks it for selection, temporary picks and failover — rather than re-running the strategy
+after each death. Successful reuse of the active endpoint does not run the strategy at all, so Random /
+Weight RNG only advances when a real selection is needed.
 
 **Economic routing.** `StrategyCost` / `StrategyLatency` read static metadata on the entry
 (`composes.EndpointCost{InputPrice, OutputPrice}`, `Latency`). Missing metadata is never treated as

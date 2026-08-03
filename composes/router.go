@@ -55,10 +55,12 @@ const noActive = -1
 //
 // # The active endpoint
 //
-// A router serves every call from one endpoint — its *active* endpoint — and
+// A pool serves every call from one endpoint — its *active* endpoint — and
 // re-selects only when it has none yet or the current one is judged dead. A
 // strategy therefore decides who serves the pool, not who serves a call: it runs
-// at selection time, not on every dispatch.
+// at selection time, not on every dispatch. When a call must select or fail over,
+// it freezes the strategy ordering once for that selection and walks it rather
+// than re-drawing after each death.
 //
 // # One call at a time
 //
@@ -98,8 +100,9 @@ type Router struct {
 	generation uint64
 	// commits counts how many endpoints have been committed as the pool's active
 	// one over its lifetime. One commit is the initial selection; each further
-	// commit is a switch, which is the unit the concurrency guarantee is stated
-	// in — concurrent failures of one active endpoint cause exactly one.
+	// commit is a switch. Call-slot serialisation keeps concurrent dispatches
+	// from racing on active; the generation on each pick still makes retirement
+	// conditional on the observation that produced it.
 	commits uint64
 }
 
@@ -319,9 +322,14 @@ type Call struct {
 }
 
 // Dispatch serves one call from the pool's active endpoint and returns its
-// value. The chain is: capability filter → active endpoint (reused, selected or
-// switched) → attempt with in-call exponential retries → on exhaustion, mark
-// dead and move to the next capable available endpoint.
+// value. The chain is: capability filter → reuse the active endpoint when it
+// can serve → otherwise freeze the strategy ordering once and walk it → attempt
+// with in-call exponential retries → on exhaustion, mark dead and continue the
+// walk.
+//
+// The strategy runs only when a pick cannot reuse a healthy, capable active
+// endpoint — the same moments that commit or temporarily replace it. Successful
+// reuse therefore does not advance Random / Weight RNG.
 //
 // attempt is invoked with the index of the endpoint to try; it owns everything
 // protocol-shaped — building the per-endpoint request, calling the backend, and
@@ -359,6 +367,12 @@ func Dispatch[T any](
 	}
 	defer r.release()
 
+	// ordering is the strategy's full sequence for this call, frozen lazily the
+	// first time a pick cannot reuse the active endpoint. Successful reuse of a
+	// healthy active must not run the strategy (and therefore must not advance
+	// Random / Weight RNG).
+	var ordering []int
+
 	var errs []*EndpointError
 
 	tried := make(map[int]bool, len(capable))
@@ -368,9 +382,16 @@ func Dispatch[T any](
 			return zero, ctx.Err()
 		}
 
-		choice, ok := r.pickEndpoint(call, capable, tried)
+		choice, ok := r.reuseActive(capable, tried)
 		if !ok {
-			break
+			if ordering == nil {
+				ordering = r.freezeOrdering(call, capable)
+			}
+
+			choice, ok = r.pickFromOrdering(ordering, tried)
+			if !ok {
+				break
+			}
 		}
 
 		tried[choice.endpoint] = true
@@ -461,18 +482,32 @@ type endpointPick struct {
 	serving    bool
 }
 
-// pickEndpoint returns the endpoint to attempt next for this call.
+// reuseActive returns the pool's active endpoint when it is available, capable
+// of this call, and not yet tried. It never runs the strategy.
+func (r *Router) reuseActive(capable []int, tried map[int]bool) (endpointPick, bool) {
+	now := r.nowFunc()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.active == noActive || tried[r.active] || !slices.Contains(capable, r.active) {
+		return endpointPick{}, false
+	}
+
+	if !r.health[r.active].available(now, r.recoverTime) {
+		return endpointPick{}, false
+	}
+
+	return endpointPick{endpoint: r.active, generation: r.generation, serving: true}, true
+}
+
+// pickFromOrdering returns the next endpoint from a frozen strategy ordering.
 //
-//   - The active endpoint serves whenever it is available and capable of this
-//     call — that is the whole point of the model, and why consecutive successful
-//     calls stay on one backend under every strategy.
-//   - When there is no active endpoint, or the active one is dead, the strategy
-//     picks a replacement and it is committed as the pool's active.
-//   - When the active endpoint is merely incapable of *this* call, the strategy
-//     picks among the capable available endpoints for this call alone. The pool's
-//     active is left exactly as it was, so an occasional call needing a rarer
-//     capability cannot drag the pool off its stable endpoint.
-func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (endpointPick, bool) {
+//   - When there is no usable active endpoint, the pick is committed as the
+//     pool's active.
+//   - When the active endpoint is healthy but cannot serve this call (or was
+//     already tried), the pick is temporary — the pool's active is left alone.
+func (r *Router) pickFromOrdering(ordering []int, tried map[int]bool) (endpointPick, bool) {
 	now := r.nowFunc()
 
 	r.mu.Lock()
@@ -483,27 +518,13 @@ func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (end
 	// has to be routed around it.
 	activeUsable := r.active != noActive && r.health[r.active].available(now, r.recoverTime)
 
-	if activeUsable && !tried[r.active] && slices.Contains(capable, r.active) {
-		return endpointPick{endpoint: r.active, generation: r.generation, serving: true}, true
-	}
-
-	pool := make([]int, 0, len(capable))
-
-	for _, idx := range capable {
-		if !tried[idx] && r.health[idx].available(now, r.recoverTime) {
-			pool = append(pool, idx)
-		}
-	}
-
-	if len(pool) == 0 {
+	pick, ok := nextInOrdering(ordering, tried, func(idx int) bool {
+		return r.health[idx].available(now, r.recoverTime)
+	})
+	if !ok {
 		return endpointPick{}, false
 	}
 
-	pick := r.orderByStrategy(call, pool)[0]
-
-	// Commit the pick as the pool's active only when the pool has no usable one.
-	// If the active is healthy and was skipped purely on capability grounds, this
-	// pick is temporary.
 	if activeUsable {
 		return endpointPick{endpoint: pick, generation: r.generation, serving: false}, true
 	}
@@ -513,6 +534,20 @@ func (r *Router) pickEndpoint(call Call, capable []int, tried map[int]bool) (end
 	r.commits++
 
 	return endpointPick{endpoint: pick, generation: r.generation, serving: true}, true
+}
+
+// nextInOrdering returns the first index in ordering that is not yet tried and
+// that available reports as still selectable.
+func nextInOrdering(ordering []int, tried map[int]bool, available func(int) bool) (int, bool) {
+	for _, idx := range ordering {
+		if tried[idx] || !available(idx) {
+			continue
+		}
+
+		return idx, true
+	}
+
+	return 0, false
 }
 
 // acquire claims the router's single call slot, or reports ErrCallInProgress if
@@ -536,10 +571,10 @@ func (r *Router) acquire(ctx context.Context) error {
 func (r *Router) release() { <-r.callSlot }
 
 // retireActive gives up the pool's active endpoint, but only if it is still the
-// endpoint and generation the caller observed. That condition is what keeps
-// concurrent failures of one active from switching the pool more than once: the
-// first failure to arrive retires it, and every later one finds the generation
-// moved on and defers to the replacement already chosen.
+// endpoint and generation the caller observed. That ties retirement to the pick
+// that produced it: a stale retire cannot clear an active that a later pick has
+// already replaced. With call-slot serialisation this is defensive; it still
+// keeps active-state transitions conditional on the observed generation.
 func (r *Router) retireActive(endpoint int, generation uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

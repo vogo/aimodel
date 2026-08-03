@@ -66,9 +66,11 @@ type ComposeClient struct {
 	entries []ModelEntry
 	router  *composes.Router
 	// responders lists the entry indices whose client also implements Responder.
-	// It is computed once at construction, so Responses routing costs no
-	// per-attempt type assertion.
+	// It is computed once at construction and passed as Call.Eligible.
 	responders []int
+	// responderClients mirrors entries: non-nil at every responders index so
+	// Responses dispatch never type-asserts on the hot path.
+	responderClients []Responder
 }
 
 // NewComposeClient creates a ComposeClient with the given strategy and model
@@ -111,15 +113,23 @@ func NewComposeClient(
 		return nil, err
 	}
 
+	responderClients := make([]Responder, len(owned))
+
 	var responders []int
 
 	for i := range owned {
-		if _, ok := owned[i].Client.(Responder); ok {
+		if responder, ok := owned[i].Client.(Responder); ok {
 			responders = append(responders, i)
+			responderClients[i] = responder
 		}
 	}
 
-	return &ComposeClient{entries: owned, router: router, responders: responders}, nil
+	return &ComposeClient{
+		entries:          owned,
+		router:           router,
+		responders:       responders,
+		responderClients: responderClients,
+	}, nil
 }
 
 // Stats returns an immutable per-endpoint health snapshot, safe to call
@@ -165,8 +175,7 @@ func (c *ComposeClient) Responses(
 
 	return composes.Dispatch(ctx, c.router, call,
 		func(ctx context.Context, endpoint int) (*openai.Response, error) {
-			responder := c.entries[endpoint].Client.(Responder) //nolint:errcheck,forcetypeassert // Call.Eligible admits only responders.
-			return responder.Responses(ctx, c.responsesRequestFor(endpoint, request))
+			return c.responderClients[endpoint].Responses(ctx, c.responsesRequestFor(endpoint, request))
 		})
 }
 
@@ -183,8 +192,7 @@ func (c *ComposeClient) ResponsesStream(
 
 	return composes.Dispatch(ctx, c.router, call,
 		func(ctx context.Context, endpoint int) (*openai.ResponseStream, error) {
-			responder := c.entries[endpoint].Client.(Responder) //nolint:errcheck,forcetypeassert // Call.Eligible admits only responders.
-			return responder.ResponsesStream(ctx, c.responsesRequestFor(endpoint, request))
+			return c.responderClients[endpoint].ResponsesStream(ctx, c.responsesRequestFor(endpoint, request))
 		})
 }
 
@@ -223,9 +231,7 @@ func (c *ComposeClient) chatRequestFor(
 	endpoint int, request *openai.ChatCompletionRequest,
 ) *openai.ChatCompletionRequest {
 	r := *request
-	if name := c.entries[endpoint].Name; name != "" {
-		r.Model = name
-	}
+	r.Model = c.modelFor(endpoint, r.Model)
 
 	return &r
 }
@@ -237,11 +243,18 @@ func (c *ComposeClient) responsesRequestFor(
 	endpoint int, request *openai.ResponsesRequest,
 ) *openai.ResponsesRequest {
 	r := *request
-	if name := c.entries[endpoint].Name; name != "" {
-		r.Model = name
-	}
+	r.Model = c.modelFor(endpoint, r.Model)
 
 	return &r
+}
+
+// modelFor returns the entry's Name when set, otherwise the request's own model.
+func (c *ComposeClient) modelFor(endpoint int, fallback string) string {
+	if name := c.entries[endpoint].Name; name != "" {
+		return name
+	}
+
+	return fallback
 }
 
 // Compile-time checks: a ComposeClient is itself a backend for both interaction

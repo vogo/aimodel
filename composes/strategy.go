@@ -28,9 +28,10 @@ import (
 // distribution over requests: with the active model, consecutive successful
 // calls all land on the same endpoint whichever strategy is configured.
 //
-// Each strategy still produces a full ordering rather than a single pick, so the
-// same ordering also gives the deterministic sequence a failing call walks
-// through as endpoints die under it.
+// Each strategy still produces a full ordering rather than a single pick.
+// [Dispatch] freezes that ordering once per call, so a failing call walks the
+// same sequence as endpoints die under it rather than re-drawing after each
+// failure (see freezeOrdering).
 type Strategy string
 
 const (
@@ -48,11 +49,14 @@ const (
 	StrategyLatency Strategy = "latency"
 )
 
-// selectEndpoints returns the strategy's ordering over the endpoints that may
-// serve this call: capability-filtered, then narrowed to the health-available.
-// It is the selection a router performs when it needs a new active endpoint,
-// exposed separately so the ordering can be reasoned about on its own.
-func (r *Router) selectEndpoints(call Call, capable []int) []int {
+// freezeOrdering returns the strategy's full ordering over the endpoints that
+// may serve this call: the capability-filtered indices, narrowed to those that
+// are health-available right now. [Dispatch] calls it the first time a pick
+// cannot reuse the active endpoint, so failover walks one frozen sequence and
+// successful active reuse never advances Random / Weight RNG.
+//
+// The caller must not hold r.mu.
+func (r *Router) freezeOrdering(call Call, capable []int) []int {
 	now := r.nowFunc()
 
 	r.mu.Lock()

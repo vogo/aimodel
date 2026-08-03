@@ -44,9 +44,9 @@
 // that endpoint when the pool has none or the current one is judged dead; it
 // does not run per call, so successive successful calls stay on one backend even
 // under [StrategyRandom] or [StrategyWeight]. A failing endpoint is retried in
-// place with exponential waits, then marked dead and replaced — and a dead
-// endpoint returns to candidacy after the recover time without displacing
-// whoever took its place.
+// place with exponential waits, then marked dead and replaced by walking a
+// strategy ordering frozen for that selection — and a dead endpoint returns to
+// candidacy after the recover time without displacing whoever took its place.
 //
 // A pool also belongs to one conversation and serves it one call at a time: a
 // second call arriving while one is in flight is rejected with

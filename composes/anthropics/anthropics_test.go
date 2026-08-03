@@ -459,6 +459,99 @@ func TestRateLimited_RetriesThenDies(t *testing.T) {
 	}
 }
 
+// A 400 is retryable like every non-credential 4xx: it exhausts the retry
+// policy, then marks the endpoint dead.
+func TestRequestFailure_4xxDiesAfterRetries(t *testing.T) {
+	s400, hits400 := newStatusServer(t, http.StatusBadRequest)
+	defer s400.Close()
+
+	cc, err := newRoutingClient(t, composes.StrategyFailover, []ModelEntry{
+		{Name: "m0", Alias: "badreq", Client: newClientForServer(t, s400)},
+	}, composes.WithRetryPolicy(time.Millisecond, 1), composes.WithRecoverTime(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cc.Messages(context.Background(), testRequest())
+
+	var endpointErr *composes.EndpointError
+	if !errors.As(err, &endpointErr) || endpointErr.Alias != "badreq" {
+		t.Fatalf("expected an attributed EndpointError for badreq, got %v", err)
+	}
+
+	if hits400.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2 (the first plus one retry)", hits400.Load())
+	}
+
+	if s := cc.Stats()[0]; s.Status != "dead" || s.ErrorCount != 1 || s.LastError == nil {
+		t.Fatalf("stats after 4xx = %+v, want dead/1 with the recorded failure", s)
+	}
+}
+
+// Cost routing reads the entry's static pricing scaled by the request's own
+// max_tokens, so the cap of the call that selects the pool's active endpoint
+// decides which one it is.
+func TestCostStrategy_OutputCapDecidesTheSelection(t *testing.T) {
+	sInputHeavy, sOutputHeavy := newTestServer(t, nil), newTestServer(t, nil)
+	defer sInputHeavy.Close()
+	defer sOutputHeavy.Close()
+
+	entries := []ModelEntry{
+		{
+			Name: "input-heavy", Alias: "input-heavy", Client: newClientForServer(t, sInputHeavy),
+			Cost: &composes.EndpointCost{InputPrice: 100, OutputPrice: 0},
+		},
+		{
+			Name: "output-heavy", Alias: "output-heavy", Client: newClientForServer(t, sOutputHeavy),
+			Cost: &composes.EndpointCost{InputPrice: 0, OutputPrice: 1},
+		},
+	}
+
+	// MaxTokens=64: output-heavy cost is 64, input-heavy is 100 → output-heavy.
+	small, err := newRoutingClient(t, composes.StrategyCost, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := small.Messages(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "output-heavy" {
+		t.Fatalf("model = %q, want output-heavy", resp.Model)
+	}
+
+	// A large max_tokens makes the input-heavy endpoint cheapest instead.
+	large, err := newRoutingClient(t, composes.StrategyCost, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	big := testRequest()
+	big.MaxTokens = 1000
+
+	resp, err = large.Messages(context.Background(), big)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "input-heavy" {
+		t.Fatalf("model with a large output cap = %q, want input-heavy", resp.Model)
+	}
+
+	// The pool that selected under a large cap keeps that endpoint even for a
+	// call whose cap would have chosen the other one.
+	resp, err = large.Messages(context.Background(), testRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Model != "input-heavy" {
+		t.Fatalf("model = %q, want the incumbent input-heavy", resp.Model)
+	}
+}
+
 // 401 is the one failure that skips the retries entirely.
 func TestCredentialFailure_401DiesWithoutRetrying(t *testing.T) {
 	s401, hits401 := newStatusServer(t, http.StatusUnauthorized)
