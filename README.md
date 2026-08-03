@@ -238,17 +238,23 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
 
 ### Multi-backend composition
 
-`composes` dispatches across several OpenAI-compatible backends with failover, random or weighted strategies, health tracking and recovery probes:
+Dispatch across several backends with failover, six selection strategies, health tracking and recovery probes. `composes` is the protocol-neutral routing core; a wrapper package binds it to one protocol's wire types:
 
 ```go
-import "github.com/vogo/aimodel/composes"
+import (
+    "github.com/vogo/aimodel/composes"
+    "github.com/vogo/aimodel/composes/openais"
+)
 
-cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
+cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEntry{
     {Name: "gpt-4o",       Client: openai.NewClient(openaiKey), Weight: 3},
     {Name: "qwen3.7-plus", Client: openai.NewClient(qwenKey, openai.WithBaseURL(qwenURL)), Weight: 1},
 })
 
-response, err := cc.ChatCompletions(ctx, request)
+response, err := cc.ChatCompletions(ctx, request)          // Chat Completions
+answer, err := cc.Responses(ctx, responsesRequest)         // Responses — same pool, same health
 ```
 
-A `ComposeClient` is itself a backend, so pools nest. Details: [doc/design/compose.md](./doc/design/compose.md).
+Anthropic backends use `composes/anthropics` the same way, with `Messages` / `MessagesStream`. The two pools are separate: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover.
+
+A `ComposeClient` is itself a backend, so pools nest. Details: [doc/design/compose.md](./doc/design/compose.md); the reasoning for the split: [ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md).

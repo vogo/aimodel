@@ -42,7 +42,8 @@ There is no unified client and no shared request/response model. A caller picks 
          │
          ├──▶ provider/anthropic ──▶ POST {baseURL}/v1/messages
          │
-         └──▶ composes ──▶ several OpenAI-compatible backends
+         └──▶ composes ─┬─▶ composes/openais    ──▶ several OpenAI-compatible backends
+                        └─▶ composes/anthropics ──▶ several Anthropic backends
 ```
 
 Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
@@ -78,7 +79,7 @@ Applied consequences:
   }
   ```
 
-- **`composes` is an OpenAI-wire tool, not a neutral package.** Composing Anthropic backends means an isomorphic loop in that package or in the caller's code — never a shared abstraction over both.
+- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — strategies, health, probes, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0008](./adr/0008-shared-routing-core-across-protocol-wrappers.md))
 
 ### 2.3 Guards
 
@@ -87,8 +88,10 @@ The failure mode this architecture risks is gradual: duplicated helpers get fact
 1. Providers import neither each other nor the root package.
 2. No package from this module is imported by both providers.
 3. Both `*HTTPError` types satisfy `interface { StatusCode() int }` (compile-time assertion).
-4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. `composes` is deliberately excluded from that set.
+4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. Since v0.8.0 `composes` is one of those packages; its two wrappers deliberately are not.
 5. Every exported wire type round-trips losslessly, and every exported struct is either round-tripped or explicitly declared not to be a wire type.
+6. The routing core imports nothing from this module — not one provider, not two — and its exported API references no type from this module.
+7. The two compose wrappers import neither each other nor the other's provider, and neither imports the root package.
 
 ## 3. Provider packages
 
@@ -142,9 +145,16 @@ Both native streams accumulate while the caller reads. Every `Recv` folds its ev
 
 Before the stream ends both accessors return a live snapshot, in which a tool call's arguments may still be a partial JSON fragment. `Close` is idempotent and safe to call concurrently with `Recv`.
 
-## 4. `composes`
+## 4. `composes` and its wrappers
 
-Dispatches one request across several backends **of one wire format** — OpenAI-compatible — with failover, random and weighted strategies, health tracking, and recovery probes under exponential backoff. `ModelEntry.Client` is a locally declared `ChatCompleter`, satisfied by `*openai.Client` and by `*ComposeClient` itself, so pools nest. Details: [design/compose.md](./design/compose.md).
+Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the six selection strategies, the three-state health machine (429 cooling, exponential-backoff recovery probes), alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
+
+| Package | Pool | Methods |
+|---|---|---|
+| `composes/openais` | OpenAI-compatible backends | `ChatCompletions`, `ChatCompletionsStream`, `Responses`, `ResponsesStream` |
+| `composes/anthropics` | Anthropic backends | `Messages`, `MessagesStream` |
+
+`ModelEntry.Client` is the wrapper's own interface, satisfied by that provider's native client and by the wrapper's `*ComposeClient`, so pools nest. The two pools are disjoint: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover. Details: [design/compose.md](./design/compose.md).
 
 ## 5. Repository layout
 
@@ -153,7 +163,9 @@ Dispatches one request across several backends **of one wire format** — OpenAI
 | Root package `aimodel` | Package clause and the module's architectural guard tests. Exports nothing |
 | `provider/openai/` | Chat Completions and Responses: client and options (`native.go`, `responses.go`), wire types (`wire.go`, `responses_wire.go`), typed stream events (`responses_events.go`), stream accumulation (`accumulate.go`), model and discriminator constants (`model.go`, `responses_const.go`) |
 | `provider/anthropic/` | Messages: client and options (`native.go`), wire types (`wire.go`), stream accumulation and usage merging (`accumulate.go`), model and discriminator constants (`model.go`, `const.go`) |
-| `composes/` | Dispatch strategies (`strategy.go`), health tracking (`health.go`), the dispatching client (`compose_client.go`) and its aggregate errors (`errors.go`) |
+| `composes/` | The neutral routing core: dispatch strategies (`strategy.go`), health tracking (`health.go`), the router and candidate loop (`router.go`), endpoint metadata and capability filtering (`endpoint.go`), sticky sessions (`sticky.go`), aggregate errors (`errors.go`) |
+| `composes/openais/` | OpenAI-wire wrapper: compose client and both interaction forms (`openais.go`), entries and declarative specs (`endpoint.go`), capability predicates (`capability.go`) |
+| `composes/anthropics/` | Anthropic-wire wrapper, same file layout |
 | `integrations/` | Per-provider examples and offline integration tests |
 
 ## 6. Maintenance convention

@@ -23,86 +23,50 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"github.com/vogo/aimodel/provider/openai"
 )
 
-func newTestComposeClient(strategy Strategy, entries []ModelEntry) *ComposeClient {
-	health := make([]*modelHealth, len(entries))
-	for i := range health {
-		health[i] = newModelHealth()
-	}
-
-	// Resolve aliases so ordering tie-breaks and sticky selection are stable.
-	_ = resolveAliases(entries)
-
-	return &ComposeClient{
-		entries:          entries,
-		health:           health,
-		strategy:         strategy,
-		stickyFallback:   StrategyFailover,
-		recoveryInterval: defaultRecoveryInterval,
-		coolingInterval:  defaultCoolingInterval,
-		nowFunc:          time.Now,
-		rng:              newRand(42),
-	}
+// selectAll runs the capability filter plus strategy ordering for a bare call,
+// which is the routing decision every dispatch starts from.
+func selectAll(r *Router) []int {
+	return selectFor(r, Call{})
 }
 
-// selectAll runs capability filtering + strategy selection for a bare request,
-// mirroring the dispatch path for tests that predate capability routing.
-func selectAll(c *ComposeClient) []int {
-	req := &openai.ChatCompletionRequest{}
-	return c.selectModels(context.Background(), req, c.capableIndices(req))
+func selectFor(r *Router, call Call) []int {
+	return r.selectEndpoints(context.Background(), call, r.capableIndices(call))
 }
 
 func TestSelectFailover_AllActive(t *testing.T) {
-	c := newTestComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
-	})
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b", "c"))
 
-	got := selectAll(c)
-	want := []int{0, 1, 2}
-
-	assertIntSlice(t, got, want)
+	assertIntSlice(t, selectAll(r), []int{0, 1, 2})
 }
 
 func TestSelectFailover_SkipError(t *testing.T) {
-	c := newTestComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
-	})
-	c.health[1].markError(errors.New("fail"), time.Now())
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b", "c"))
+	r.health[1].markError(errors.New("fail"), time.Now())
 
-	got := selectAll(c)
-	want := []int{0, 2}
-
-	assertIntSlice(t, got, want)
+	assertIntSlice(t, selectAll(r), []int{0, 2})
 }
 
 func TestSelectFailover_AllError(t *testing.T) {
-	c := newTestComposeClient(StrategyFailover, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"},
-	})
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
 	now := time.Now()
-	c.health[0].markError(errors.New("fail"), now)
-	c.health[1].markError(errors.New("fail"), now)
+	r.health[0].markError(errors.New("fail"), now)
+	r.health[1].markError(errors.New("fail"), now)
 
-	got := selectAll(c)
-	if len(got) != 0 {
+	if got := selectAll(r); len(got) != 0 {
 		t.Fatalf("expected empty list, got %v", got)
 	}
 }
 
 func TestSelectRandom_AllActive(t *testing.T) {
-	c := newTestComposeClient(StrategyRandom, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
-	})
+	r := newTestRouter(t, StrategyRandom, endpointsNamed("a", "b", "c"))
 
-	got := selectAll(c)
+	got := selectAll(r)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 indices, got %d", len(got))
 	}
 
-	// All indices should be present.
 	seen := make(map[int]bool)
 	for _, idx := range got {
 		seen[idx] = true
@@ -116,113 +80,211 @@ func TestSelectRandom_AllActive(t *testing.T) {
 }
 
 func TestSelectRandom_SkipError(t *testing.T) {
-	c := newTestComposeClient(StrategyRandom, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
-	})
-	c.health[0].markError(errors.New("fail"), time.Now())
+	r := newTestRouter(t, StrategyRandom, endpointsNamed("a", "b", "c"))
+	r.health[0].markError(errors.New("fail"), time.Now())
 
-	got := selectAll(c)
+	got := selectAll(r)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 indices, got %d", len(got))
 	}
 
 	for _, idx := range got {
 		if idx == 0 {
-			t.Fatal("should not include errored model index 0")
+			t.Fatal("should not include errored endpoint 0")
 		}
 	}
 }
 
 func TestSelectRandom_Distribution(t *testing.T) {
-	c := newTestComposeClient(StrategyRandom, []ModelEntry{
-		{Name: "m0"}, {Name: "m1"}, {Name: "m2"},
-	})
+	r := newTestRouter(t, StrategyRandom, endpointsNamed("a", "b", "c"))
 
-	// Run many iterations to check distribution.
 	counts := make(map[int]int)
 	iterations := 3000
 
 	for range iterations {
-		got := selectAll(c)
-		counts[got[0]]++
+		counts[selectAll(r)[0]]++
 	}
 
-	// Each model should be selected first roughly 1/3 of the time.
 	expected := float64(iterations) / 3.0
 
 	for i := range 3 {
 		ratio := float64(counts[i]) / expected
 		if ratio < 0.7 || ratio > 1.3 {
-			t.Fatalf("model %d selected %d times (expected ~%.0f), ratio=%.2f", i, counts[i], expected, ratio)
+			t.Fatalf("endpoint %d selected %d times (expected ~%.0f), ratio=%.2f", i, counts[i], expected, ratio)
 		}
 	}
 }
 
 func TestSelectWeighted_ProportionalDistribution(t *testing.T) {
-	c := newTestComposeClient(StrategyWeight, []ModelEntry{
-		{Name: "m0", Weight: 3},
-		{Name: "m1", Weight: 1},
+	r := newTestRouter(t, StrategyWeight, []Endpoint{
+		{Alias: "heavy", Weight: 3},
+		{Alias: "light", Weight: 1},
 	})
 
 	counts := make(map[int]int)
 	iterations := 4000
 
 	for range iterations {
-		got := selectAll(c)
-		counts[got[0]]++
+		counts[selectAll(r)[0]]++
 	}
 
-	// m0 has weight 3, m1 has weight 1 → m0 should be ~75%.
 	ratio := float64(counts[0]) / float64(iterations)
 	if math.Abs(ratio-0.75) > 0.05 {
-		t.Fatalf("m0 selected ratio=%.3f, expected ~0.75", ratio)
+		t.Fatalf("heavy selected ratio=%.3f, expected ~0.75", ratio)
 	}
 }
 
 func TestSelectWeighted_ZeroWeightTreatedAsOne(t *testing.T) {
-	c := newTestComposeClient(StrategyWeight, []ModelEntry{
-		{Name: "m0", Weight: 0},
-		{Name: "m1", Weight: 1},
+	r := newTestRouter(t, StrategyWeight, []Endpoint{
+		{Alias: "a", Weight: 0},
+		{Alias: "b", Weight: 1},
 	})
 
 	counts := make(map[int]int)
 	iterations := 2000
 
 	for range iterations {
-		got := selectAll(c)
-		counts[got[0]]++
+		counts[selectAll(r)[0]]++
 	}
 
-	// Both have effective weight 1 → ~50% each.
 	ratio := float64(counts[0]) / float64(iterations)
 	if math.Abs(ratio-0.5) > 0.08 {
-		t.Fatalf("m0 selected ratio=%.3f, expected ~0.50", ratio)
+		t.Fatalf("a selected ratio=%.3f, expected ~0.50", ratio)
 	}
 }
 
 func TestSelectWeighted_SkipError(t *testing.T) {
-	c := newTestComposeClient(StrategyWeight, []ModelEntry{
-		{Name: "m0", Weight: 10},
-		{Name: "m1", Weight: 1},
+	r := newTestRouter(t, StrategyWeight, []Endpoint{
+		{Alias: "a", Weight: 10},
+		{Alias: "b", Weight: 1},
 	})
-	c.health[0].markError(errors.New("fail"), time.Now())
+	r.health[0].markError(errors.New("fail"), time.Now())
 
-	got := selectAll(c)
+	got := selectAll(r)
 	if len(got) != 1 || got[0] != 1 {
 		t.Fatalf("expected [1], got %v", got)
 	}
 }
 
-func assertIntSlice(t *testing.T, got, want []int) {
-	t.Helper()
+// An unknown strategy value falls back to declaration order rather than
+// panicking or dropping candidates.
+func TestSelectUnknownStrategy_FallsBackToDeclarationOrder(t *testing.T) {
+	r := newTestRouter(t, Strategy("no-such-strategy"), endpointsNamed("a", "b"))
 
-	if len(got) != len(want) {
-		t.Fatalf("len=%d, want %d: got %v", len(got), len(want), got)
+	assertIntSlice(t, selectAll(r), []int{0, 1})
+}
+
+func TestCostStrategy_DeterministicOrder(t *testing.T) {
+	r := newTestRouter(t, StrategyCost, []Endpoint{
+		{Alias: "pricey", Cost: &EndpointCost{InputPrice: 5, OutputPrice: 5}},
+		{Alias: "cheap", Cost: &EndpointCost{InputPrice: 1, OutputPrice: 1}},
+		{Alias: "mid", Cost: &EndpointCost{InputPrice: 3, OutputPrice: 3}},
+	})
+
+	// Ascending cost: cheap(2) < mid(6) < pricey(10) → indices 1, 2, 0.
+	for range 20 {
+		assertIntSlice(t, selectAll(r), []int{1, 2, 0})
+	}
+}
+
+func TestCostStrategy_MissingDataLast(t *testing.T) {
+	r := newTestRouter(t, StrategyCost, []Endpoint{
+		{Alias: "unpriced"},
+		{Alias: "priced", Cost: &EndpointCost{InputPrice: 9, OutputPrice: 9}},
+	})
+
+	assertIntSlice(t, selectAll(r), []int{1, 0})
+}
+
+func TestCostStrategy_AliasTieBreak(t *testing.T) {
+	r := newTestRouter(t, StrategyCost, []Endpoint{
+		{Alias: "zeta", Cost: &EndpointCost{InputPrice: 1, OutputPrice: 1}},
+		{Alias: "alpha", Cost: &EndpointCost{InputPrice: 1, OutputPrice: 1}},
+	})
+
+	assertIntSlice(t, selectAll(r), []int{1, 0})
+}
+
+// OutputUnits is how a wrapper tells the core how much output the call may
+// produce, which is what makes cost ordering depend on the request's own cap
+// without the core ever seeing the request.
+func TestCostStrategy_OutputUnitsFlipTheOrder(t *testing.T) {
+	r := newTestRouter(t, StrategyCost, []Endpoint{
+		{Alias: "input-heavy", Cost: &EndpointCost{InputPrice: 100, OutputPrice: 0}},
+		{Alias: "output-heavy", Cost: &EndpointCost{InputPrice: 0, OutputPrice: 1}},
+	})
+
+	// One unit of output: input-heavy=100, output-heavy=1 → output-heavy first.
+	assertIntSlice(t, selectFor(r, Call{}), []int{1, 0})
+	assertIntSlice(t, selectFor(r, Call{OutputUnits: -5}), []int{1, 0}) // non-positive counts as one
+
+	// A large cap: input-heavy=100, output-heavy=1000 → the order flips.
+	assertIntSlice(t, selectFor(r, Call{OutputUnits: 1000}), []int{0, 1})
+}
+
+func TestLatencyStrategy_DeterministicOrder(t *testing.T) {
+	slow, fast, mid := 50*time.Millisecond, 10*time.Millisecond, 30*time.Millisecond
+
+	r := newTestRouter(t, StrategyLatency, []Endpoint{
+		{Alias: "slow", Latency: &slow},
+		{Alias: "fast", Latency: &fast},
+		{Alias: "mid", Latency: &mid},
+	})
+
+	assertIntSlice(t, selectAll(r), []int{1, 2, 0})
+}
+
+func TestLatencyStrategy_MissingDataLast(t *testing.T) {
+	slow := 50 * time.Millisecond
+
+	r := newTestRouter(t, StrategyLatency, []Endpoint{
+		{Alias: "unknown"},
+		{Alias: "known", Latency: &slow},
+	})
+
+	assertIntSlice(t, selectAll(r), []int{1, 0})
+}
+
+func TestLatencyStrategy_AliasTieBreak(t *testing.T) {
+	same := 20 * time.Millisecond
+
+	r := newTestRouter(t, StrategyLatency, []Endpoint{
+		{Alias: "zeta", Latency: &same},
+		{Alias: "alpha", Latency: &same},
+	})
+
+	assertIntSlice(t, selectAll(r), []int{1, 0})
+}
+
+// The capability filter runs before health: a healthy but incapable endpoint is
+// excluded, and an errored capable one is unavailable — so nothing is left.
+func TestCapabilityFilter_RunsBeforeHealth(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "healthy-incapable", Declares: Declare()},
+		{Alias: "errored-capable", Declares: Declare("tools")},
+	})
+	r.health[1].markError(errors.New("down"), time.Now())
+
+	if got := selectFor(r, Call{Requires: []string{"tools"}}); len(got) != 0 {
+		t.Fatalf("expected no available capable candidates, got %v", got)
+	}
+}
+
+// Declare() with no labels is a declaration of "nothing"; a nil Declares is the
+// absence of one. The two must not collapse into each other.
+func TestDeclare_EmptyIsNotUndeclared(t *testing.T) {
+	if Declare() == nil {
+		t.Fatal("Declare() must return a non-nil slice so it reads as a declaration")
 	}
 
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("index %d: got %d, want %d", i, got[i], want[i])
-		}
-	}
+	r := newTestRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "declares-nothing", Declares: Declare()},
+		{Alias: "undeclared"},
+	})
+
+	// Required labels exclude the explicit declaration but never the unknown one.
+	assertIntSlice(t, selectFor(r, Call{Requires: []string{"tools"}}), []int{1})
+
+	// With nothing required both serve.
+	assertIntSlice(t, selectAll(r), []int{0, 1})
 }

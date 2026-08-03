@@ -1,17 +1,24 @@
-# Migration: canonical API → provider-native clients
+# Migration: canonical API → provider-native clients (and the v0.8.0 compose split)
 
 `aimodel` stops shipping a shared request/response model for OpenAI-compatible and Anthropic
 protocols. From **v0.7.0** the public surface is two complete, mutually independent native
 clients — [`provider/openai`](./provider/openai/README.md) and
 [`provider/anthropic`](./provider/anthropic/README.md) — plus a small set of tools that carry no
-protocol semantics.
+protocol semantics. **v0.8.0** finishes that separation inside `composes`, which until then still
+spoke the OpenAI wire itself.
 
 | Version | What happens |
 |---|---|
 | **v0.6.1** | No behavior change. Every symbol removed in v0.7.0 carries a Go `Deprecated:` comment pointing here, so `staticcheck` / editors flag the call sites ahead of time. |
 | **v0.7.0** | The canonical layer is deleted: `ais`, the root `Client`/`ChatCompleter`/`Stream`/interception/`Responder`, both providers' translation layers, and the provider registry. |
+| **v0.8.0** | `composes` splits in two: a protocol-neutral routing core keeps the package path, and every OpenAI-wire symbol moves to `composes/openais`. `composes/anthropics` is new. Providers are untouched. See [Compose: the v0.8.0 split](#compose-the-v080-split). |
 
-Nothing is renamed in place — every removed symbol has a native counterpart listed below.
+Nothing is renamed in place — every removed or moved symbol has a counterpart listed below.
+
+> **v0.8.0 has no deprecation window.** Unlike v0.6.1 → v0.7.0, the moved compose symbols are not
+> aliased for a release first: code that still imports them from `composes` fails to compile, and
+> the table below is the upgrade path. Keeping an OpenAI-wire alias in the root package would
+> defeat the split that makes the core neutral ([ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md)).
 
 ## Why
 
@@ -260,11 +267,11 @@ replaced:
 The request, response, item and event types are unchanged — they were already
 `provider/openai` native types.
 
-## Compose
+## Compose (v0.7.0): one wire format
 
-`composes` keeps failover, random and weighted dispatch, health tracking and recovery probes. It
-now dispatches within **one** wire format — OpenAI-compatible — instead of across protocols, which
-is how it has always been used in practice:
+`composes` keeps failover, random and weighted dispatch, health tracking and recovery probes. In
+v0.7.0 it dispatches within **one** wire format — OpenAI-compatible — instead of across protocols,
+which is how it has always been used in practice:
 
 ```go
 // before
@@ -288,9 +295,93 @@ resp, err := compose.ChatCompletions(ctx, &openai.ChatCompletionRequest{...})
 the request's own model in place, and context cancellation still does not mark a backend
 unhealthy.
 
-To dispatch across Anthropic backends, compose over `*anthropic.Client` in your own code — the
-loop is small, and keeping it out of this package is what stops a shared message model from
-growing back.
+## Compose: the v0.8.0 split
+
+v0.8.0 separates *routing* from *protocol*. `composes` becomes a protocol-neutral routing core —
+strategies, health, recovery probes, aliases, observers, `Stats()`, error attribution — and every
+symbol that touches an OpenAI request moves to `composes/openais`. `composes/anthropics` is the same
+machinery over Anthropic Messages. **Behavior is unchanged**: what moved, moved as-is.
+
+```go
+// before (v0.7.x)
+cc, err := composes.NewComposeClient(composes.StrategyFailover, []composes.ModelEntry{
+    {Name: "gpt-4o", Client: openai.NewClient(key)},
+}, composes.WithRecoveryInterval(30*time.Second))
+
+// after (v0.8.0) — strategies and options stay in composes, entries and the client move
+cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEntry{
+    {Name: "gpt-4o", Client: openai.NewClient(key)},
+}, composes.WithRecoveryInterval(30*time.Second))
+```
+
+Import `github.com/vogo/aimodel/composes/openais` alongside `github.com/vogo/aimodel/composes`; the
+core is still where the strategy and option values live.
+
+### Moved to `composes/openais`
+
+Everything that names an OpenAI type, or is declared in terms of one:
+
+| ≤ v0.7.x | v0.8.0 |
+|---|---|
+| `composes.ChatCompleter` | `openais.ChatCompleter` |
+| `composes.ComposeClient` | `openais.ComposeClient` |
+| `composes.NewComposeClient` | `openais.NewComposeClient` |
+| `composes.NewFromEndpoints` | `openais.NewFromEndpoints` |
+| `composes.ModelEntry` | `openais.ModelEntry` |
+| `composes.EndpointSpec` | `openais.EndpointSpec` |
+| `composes.Capability` | `openais.Capability` |
+| `composes.CapabilityProvider` | `openais.CapabilityProvider` |
+| `(*composes.ComposeClient).ChatCompletions` | `(*openais.ComposeClient).ChatCompletions` |
+| `(*composes.ComposeClient).ChatCompletionsStream` | `(*openais.ComposeClient).ChatCompletionsStream` |
+| `(*composes.ComposeClient).Stats` | `(*openais.ComposeClient).Stats` (returns `[]composes.EndpointStat`) |
+
+`ModelEntry` keeps every field (`Name`, `Client`, `Weight`, `Alias`, `Tags`, `Capability`, `Cost`,
+`Latency`); `Cost` is now typed `*composes.EndpointCost`, and `Latency` is unchanged. `EndpointSpec`
+keeps every field likewise.
+
+### Stayed in `composes` (with one rename)
+
+Everything that carries no protocol semantics:
+
+| ≤ v0.7.x | v0.8.0 |
+|---|---|
+| `composes.Strategy`, `composes.Strategy*` constants | unchanged |
+| `composes.ComposeOption` | `composes.Option` (**renamed**) |
+| `composes.WithRecoveryInterval` / `WithCoolingInterval` / `WithStickyFallback` / `WithAttemptObserver` | unchanged |
+| `composes.WithSessionID` | unchanged |
+| `composes.AttemptResult`, `composes.EndpointStat` | unchanged |
+| `composes.EndpointCost` | unchanged |
+| `composes.EndpointError`, `composes.MultiError` | unchanged |
+| `composes.ErrNoActiveModels` | unchanged |
+| `composes.CapabilityError`, `composes.ErrCapabilityNotSatisfied` | unchanged |
+
+### New in v0.8.0
+
+| Symbol | Purpose |
+|---|---|
+| `composes.Router`, `composes.NewRouter` | the neutral routing core, if you are wrapping a protocol yourself |
+| `composes.Dispatch[T]`, `composes.Call` | one candidate loop, driven by a per-endpoint closure |
+| `composes.Endpoint`, `composes.Declare` | neutral endpoint metadata and opaque capability labels |
+| `openais.Responder`, `(*openais.ComposeClient).Responses` / `.ResponsesStream` | multi-backend dispatch for the OpenAI Responses API |
+| `openais.CapabilityTools` / `CapabilityVision` / `CapabilityResponses` | the label strings this wrapper uses |
+| `anthropics.*` (`Messenger`, `ComposeClient`, `NewComposeClient`, `NewFromEndpoints`, `ModelEntry`, `EndpointSpec`, `Capability`, `CapabilityProvider`, `Messages`, `MessagesStream`, `CapabilityTools`, `CapabilityVision`) | the same machinery over Anthropic Messages |
+
+### Composing Anthropic backends
+
+v0.7.0 told you to write the dispatch loop yourself. v0.8.0 ships it:
+
+```go
+ac, err := anthropics.NewFromEndpoints(composes.StrategyWeight, []anthropics.EndpointSpec{
+    {Alias: "key-1", APIKey: k1, Model: "claude-opus-5", Weight: 1},
+    {Alias: "key-2", APIKey: k2, Model: "claude-opus-5", Weight: 1},
+})
+
+resp, err := ac.Messages(ctx, &anthropic.MessagesRequest{ /* … */ })
+```
+
+A hand-written loop keeps working — nothing forces the move. What is still **not** possible, by
+design, is one pool holding both protocols: the two wrappers share the routing core, never a request
+model, and there is no cross-protocol failover.
 
 ## Removed symbols
 

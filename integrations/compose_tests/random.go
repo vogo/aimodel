@@ -23,13 +23,14 @@ import (
 	"log"
 
 	"github.com/vogo/aimodel/composes"
+	"github.com/vogo/aimodel/composes/openais"
 	"github.com/vogo/aimodel/provider/openai"
 )
 
-func testRandom(entries []composes.ModelEntry) {
+func testRandom(entries []openais.ModelEntry) {
 	fmt.Println("=== Compose Random ===")
 
-	cc, err := composes.NewComposeClient(composes.StrategyRandom, entries)
+	cc, err := openais.NewComposeClient(composes.StrategyRandom, entries)
 	if err != nil {
 		log.Fatal(err)
 	}

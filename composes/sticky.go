@@ -21,16 +21,14 @@ import (
 	"context"
 	"hash/fnv"
 	"sort"
-
-	"github.com/vogo/aimodel/provider/openai"
 )
 
 // sessionIDKey is the context key carrying the sticky-routing session id.
 type sessionIDKey struct{}
 
-// WithSessionID attaches a session id used by StrategySticky to pin a request
-// stream to a stable endpoint. It lives in composes context, never on the
-// request, so the wire request type stays untouched.
+// WithSessionID attaches a session id used by StrategySticky to pin a stream of
+// calls to a stable endpoint. It lives in the routing context, never on the
+// request, so no wire type is touched by routing.
 func WithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, sessionIDKey{}, sessionID)
 }
@@ -51,12 +49,8 @@ func sessionIDFromContext(ctx context.Context) string {
 // set (sorted), so the choice is reproducible across processes and instances
 // and does not jitter as endpoint health changes. The preferred alias may be
 // momentarily unavailable; the caller then fails over in a deterministic order.
-func (c *ComposeClient) stickyPreferredAlias(sessionID string) string {
-	aliases := make([]string, len(c.entries))
-	for i := range c.entries {
-		aliases[i] = c.entries[i].Alias
-	}
-
+func (r *Router) stickyPreferredAlias(sessionID string) string {
+	aliases := r.Aliases()
 	sort.Strings(aliases)
 
 	h := fnv.New32a()
@@ -81,24 +75,24 @@ func (c *ComposeClient) stickyPreferredAlias(sessionID string) string {
 // Without a session id it falls back to the configured sticky-fallback strategy
 // (never a randomly generated affinity key). With a session id it pins the
 // preferred alias first (when it is among the available candidates) and lists
-// the remaining available candidates in definition order, giving a deterministic
-// failover order when the preferred endpoint is unhealthy.
-func (c *ComposeClient) selectSticky(ctx context.Context, req *openai.ChatCompletionRequest, available []int) []int {
+// the remaining available candidates in declaration order, giving a
+// deterministic failover order when the preferred endpoint is unhealthy.
+func (r *Router) selectSticky(ctx context.Context, call Call, available []int) []int {
 	sessionID := sessionIDFromContext(ctx)
 	if sessionID == "" {
-		fallback := c.stickyFallback
+		fallback := r.stickyFallback
 		if fallback == StrategySticky { // never recurse into sticky
 			fallback = StrategyFailover
 		}
 
-		return c.orderByStrategy(ctx, req, fallback, available)
+		return r.orderByStrategy(ctx, call, fallback, available)
 	}
 
 	if len(available) == 0 {
 		return available
 	}
 
-	preferred := c.stickyPreferredAlias(sessionID)
+	preferred := r.stickyPreferredAlias(sessionID)
 
 	// Locate the preferred alias within the available candidates.
 	prefIdx := -1
@@ -106,7 +100,7 @@ func (c *ComposeClient) selectSticky(ctx context.Context, req *openai.ChatComple
 	inAvailable := false
 
 	for _, idx := range available {
-		if c.entries[idx].Alias == preferred {
+		if r.endpoints[idx].Alias == preferred {
 			prefIdx = idx
 			inAvailable = true
 
@@ -121,7 +115,7 @@ func (c *ComposeClient) selectSticky(ctx context.Context, req *openai.ChatComple
 	}
 
 	// Append the rest in the deterministic order the caller supplied
-	// (definition order), skipping the preferred already placed first.
+	// (declaration order), skipping the preferred already placed first.
 	for _, idx := range available {
 		if idx == prefIdx {
 			continue

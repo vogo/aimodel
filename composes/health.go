@@ -23,13 +23,13 @@ import (
 	"time"
 )
 
-// statusCoder is the structural contract a provider's transport error
-// satisfies. Declaring it locally — rather than importing a provider's error
-// type — is what keeps this package free of any provider dependency while still
-// classifying failures by status code (ADR 0007).
+// statusCoder is the structural contract a backend's transport error satisfies.
+// Declaring it locally — rather than importing a provider's error type — is what
+// lets one health state machine classify failures from every protocol this
+// module wraps without importing any of them.
 type statusCoder interface{ StatusCode() int }
 
-// modelState represents the health state of a model endpoint.
+// endpointState represents the health state of an endpoint.
 //
 //   - active:  participating in regular selection.
 //   - cooling: a 429 rate-limit response put the endpoint to sleep; it is
@@ -37,12 +37,12 @@ type statusCoder interface{ StatusCode() int }
 //     rotation. Cooling never counts toward the consecutive-failure backoff.
 //   - error:   a 5xx (or transport) failure; the endpoint is skipped until an
 //     exponential-backoff recovery probe is due.
-type modelState string
+type endpointState string
 
 const (
-	stateActive  modelState = "active"
-	stateCooling modelState = "cooling"
-	stateError   modelState = "error"
+	stateActive  endpointState = "active"
+	stateCooling endpointState = "cooling"
+	stateError   endpointState = "error"
 )
 
 // healthOutcome classifies how a failed attempt affects endpoint health.
@@ -86,22 +86,22 @@ func classifyHealth(err error) healthOutcome {
 	}
 }
 
-// modelHealth tracks the health state of a single model endpoint.
-type modelHealth struct {
+// endpointHealth tracks the health state of a single endpoint.
+type endpointHealth struct {
 	mu         sync.RWMutex
-	state      modelState
+	state      endpointState
 	lastError  error
 	errorTime  time.Time
 	errorCount int
 }
 
-func newModelHealth() *modelHealth {
-	return &modelHealth{state: stateActive}
+func newEndpointHealth() *endpointHealth {
+	return &endpointHealth{state: stateActive}
 }
 
 // markActive records a successful attempt: the endpoint returns to active and
 // all failure accounting is cleared.
-func (h *modelHealth) markActive() {
+func (h *endpointHealth) markActive() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -113,7 +113,7 @@ func (h *modelHealth) markActive() {
 
 // markError records a health-relevant failure (5xx / transport): the endpoint
 // enters the error state and the consecutive-failure count advances.
-func (h *modelHealth) markError(err error, now time.Time) {
+func (h *endpointHealth) markError(err error, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -131,7 +131,7 @@ func (h *modelHealth) markError(err error, now time.Time) {
 // probe must not demote a long backoff to the much shorter cooling interval. The
 // probe's timestamp is recorded so the next probe waits another full backoff at
 // the current level, and errorCount still does not advance.
-func (h *modelHealth) markCooling(err error, now time.Time) {
+func (h *endpointHealth) markCooling(err error, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -144,7 +144,7 @@ func (h *modelHealth) markCooling(err error, now time.Time) {
 }
 
 // isActive reports whether the endpoint is in the active state.
-func (h *modelHealth) isActive() bool {
+func (h *endpointHealth) isActive() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -155,7 +155,7 @@ func (h *modelHealth) isActive() bool {
 // endpoint is always available; a cooling endpoint becomes available again once
 // the cooling interval has elapsed; an errored endpoint is never available
 // through this path (it returns via recovery probes instead).
-func (h *modelHealth) available(now time.Time, cooling time.Duration) bool {
+func (h *endpointHealth) available(now time.Time, cooling time.Duration) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -171,14 +171,14 @@ func (h *modelHealth) available(now time.Time, cooling time.Duration) bool {
 
 // healthSnapshot is a consistent copy of one endpoint's health accounting.
 type healthSnapshot struct {
-	state      modelState
+	state      endpointState
 	errorCount int
 	lastError  error
 	errorTime  time.Time
 }
 
 // snapshot returns a consistent copy of the health accounting for Stats().
-func (h *modelHealth) snapshot() healthSnapshot {
+func (h *endpointHealth) snapshot() healthSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -197,7 +197,7 @@ const maxBackoffShift = 6
 // for a recovery probe attempt. The required wait time grows exponentially
 // with consecutive errors, capped at 64x the base interval. Only the error
 // state is probed; cooling endpoints rejoin rotation on their own timer.
-func (h *modelHealth) shouldProbe(now time.Time, interval time.Duration) bool {
+func (h *endpointHealth) shouldProbe(now time.Time, interval time.Duration) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 

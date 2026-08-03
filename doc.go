@@ -21,8 +21,11 @@
 //   - [github.com/vogo/aimodel/provider/openai] — Chat Completions and
 //     Responses, for OpenAI and every OpenAI-compatible backend.
 //   - [github.com/vogo/aimodel/provider/anthropic] — the Messages API.
-//   - [github.com/vogo/aimodel/composes] — dispatch across several
-//     OpenAI-compatible backends, with health tracking and failover.
+//   - [github.com/vogo/aimodel/composes] — the protocol-neutral routing core
+//     (strategies, health tracking, failover), with
+//     [github.com/vogo/aimodel/composes/openais] and
+//     [github.com/vogo/aimodel/composes/anthropics] binding it to their wire
+//     types.
 //
 // Up to v0.5.x this package held a unified client over a vendor-neutral
 // request/response model. v0.7.0 removed it: the two protocols are expressed

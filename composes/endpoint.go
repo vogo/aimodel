@@ -18,172 +18,197 @@
 package composes
 
 import (
-	"fmt"
-	"maps"
-	"strings"
+	"slices"
+	"sort"
 	"time"
-
-	"github.com/vogo/aimodel/provider/openai"
 )
 
-// EndpointSpec declaratively describes one OpenAI-compatible endpoint: the
-// connection coordinates, the model name sent to the backend, and the
-// endpoint's operational identity and routing metadata. NewFromEndpoints builds
-// an independent openai.Client per spec, so N endpoints no longer require N
-// copies of construction code.
-//
-// Every endpoint speaks the OpenAI-compatible wire format — composes dispatches
-// within one wire format, not across protocols (ADR 0007). A backend is
-// distinguished operationally by its Alias, never by a protocol name.
-type EndpointSpec struct {
-	// BaseURL is the endpoint's API base URL.
-	BaseURL string
-	// APIKey is the endpoint's credential.
-	APIKey string
-	// Model is the model name sent in ChatCompletionRequest.Model for this
-	// endpoint.
-	Model string
-	// Alias is the required, unique operational identity used for health
-	// snapshots, sticky routing, and error attribution.
+// Endpoint is one routable backend as the router sees it: an identity, ordering
+// metadata, and an opaque set of labels. There is no client here and no address
+// — the wrapper package owns those, keyed by this endpoint's index.
+type Endpoint struct {
+	// Alias is the endpoint's operational identity, used for health snapshots,
+	// sticky routing and error attribution. An empty alias is derived as
+	// "entry-<index>"; explicit aliases must be unique across the router.
 	Alias string
-	// Weight is used by StrategyWeight; Weight <= 0 counts as 1.
+
+	// Weight is used by StrategyWeight. Zero or negative is treated as 1.
 	Weight int
-	// Tags carry operational attributes (region/tier/workspace). They are
-	// copied onto the entry for observation and later strategies; they never
-	// participate in capability decisions.
+
+	// Tags carry operational attributes (region/tier/workspace) for observation
+	// and future strategies. They never participate in routing decisions.
 	Tags map[string]string
 
-	// Capability optionally declares the endpoint's strong-typed capability.
-	// Leaving it nil keeps the endpoint out of the capability filter entirely
-	// (unknown, not incapable).
-	Capability *Capability
-	// Cost optionally declares static pricing for StrategyCost.
+	// Declares is the endpoint's opaque capability declaration, compared as
+	// plain strings against Call.Requires.
+	//
+	// A nil slice means *undeclared*: the endpoint is unknown, not incapable,
+	// and the filter never excludes it. A non-nil slice — including an empty one
+	// — is a declaration: the endpoint serves exactly these labels and nothing
+	// else. Build it with [Declare] so the distinction is explicit.
+	Declares []string
+
+	// Cost optionally declares static pricing for StrategyCost. Nil sorts after
+	// priced endpoints.
 	Cost *EndpointCost
-	// Latency optionally declares a routing latency for StrategyLatency.
+
+	// Latency optionally declares a routing latency for StrategyLatency. Nil
+	// sorts after endpoints that carry a latency.
 	Latency *time.Duration
 }
 
-// EndpointError wraps a single endpoint's attempt failure, attributing it to a
-// stable alias. It unwraps to the underlying error, so errors.Is/As reach the
-// original provider error (or any other cause).
-type EndpointError struct {
-	// Alias is the operational identity of the endpoint that failed.
+// EndpointCost carries static per-unit pricing used by StrategyCost. Dynamic
+// pricing is out of scope; these are fixed routing metadata.
+type EndpointCost struct {
+	// InputPrice is the cost per input unit (e.g. per 1M input units).
+	InputPrice float64
+	// OutputPrice is the cost per output unit, scaled by Call.OutputUnits.
+	OutputPrice float64
+}
+
+// Declare builds an [Endpoint.Declares] value. It always returns a non-nil
+// slice, so Declare() with no labels reads as "declares nothing" rather than
+// collapsing into the nil "undeclared" case.
+func Declare(labels ...string) []string {
+	return append(make([]string, 0, len(labels)), labels...)
+}
+
+// EndpointStat is an immutable per-endpoint health snapshot returned by
+// [Router.Stats].
+type EndpointStat struct {
+	// Alias is the endpoint's operational identity.
 	Alias string
-	// Err is the underlying attempt error.
-	Err error
-}
-
-func (e *EndpointError) Error() string {
-	return fmt.Sprintf("aimodel/composes: endpoint %s: %v", e.Alias, e.Err)
-}
-
-func (e *EndpointError) Unwrap() error { return e.Err }
-
-// MultiError aggregates every endpoint failure from one dispatch, in attempt
-// order. Same-model endpoints are distinguished by alias (via EndpointError).
-// It implements Go 1.20+ multi-error unwrapping so errors.Is/As match any
-// underlying endpoint error.
-type MultiError struct {
-	Errors []*EndpointError
-}
-
-func (e *MultiError) Error() string {
-	if len(e.Errors) == 0 {
-		return "aimodel/composes: all endpoints failed"
-	}
-
-	var b strings.Builder
-
-	b.WriteString("aimodel/composes: all endpoints failed: ")
-
-	for i, ee := range e.Errors {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-
-		fmt.Fprintf(&b, "%s: %v", ee.Alias, ee.Err)
-	}
-
-	return b.String()
-}
-
-// Unwrap returns the endpoint errors for Go 1.20+ multi-error unwrapping.
-func (e *MultiError) Unwrap() []error {
-	errs := make([]error, len(e.Errors))
-	for i := range e.Errors {
-		errs[i] = e.Errors[i]
-	}
-
-	return errs
+	// Status is "active", "cooling", or "error".
+	Status string
+	// ErrorCount is the consecutive health-failure count (5xx/transport); it
+	// does not advance on cooling or request failures.
+	ErrorCount int
+	// LastError is the most recent health-relevant error, or nil if the
+	// endpoint has never failed or has since recovered.
+	LastError error
+	// ErrorTime is when LastError occurred; the zero value means never/recovered.
+	ErrorTime time.Time
 }
 
 // AttemptResult reports the outcome of a single endpoint attempt. It is emitted
 // to the observer registered via WithAttemptObserver when each attempt finishes:
-// for non-streaming calls, when the call returns; for streaming calls, when the
-// stream is established or fails to establish. Post-establishment SSE errors are
-// surfaced by the Stream itself, not re-reported here.
+// for plain calls, when the call returns; for stream-establishing calls, when
+// the stream is established or fails to establish. Errors surfaced after
+// establishment belong to the stream itself and are not re-reported here.
 type AttemptResult struct {
 	// Alias is the endpoint that was attempted.
 	Alias string
 	// Success reports whether the attempt succeeded (stream established for
-	// streaming calls).
+	// stream-establishing calls).
 	Success bool
 	// Err is the attempt error, nil on success.
 	Err error
-	// Stream reports whether the attempt was a streaming call.
+	// Stream reports whether the attempt established a stream.
 	Stream bool
 }
 
-// NewFromEndpoints builds a ComposeClient from declarative endpoint specs. Each
-// spec is turned into an independent openai.Client and wrapped in a ModelEntry.
-// Advanced callers needing a custom ChatCompleter keep building ModelEntry by
-// hand via NewComposeClient.
-//
-// The native client performs no construction-time validation, so an empty APIKey
-// or BaseURL does not fail here; such an endpoint fails at request time.
-func NewFromEndpoints(strategy Strategy, specs []EndpointSpec, opts ...ComposeOption) (*ComposeClient, error) {
-	if len(specs) == 0 {
-		return nil, fmt.Errorf("aimodel/composes: at least one endpoint spec is required")
-	}
+// capableIndices returns the endpoint indices that may serve this call, in
+// declaration order: those inside Call.Eligible whose declaration satisfies
+// every required label. Endpoints that declare nothing are unknown, not
+// incapable: they always stay in the candidate list. Health is intentionally
+// ignored here — the capability filter runs before health skipping and strategy
+// ordering.
+func (r *Router) capableIndices(call Call) []int {
+	var eligible map[int]bool
 
-	// Validate aliases up front so the error names the offending position
-	// before any client is constructed.
-	seen := make(map[string]int, len(specs))
-
-	for i, s := range specs {
-		if s.Alias == "" {
-			return nil, fmt.Errorf("aimodel/composes: endpoint %d: alias is required", i)
-		}
-
-		if prev, dup := seen[s.Alias]; dup {
-			return nil, fmt.Errorf("aimodel/composes: duplicate alias %q at endpoints %d and %d", s.Alias, prev, i)
-		}
-
-		seen[s.Alias] = i
-	}
-
-	entries := make([]ModelEntry, len(specs))
-
-	for i, s := range specs {
-		var clientOpts []openai.ClientOption
-		if s.BaseURL != "" {
-			clientOpts = append(clientOpts, openai.WithBaseURL(s.BaseURL))
-		}
-
-		tags := make(map[string]string, len(s.Tags))
-		maps.Copy(tags, s.Tags)
-
-		entries[i] = ModelEntry{
-			Name:       s.Model,
-			Client:     openai.NewClient(s.APIKey, clientOpts...),
-			Weight:     s.Weight,
-			Alias:      s.Alias,
-			Tags:       tags,
-			Capability: s.Capability,
-			Cost:       s.Cost,
-			Latency:    s.Latency,
+	if call.Eligible != nil {
+		eligible = make(map[int]bool, len(call.Eligible))
+		for _, idx := range call.Eligible {
+			eligible[idx] = true
 		}
 	}
 
-	return NewComposeClient(strategy, entries, opts...)
+	out := make([]int, 0, len(r.endpoints))
+
+	for i := range r.endpoints {
+		if eligible != nil && !eligible[i] {
+			continue
+		}
+
+		if declares := r.endpoints[i].Declares; declares != nil && !declaresAll(declares, call.Requires) {
+			continue
+		}
+
+		out = append(out, i)
+	}
+
+	return out
+}
+
+// declaresAll reports whether every required label appears in the declaration.
+func declaresAll(declares, required []string) bool {
+	for _, label := range required {
+		if !slices.Contains(declares, label) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// costKey computes the deterministic routing cost for an endpoint against one
+// call. The input volume is a fixed unit and the output volume comes from the
+// call; both are constant across endpoints for a given call, so ordering
+// reduces to the injected static pricing scaled by the caller's output cap.
+func costKey(e *Endpoint, call Call) float64 {
+	const inputUnits = 1.0
+
+	outputUnits := call.OutputUnits
+	if outputUnits <= 0 {
+		outputUnits = 1.0
+	}
+
+	return e.Cost.InputPrice*inputUnits + e.Cost.OutputPrice*outputUnits
+}
+
+// sortByCost orders candidate indices by ascending static cost. Endpoints
+// without pricing metadata sort after priced ones; equal keys tie-break on
+// alias so identical inputs always yield an identical order.
+func (r *Router) sortByCost(indices []int, call Call) []int {
+	sort.Slice(indices, func(a, b int) bool {
+		ea, eb := &r.endpoints[indices[a]], &r.endpoints[indices[b]]
+
+		ca, cb := ea.Cost != nil, eb.Cost != nil
+		if ca != cb {
+			return ca // priced endpoints come first
+		}
+
+		if ca { // both priced
+			ka, kb := costKey(ea, call), costKey(eb, call)
+			if ka != kb {
+				return ka < kb
+			}
+		}
+
+		return ea.Alias < eb.Alias
+	})
+
+	return indices
+}
+
+// sortByLatency orders candidate indices by ascending injected latency.
+// Endpoints without a latency value sort after those with one; equal values
+// tie-break on alias.
+func (r *Router) sortByLatency(indices []int) []int {
+	sort.Slice(indices, func(a, b int) bool {
+		ea, eb := &r.endpoints[indices[a]], &r.endpoints[indices[b]]
+
+		la, lb := ea.Latency != nil, eb.Latency != nil
+		if la != lb {
+			return la // endpoints with latency data come first
+		}
+
+		if la && *ea.Latency != *eb.Latency {
+			return *ea.Latency < *eb.Latency
+		}
+
+		return ea.Alias < eb.Alias
+	})
+
+	return indices
 }

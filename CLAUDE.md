@@ -23,7 +23,15 @@ providers' translation code) **was removed in v0.7.0**, after being marked `Depr
 — see [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) and
 [MIGRATION.md](./MIGRATION.md). Do not reintroduce a shared request/response model, a translation
 layer, or a provider registry; the guard tests fail if one grows back. New work goes into a
-provider package. The principles below are in force for every change.
+provider package, or into a `composes/` wrapper for multi-backend routing. The principles below are
+in force for every change.
+
+`composes` sharing routing across protocols since v0.8.0 is **not** a partial reversal of this:
+[ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md) admits shared *mechanism*
+(indices, opaque labels, scalars, closures) and keeps shared *models* forbidden. The tempting
+regression is no longer "share a request model" but "let the routing core peek at the request just
+this once" — a `Call` field holding a message, or a type parameter constrained to something
+protocol-shaped. All three shapes fail the guards.
 
 ## Design Principles
 
@@ -65,17 +73,23 @@ Consequences to apply directly:
   bodies are protocol facts and belong to the provider package that serves them.
 - **Errors are matched structurally.** There is no shared error type. Both `*HTTPError` types
   implement `interface { StatusCode() int }`; a consumer declares that interface locally and uses
-  `errors.As`. `composes` does exactly this — it aggregates backend errors without naming any
-  provider's error type, even though it imports that provider for its wire types.
-- **`composes` is an OpenAI-wire tool, not a neutral package.** It dispatches across several
-  OpenAI-compatible backends using `provider/openai` types. Composing Anthropic backends means an
-  isomorphic loop in that package or in the caller's code — never a shared abstraction over both.
+  `errors.As`. `composes` does exactly this — it classifies and aggregates backend errors from every
+  protocol without naming, or importing, any provider's error type.
+- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a protocol-neutral
+  routing core (strategies, health, probes, aliases, attribution) whose entire interface is endpoint
+  indices, opaque strings, scalars and closures; `composes/openais` and `composes/anthropics` bind it
+  to their own wire types and never import each other. The test for any shared type: *if I add a
+  field to it, does a provider package have to learn about it?* Pools never mix protocols, and there
+  is no cross-protocol failover ([ADR 0008](./doc/adr/0008-shared-routing-core-across-protocol-wrappers.md)).
 
 Guard tests enforce this in CI rather than leaving it to convention: providers import neither each
 other nor the root package; no public API references a shared semantic package; both `*HTTPError`
 types satisfy `StatusCode() int`; packages declared vendor-neutral contain no protocol-semantic
-identifiers (`message`, `content`, `tool`, `usage`, …), checked over the AST; and every public wire
-type survives a marshal → unmarshal → marshal round trip unchanged.
+identifiers (`message`, `content`, `tool`, `usage`, …), checked over the AST — `composes` is one of
+them since v0.8.0, its wrappers deliberately are not; the routing core imports nothing from this
+module and exports no type from it; the two compose wrappers import neither each other nor the
+other's provider; and every public wire type survives a marshal → unmarshal → marshal round trip
+unchanged.
 
 **Three-way sync**: when an official API changes, update in order — ① the provider's wire types and
 client → ② the relevant `doc/` document → ③ the protocol's change log plus the `CHANGES.md` index.
@@ -112,7 +126,7 @@ go tool cover -func=coverage.out
 | OpenAI Chat Completions: wire types, client, SSE, usage, errors, `ExtraBody` | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/native.go`, `wire.go` |
 | OpenAI Responses: wire types, typed SSE events, hosted tools | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `provider/openai/responses*.go` |
 | Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/native.go`, `wire.go` |
-| Multi-backend dispatch, health tracking | [doc/design/compose.md](./doc/design/compose.md) | `composes/` |
+| Multi-backend dispatch, health tracking, adding a protocol wrapper | [doc/design/compose.md](./doc/design/compose.md) | `composes/`, `composes/openais/`, `composes/anthropics/` |
 | Migrating off the removed canonical API | [MIGRATION.md](./MIGRATION.md) | — |
 
 ## Architecture at a glance
@@ -124,6 +138,8 @@ There is no unified client and no shared schema. A caller picks a protocol by im
   backend; `ExtraBody` carries backend-private top-level parameters.
 - **`provider/anthropic`** — native `/v1/messages` client and wire types, including SSE event
   decoding and stream usage merging.
+- **`composes`** — the protocol-neutral routing core (no provider imports), with `composes/openais`
+  and `composes/anthropics` binding it to their wire types.
 
 Adding a protocol = a new subpackage with its own client, with **zero change** to any existing
 package. There is nothing to register with and no contract to satisfy — and correspondingly no
@@ -132,7 +148,9 @@ automatic interoperability between protocols.
 Packages:
 
 - `provider/openai`, `provider/anthropic` — the two protocol clients, mutually independent
-- `composes/` — dispatch strategies and health tracking across several OpenAI-compatible backends
+- `composes/` — the neutral routing core: strategies, health, probes, aliases, observers, attribution
+- `composes/openais/` — OpenAI-wire pools: Chat Completions **and** Responses
+- `composes/anthropics/` — Anthropic Messages pools
 - `integrations/` — integration tests and usage examples per provider and for compose patterns
 
 ## Official API References

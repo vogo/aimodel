@@ -20,24 +20,22 @@ package composes
 import (
 	"context"
 	"math/rand"
-
-	"github.com/vogo/aimodel/provider/openai"
 )
 
-// Strategy determines how candidate endpoints are ordered for a request. Every
+// Strategy determines how candidate endpoints are ordered for a call. Every
 // strategy returns a full ordered candidate list (not a single pick), so the
 // dispatch loop fails over uniformly regardless of strategy.
 type Strategy string
 
 const (
-	// StrategyFailover selects endpoints in definition order, skipping unhealthy ones.
+	// StrategyFailover selects endpoints in declaration order, skipping unhealthy ones.
 	StrategyFailover Strategy = "failover"
 	// StrategyRandom selects active endpoints in a shuffled order.
 	StrategyRandom Strategy = "random"
 	// StrategyWeight orders endpoints sampled without replacement in proportion
 	// to weight; Weight <= 0 counts as 1.
 	StrategyWeight Strategy = "weighted"
-	// StrategySticky pins a request stream to a stable endpoint by session id
+	// StrategySticky pins a stream of calls to a stable endpoint by session id
 	// (see WithSessionID). It is non-default; without a session id it falls back
 	// to the configured sticky-fallback strategy.
 	StrategySticky Strategy = "sticky"
@@ -47,58 +45,58 @@ const (
 	StrategyLatency Strategy = "latency"
 )
 
-// selectModels returns the ordered list of endpoint indices to try. It first
+// selectEndpoints returns the ordered list of endpoint indices to try. It first
 // narrows the capability-filtered set to the health-available endpoints, then
 // orders them according to the configured strategy.
-func (c *ComposeClient) selectModels(ctx context.Context, req *openai.ChatCompletionRequest, capable []int) []int {
-	now := c.nowFunc()
+func (r *Router) selectEndpoints(ctx context.Context, call Call, capable []int) []int {
+	now := r.nowFunc()
 
 	available := make([]int, 0, len(capable))
 
 	for _, idx := range capable {
-		if c.health[idx].available(now, c.coolingInterval) {
+		if r.health[idx].available(now, r.coolingInterval) {
 			available = append(available, idx)
 		}
 	}
 
-	return c.orderByStrategy(ctx, req, c.strategy, available)
+	return r.orderByStrategy(ctx, call, r.strategy, available)
 }
 
 // orderByStrategy orders an already-available candidate slice per the given
-// strategy. The input slice is in definition order and is not mutated.
-func (c *ComposeClient) orderByStrategy(ctx context.Context, req *openai.ChatCompletionRequest, s Strategy, available []int) []int {
+// strategy. The input slice is in declaration order and is not mutated.
+func (r *Router) orderByStrategy(ctx context.Context, call Call, s Strategy, available []int) []int {
 	switch s {
 	case StrategyRandom:
-		return c.orderRandom(available)
+		return r.orderRandom(available)
 	case StrategyWeight:
-		return c.orderWeighted(available)
+		return r.orderWeighted(available)
 	case StrategySticky:
-		return c.selectSticky(ctx, req, available)
+		return r.selectSticky(ctx, call, available)
 	case StrategyCost:
-		return c.sortByCost(append([]int(nil), available...), req)
+		return r.sortByCost(append([]int(nil), available...), call)
 	case StrategyLatency:
-		return c.sortByLatency(append([]int(nil), available...))
+		return r.sortByLatency(append([]int(nil), available...))
 	default: // StrategyFailover and any unknown value.
 		return append([]int(nil), available...)
 	}
 }
 
 // orderRandom returns a shuffled copy of the available indices.
-func (c *ComposeClient) orderRandom(available []int) []int {
+func (r *Router) orderRandom(available []int) []int {
 	result := append([]int(nil), available...)
 
-	c.mu.Lock()
-	c.rng.Shuffle(len(result), func(i, j int) {
+	r.mu.Lock()
+	r.rng.Shuffle(len(result), func(i, j int) {
 		result[i], result[j] = result[j], result[i]
 	})
-	c.mu.Unlock()
+	r.mu.Unlock()
 
 	return result
 }
 
 // orderWeighted orders the available indices by sampling without replacement in
 // proportion to weight; Weight <= 0 counts as 1.
-func (c *ComposeClient) orderWeighted(available []int) []int {
+func (r *Router) orderWeighted(available []int) []int {
 	type candidate struct {
 		idx    int
 		weight int
@@ -107,7 +105,7 @@ func (c *ComposeClient) orderWeighted(available []int) []int {
 	candidates := make([]candidate, 0, len(available))
 
 	for _, idx := range available {
-		w := c.entries[idx].Weight
+		w := r.endpoints[idx].Weight
 		if w <= 0 {
 			w = 1
 		}
@@ -117,8 +115,8 @@ func (c *ComposeClient) orderWeighted(available []int) []int {
 
 	result := make([]int, 0, len(candidates))
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	for len(candidates) > 0 {
 		total := 0
@@ -126,13 +124,13 @@ func (c *ComposeClient) orderWeighted(available []int) []int {
 			total += cand.weight
 		}
 
-		r := c.rng.Intn(total)
+		n := r.rng.Intn(total)
 		cumulative := 0
 
 		for j, cand := range candidates {
 			cumulative += cand.weight
 
-			if r < cumulative {
+			if n < cumulative {
 				result = append(result, cand.idx)
 				candidates = append(candidates[:j], candidates[j+1:]...)
 
