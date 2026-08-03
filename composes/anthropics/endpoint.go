@@ -37,7 +37,7 @@ type ModelEntry struct {
 	Weight int
 
 	// Alias is the endpoint's operational identity, used for health snapshots,
-	// sticky routing, and error attribution. It is distinct from Name (the model
+	// and error attribution. It is distinct from Name (the model
 	// sent to the backend). When empty on a hand-built entry, a stable alias is
 	// derived; explicit aliases must be unique across all entries.
 	Alias string
@@ -74,7 +74,7 @@ type EndpointSpec struct {
 	// Model is the model name sent in MessagesRequest.Model for this endpoint.
 	Model string
 	// Alias is the required, unique operational identity used for health
-	// snapshots, sticky routing, and error attribution.
+	// snapshots and error attribution.
 	Alias string
 	// Weight is used by composes.StrategyWeight; Weight <= 0 counts as 1.
 	Weight int

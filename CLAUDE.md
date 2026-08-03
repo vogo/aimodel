@@ -9,7 +9,9 @@ complete, independent client: OpenAI-compatible (`provider/openai`, covering Cha
 Responses) and Anthropic Messages (`provider/anthropic`). Zero external dependencies.
 
 This SDK is a **thin API wrapper** — it builds requests, manages connections, and decodes responses.
-It intentionally does **not** include retry, rate limiting, request validation, caching / persistence, logging / metrics.
+It intentionally does **not** include rate limiting, request validation, caching / persistence, logging / metrics.
+Retry is likewise out of the provider packages; the one exception is the `composes` routing layer, which
+retries an endpoint before judging it dead (ADR 0009).
 
 ## Rules
 
@@ -20,8 +22,8 @@ It intentionally does **not** include retry, rate limiting, request validation, 
 
 The vendor-neutral canonical layer (`ais`, the root `Client`/`Stream`/`Responder`, and both
 providers' translation code) **was removed in v0.7.0**, after being marked `Deprecated:` in v0.6.1
-— see [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md) and
-[MIGRATION.md](./MIGRATION.md). Do not reintroduce a shared request/response model, a translation
+— see [ADR 0007](./doc/adr/0007-provider-native-as-the-only-public-interface.md).
+Do not reintroduce a shared request/response model, a translation
 layer, or a provider registry; the guard tests fail if one grows back. New work goes into a
 provider package, or into a `composes/` wrapper for multi-backend routing. The principles below are
 in force for every change.
@@ -76,7 +78,7 @@ Consequences to apply directly:
   `errors.As`. `composes` does exactly this — it classifies and aggregates backend errors from every
   protocol without naming, or importing, any provider's error type.
 - **Routing mechanism may be shared; protocol semantics may not.** `composes` is a protocol-neutral
-  routing core (strategies, health, probes, aliases, attribution) whose entire interface is endpoint
+  routing core (active endpoint, strategies, retries, health, aliases, attribution) whose entire interface is endpoint
   indices, opaque strings, scalars and closures; `composes/openais` and `composes/anthropics` bind it
   to their own wire types and never import each other. The test for any shared type: *if I add a
   field to it, does a provider package have to learn about it?* Pools never mix protocols, and there
@@ -127,7 +129,6 @@ go tool cover -func=coverage.out
 | OpenAI Responses: wire types, typed SSE events, hosted tools | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `provider/openai/responses*.go` |
 | Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/native.go`, `wire.go` |
 | Multi-backend dispatch, health tracking, adding a protocol wrapper | [doc/design/compose.md](./doc/design/compose.md) | `composes/`, `composes/openais/`, `composes/anthropics/` |
-| Migrating off the removed canonical API | [MIGRATION.md](./MIGRATION.md) | — |
 
 ## Architecture at a glance
 

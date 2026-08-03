@@ -36,6 +36,54 @@ type statusError struct {
 func (e *statusError) Error() string   { return fmt.Sprintf("status %d", e.status) }
 func (e *statusError) StatusCode() int { return e.status }
 
+// testClock is the router's clock and its retry waiter in one. Waiting records
+// the requested duration and advances the clock instead of sleeping, so the
+// backoff sequence is asserted exactly and no test pays for it in wall time.
+type testClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	waits []time.Duration
+}
+
+func newTestClock() *testClock {
+	return &testClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.now
+}
+
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.now = c.now.Add(d)
+}
+
+func (c *testClock) wait(ctx context.Context, d time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.waits = append(c.waits, d)
+	c.now = c.now.Add(d)
+
+	return nil
+}
+
+func (c *testClock) waited() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]time.Duration(nil), c.waits...)
+}
+
 // attemptLog records which endpoints an attempt closure was invoked for.
 type attemptLog struct {
 	mu    sync.Mutex
@@ -56,17 +104,32 @@ func (a *attemptLog) seen() []int {
 	return append([]int(nil), a.calls...)
 }
 
-// newTestRouter builds a router with a deterministic rng so ordering
-// assertions do not depend on the process seed.
-func newTestRouter(t *testing.T, strategy Strategy, endpoints []Endpoint, opts ...Option) *Router {
+// newClockedRouter builds a router on a controllable clock, with a deterministic
+// rng so ordering assertions do not depend on the process seed. Retries are off
+// by default — a test that is about retrying says so with WithRetryPolicy.
+func newClockedRouter(t *testing.T, strategy Strategy, endpoints []Endpoint, opts ...Option) (*Router, *testClock) {
 	t.Helper()
 
-	r, err := NewRouter(strategy, endpoints, opts...)
+	clock := newTestClock()
+
+	defaults := []Option{WithRetryPolicy(time.Millisecond, 0), WithRecoverTime(time.Hour)}
+
+	r, err := NewRouter(strategy, endpoints, append(defaults, opts...)...)
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}
 
 	r.rng = newRand(42)
+	r.nowFunc = clock.Now
+	r.waitFunc = clock.wait
+
+	return r, clock
+}
+
+func newTestRouter(t *testing.T, strategy Strategy, endpoints []Endpoint, opts ...Option) *Router {
+	t.Helper()
+
+	r, _ := newClockedRouter(t, strategy, endpoints, opts...)
 
 	return r
 }
@@ -115,6 +178,18 @@ func assertIntSlice(t *testing.T, got, want []int) {
 	}
 }
 
+// activeAlias returns the alias the pool currently serves from, or "" when it
+// has not selected one.
+func activeAlias(r *Router) string {
+	for _, s := range r.Stats() {
+		if s.Active {
+			return s.Alias
+		}
+	}
+
+	return ""
+}
+
 func TestNewRouter_EmptyEndpoints(t *testing.T) {
 	if _, err := NewRouter(StrategyFailover, nil); err == nil {
 		t.Fatal("expected error for empty endpoint list")
@@ -155,24 +230,110 @@ func TestNewRouter_DoesNotMutateCallerEndpoints(t *testing.T) {
 	}
 }
 
-func TestDispatch_FirstCandidateSucceeds(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
-	log := &attemptLog{}
-
-	got, err := dispatchTo(context.Background(), r, Call{}, log, errors.New("boom"), 0, 1)
-	if err != nil {
-		t.Fatal(err)
+// The recovery window has to outlast the backoff scale the retries reach, or a
+// "recovered" endpoint would rejoin inside the very interval it failed through.
+func TestNewRouter_ValidatesTiming(t *testing.T) {
+	cases := []struct {
+		name     string
+		opts     []Option
+		wantText []string
+	}{
+		{
+			name:     "recover time equal to the bound",
+			opts:     []Option{WithRetryPolicy(time.Second, 3), WithRecoverTime(8 * time.Second)},
+			wantText: []string{"8s", "1s", "2^3"},
+		},
+		{
+			name:     "recover time below the bound",
+			opts:     []Option{WithRetryPolicy(time.Second, 3), WithRecoverTime(5 * time.Second)},
+			wantText: []string{"5s", "8s"},
+		},
+		{
+			name:     "non-positive base",
+			opts:     []Option{WithRetryPolicy(0, 3)},
+			wantText: []string{"retry base must be positive"},
+		},
+		{
+			name:     "negative retries",
+			opts:     []Option{WithRetryPolicy(time.Second, -1)},
+			wantText: []string{"max retries must not be negative"},
+		},
+		{
+			name:     "non-positive recover time",
+			opts:     []Option{WithRecoverTime(0)},
+			wantText: []string{"recover time must be positive"},
+		},
+		{
+			name:     "backoff overflows a duration",
+			opts:     []Option{WithRetryPolicy(time.Hour, 64), WithRecoverTime(time.Hour)},
+			wantText: []string{"overflows"},
+		},
 	}
 
-	if got != 0 {
-		t.Fatalf("served by %d, want 0", got)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewRouter(StrategyFailover, endpointsNamed("a"), tc.opts...)
+			if err == nil {
+				t.Fatal("expected a construction error")
+			}
 
-	assertIntSlice(t, log.seen(), []int{0})
+			for _, want := range tc.wantText {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not mention %q", err.Error(), want)
+				}
+			}
+		})
+	}
 }
 
-func TestDispatch_FailoverToNextCandidate(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
+func TestNewRouter_AcceptsAValidPolicy(t *testing.T) {
+	if _, err := NewRouter(StrategyFailover, endpointsNamed("a"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(8*time.Second+time.Nanosecond)); err != nil {
+		t.Fatalf("a recover time just above the bound should be accepted: %v", err)
+	}
+}
+
+// The heart of the model: one endpoint serves the pool, and keeps serving it.
+// Random and weighted are in the table on purpose — they choose *who* becomes
+// active, not who serves each call.
+func TestDispatch_ActiveEndpointServesEveryCall(t *testing.T) {
+	for _, strategy := range []Strategy{StrategyFailover, StrategyRandom, StrategyWeight, StrategyCost, StrategyLatency} {
+		t.Run(string(strategy), func(t *testing.T) {
+			r := newTestRouter(t, strategy, endpointsNamed("a", "b", "c"))
+			log := &attemptLog{}
+
+			first, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for range 20 {
+				got, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if got != first {
+					t.Fatalf("call served by %d, want the active endpoint %d", got, first)
+				}
+			}
+
+			if alias := activeAlias(r); alias != r.endpoints[first].Alias {
+				t.Fatalf("Stats reports %q active, want %q", alias, r.endpoints[first].Alias)
+			}
+
+			if r.commits != 1 {
+				t.Fatalf("committed an active endpoint %d times, want 1", r.commits)
+			}
+		})
+	}
+}
+
+// A failing active endpoint is retried in place on a doubling schedule, judged
+// dead once the retries run out, and replaced without failing the call.
+func TestDispatch_RetriesThenReplacesTheActiveEndpoint(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("flaky", "ok"),
+		WithRetryPolicy(100*time.Millisecond, 3), WithRecoverTime(time.Hour))
 	log := &attemptLog{}
 
 	got, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1)
@@ -181,14 +342,168 @@ func TestDispatch_FailoverToNextCandidate(t *testing.T) {
 	}
 
 	if got != 1 {
-		t.Fatalf("served by %d, want 1", got)
+		t.Fatalf("served by %d, want 1 after the active endpoint died", got)
 	}
 
-	assertIntSlice(t, log.seen(), []int{0, 1})
+	// Four attempts on the active endpoint (1 + maxRetries), then one on its
+	// replacement — all inside this single call.
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0, 1})
+
+	wantWaits := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
+
+	if waits := clock.waited(); !equalDurations(waits, wantWaits) {
+		t.Fatalf("retry waits = %v, want %v", waits, wantWaits)
+	}
+
+	stats := r.Stats()
+	if stats[0].Status != "dead" || stats[0].Active || stats[0].ErrorCount != 1 {
+		t.Fatalf("flaky stats = %+v, want dead/not-active/1", stats[0])
+	}
+
+	if stats[1].Status != "available" || !stats[1].Active {
+		t.Fatalf("ok stats = %+v, want available and active", stats[1])
+	}
+
+	// One retry round is one entry, not one per attempt.
+	if r.commits != 2 {
+		t.Fatalf("commits = %d, want 2 (initial selection plus one switch)", r.commits)
+	}
 }
 
-func TestDispatch_AllFailAttributesEveryAlias(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
+// 401/403 say the credentials do not work; repeating the call cannot help, so
+// the endpoint dies without a single retry or wait.
+func TestDispatch_CredentialFailureSkipsRetries(t *testing.T) {
+	for _, status := range []int{401, 403} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("expired", "ok"),
+				WithRetryPolicy(time.Second, 5), WithRecoverTime(time.Hour))
+			log := &attemptLog{}
+
+			got, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: status}, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != 1 {
+				t.Fatalf("served by %d, want 1", got)
+			}
+
+			assertIntSlice(t, log.seen(), []int{0, 1})
+
+			if waits := clock.waited(); len(waits) != 0 {
+				t.Fatalf("a credential failure must not wait, got %v", waits)
+			}
+
+			if s := r.Stats()[0]; s.Status != "dead" {
+				t.Fatalf("expired endpoint status = %q, want dead", s.Status)
+			}
+		})
+	}
+}
+
+// Everything that is not a credential failure walks the full retry path first —
+// including a 400, which under the old three-state model left health untouched.
+func TestDispatch_RetryablesExhaustRetriesBeforeDying(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"400", &statusError{status: 400}},
+		{"429", &statusError{status: 429}},
+		{"500", &statusError{status: 500}},
+		{"transport", errors.New("connection refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("bad", "ok"),
+				WithRetryPolicy(time.Second, 2), WithRecoverTime(time.Hour))
+			log := &attemptLog{}
+
+			if _, err := dispatchTo(context.Background(), r, Call{}, log, tc.err, 1); err != nil {
+				t.Fatal(err)
+			}
+
+			assertIntSlice(t, log.seen(), []int{0, 0, 0, 1})
+
+			wantWaits := []time.Duration{time.Second, 2 * time.Second}
+			if waits := clock.waited(); !equalDurations(waits, wantWaits) {
+				t.Fatalf("waits = %v, want %v", waits, wantWaits)
+			}
+
+			if s := r.Stats()[0]; s.Status != "dead" || s.LastError == nil {
+				t.Fatalf("stats = %+v, want dead with the recorded failure", s)
+			}
+		})
+	}
+}
+
+// Recovery restores candidacy and nothing else: the endpoint that took over
+// keeps serving, and no switch happens just because an old one came back.
+func TestDispatch_RecoveryDoesNotDisplaceTheActiveEndpoint(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("first", "second"),
+		WithRecoverTime(time.Minute))
+	log := &attemptLog{}
+
+	// "first" dies and "second" takes over.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if alias := activeAlias(r); alias != "second" {
+		t.Fatalf("active = %q, want second", alias)
+	}
+
+	generationAfterSwitch, commitsAfterSwitch := r.generation, r.commits
+
+	// The recovery window elapses: "first" is a candidate again...
+	clock.advance(2 * time.Minute)
+
+	if s := r.Stats()[0]; s.Status != "available" || s.Active {
+		t.Fatalf("recovered endpoint stats = %+v, want available and not active", s)
+	}
+
+	// ...but the healthy active endpoint keeps every call.
+	for range 5 {
+		got, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got != 1 {
+			t.Fatalf("served by %d, want the incumbent 1", got)
+		}
+	}
+
+	if r.generation != generationAfterSwitch || r.commits != commitsAfterSwitch {
+		t.Fatalf("recovery moved the active endpoint: generation %d→%d, commits %d→%d",
+			generationAfterSwitch, r.generation, commitsAfterSwitch, r.commits)
+	}
+}
+
+// Nothing left to try is the sentinel; having tried and failed is the aggregate.
+func TestDispatch_NoActiveModelsWhenEverythingIsDead(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"))
+	log := &attemptLog{}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}); err == nil {
+		t.Fatal("expected the first dispatch to fail")
+	}
+
+	_, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500})
+	if !errors.Is(err, ErrNoActiveModels) {
+		t.Fatalf("expected ErrNoActiveModels, got %v", err)
+	}
+
+	assertIntSlice(t, log.seen(), []int{0})
+}
+
+// Every endpoint failing yields one MultiError entry per endpoint, in the order
+// they were tried — a retry round contributes its final error, not four entries.
+func TestDispatch_AllFailAttributesEachEndpointOnce(t *testing.T) {
+	var seen []AttemptResult
+
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"),
+		WithRetryPolicy(time.Millisecond, 1), WithRecoverTime(time.Hour),
+		WithAttemptObserver(func(res AttemptResult) { seen = append(seen, res) }))
 	log := &attemptLog{}
 
 	_, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500})
@@ -199,11 +514,18 @@ func TestDispatch_AllFailAttributesEveryAlias(t *testing.T) {
 	}
 
 	if len(multi.Errors) != 2 {
-		t.Fatalf("endpoint errors = %d, want 2", len(multi.Errors))
+		t.Fatalf("endpoint errors = %d, want 2 (one per endpoint)", len(multi.Errors))
 	}
 
 	if multi.Errors[0].Alias != "a" || multi.Errors[1].Alias != "b" {
 		t.Fatalf("aliases = %q, %q; want a, b", multi.Errors[0].Alias, multi.Errors[1].Alias)
+	}
+
+	// Each endpoint was really attempted twice, and the observer saw all four.
+	assertIntSlice(t, log.seen(), []int{0, 0, 1, 1})
+
+	if len(seen) != 4 {
+		t.Fatalf("observations = %d, want 4 (every attempt including retries)", len(seen))
 	}
 
 	// errors.As reaches through the aggregate to a single endpoint failure and
@@ -217,24 +539,6 @@ func TestDispatch_AllFailAttributesEveryAlias(t *testing.T) {
 	if !errors.As(err, &status) || status.StatusCode() != 500 {
 		t.Fatal("expected errors.As to reach the backend error through the chain")
 	}
-}
-
-func TestDispatch_NoActiveEndpoints(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("a"), WithRecoveryInterval(time.Hour))
-	log := &attemptLog{}
-
-	// The only endpoint fails with a 5xx and enters the error state.
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}); err == nil {
-		t.Fatal("expected the first dispatch to fail")
-	}
-
-	// Its backoff has not elapsed, so the next dispatch has no candidate at all.
-	_, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500})
-	if !errors.Is(err, ErrNoActiveModels) {
-		t.Fatalf("expected ErrNoActiveModels, got %v", err)
-	}
-
-	assertIntSlice(t, log.seen(), []int{0})
 }
 
 func TestDispatch_CapabilityFilterFailsFastBeforeAnyAttempt(t *testing.T) {
@@ -274,6 +578,96 @@ func TestDispatch_CapabilityFilterKeepsUndeclared(t *testing.T) {
 
 	got := r.capableIndices(Call{Requires: []string{"tools"}})
 	assertIntSlice(t, got, []int{1, 2})
+}
+
+// A call the active endpoint cannot serve is routed around it — for that call
+// only. Letting it move the pool would mean one rare capability dragging every
+// ordinary call onto a different backend.
+func TestDispatch_IncapableActiveEndpointIsRoutedAroundNotReplaced(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "chat-only", Declares: Declare()},
+		{Alias: "full", Declares: Declare("special")},
+	})
+	log := &attemptLog{}
+
+	// An ordinary call makes "chat-only" the pool's active endpoint.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if alias := activeAlias(r); alias != "chat-only" {
+		t.Fatalf("active = %q, want chat-only", alias)
+	}
+
+	commitsBefore := r.commits
+
+	// A call requiring "special" is served by the only endpoint that declares it.
+	got, err := dispatchTo(context.Background(), r, Call{Requires: []string{"special"}}, log, nil, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 1 {
+		t.Fatalf("served by %d, want the capable endpoint 1", got)
+	}
+
+	if alias := activeAlias(r); alias != "chat-only" {
+		t.Fatalf("active = %q after a temporary pick, want chat-only unchanged", alias)
+	}
+
+	if r.commits != commitsBefore {
+		t.Fatalf("a temporary pick committed a new active endpoint (%d → %d)", commitsBefore, r.commits)
+	}
+
+	// And the ordinary calls are still on the original endpoint.
+	back, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if back != 0 {
+		t.Fatalf("ordinary call served by %d, want 0", back)
+	}
+}
+
+// A temporary pick that fails dies like any other endpoint, but still must not
+// disturb the pool's active endpoint.
+func TestDispatch_FailedTemporaryPickLeavesTheActiveEndpointAlone(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "chat-only", Declares: Declare()},
+		{Alias: "special-a", Declares: Declare("special")},
+		{Alias: "special-b", Declares: Declare("special")},
+	})
+	log := &attemptLog{}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	commitsBefore := r.commits
+
+	// special-a fails, special-b serves — both are temporary picks.
+	got, err := dispatchTo(context.Background(), r, Call{Requires: []string{"special"}}, log,
+		&statusError{status: 500}, 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 2 {
+		t.Fatalf("served by %d, want 2", got)
+	}
+
+	if alias := activeAlias(r); alias != "chat-only" {
+		t.Fatalf("active = %q, want chat-only", alias)
+	}
+
+	if r.commits != commitsBefore {
+		t.Fatalf("a failing temporary pick moved the active endpoint (%d → %d)", commitsBefore, r.commits)
+	}
+
+	if s := r.Stats()[1]; s.Status != "dead" {
+		t.Fatalf("special-a status = %q, want dead", s.Status)
+	}
 }
 
 // Eligible carries a fact about the caller's backend object, not about the
@@ -321,21 +715,19 @@ func TestDispatch_CancelledBeforeAttempt(t *testing.T) {
 		t.Fatalf("no attempt should be made on a cancelled context, saw %v", log.seen())
 	}
 
-	if !r.health[0].isActive() {
-		t.Fatal("health must not be poisoned by cancellation")
+	if s := r.Stats()[0]; s.Status != "available" {
+		t.Fatalf("health must not be poisoned by cancellation, got %q", s.Status)
 	}
 }
 
 // Cancellation mid-attempt is still attributed to its alias, but leaves health
-// untouched: the endpoint did not misbehave.
+// and the active endpoint untouched: the endpoint did not misbehave.
 func TestDispatch_CancelledMidAttemptAttributesButKeepsHealth(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("slow", "other"))
-
 	var seen []AttemptResult
 
-	r.attemptObservers = append(r.attemptObservers, func(res AttemptResult) {
-		seen = append(seen, res)
-	})
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("slow", "other"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour),
+		WithAttemptObserver(func(res AttemptResult) { seen = append(seen, res) }))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -353,109 +745,78 @@ func TestDispatch_CancelledMidAttemptAttributesButKeepsHealth(t *testing.T) {
 		t.Fatalf("observations = %+v, want one failed attempt for slow", seen)
 	}
 
-	if !r.health[0].isActive() {
-		t.Fatal("health must not be poisoned by mid-attempt cancellation")
+	if s := r.Stats()[0]; s.Status != "available" || s.ErrorCount != 0 {
+		t.Fatalf("cancellation changed health: %+v", s)
+	}
+
+	if alias := activeAlias(r); alias != "slow" {
+		t.Fatalf("active = %q, want slow — cancellation must not switch", alias)
 	}
 }
 
-func TestDispatch_429CoolsAndRejoinsRotation(t *testing.T) {
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+// A cancellation arriving during a retry wait ends the call there: no further
+// attempt, no health change.
+func TestDispatch_CancelledDuringRetryWait(t *testing.T) {
+	r, _ := newClockedRouter(t, StrategyFailover, endpointsNamed("a", "b"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
 
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("limited", "ok"), WithCoolingInterval(time.Second))
-	r.nowFunc = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// The waiter is where the caller gives up.
+	r.waitFunc = func(context.Context, time.Duration) error {
+		cancel()
+
+		return ctx.Err()
+	}
 
 	log := &attemptLog{}
 
-	// The rate-limited endpoint cools; the call fails over and succeeds.
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 429}, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	if s := r.Stats()[0]; s.Status != "cooling" || s.ErrorCount != 0 {
-		t.Fatalf("stats after 429 = %+v, want cooling with errorCount 0", s)
-	}
-
-	// Inside the window it is not selectable at all.
-	assertIntSlice(t, selectAll(r), []int{1})
-
-	// Once the window elapses it rejoins regular rotation without a probe.
-	r.nowFunc = func() time.Time { return now.Add(2 * time.Second) }
-	assertIntSlice(t, selectAll(r), []int{0, 1})
-
-	if s := r.Stats()[0]; s.Status != "active" {
-		t.Fatalf("elapsed cooling reports %q, want active", s.Status)
-	}
-}
-
-func TestDispatch_5xxErrorsAndProbesAfterBackoff(t *testing.T) {
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("broken", "ok"), WithRecoveryInterval(time.Minute))
-	r.nowFunc = func() time.Time { return now }
-
-	log := &attemptLog{}
-
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	stats := r.Stats()
-	if stats[0].Status != "error" || stats[0].ErrorCount != 1 || stats[0].LastError == nil {
-		t.Fatalf("stats after 5xx = %+v, want error/1/non-nil", stats[0])
-	}
-
-	// Before the backoff elapses only the healthy endpoint is tried.
-	log = &attemptLog{}
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	assertIntSlice(t, log.seen(), []int{1})
-
-	// Once it elapses the errored endpoint is probed *first*.
-	r.nowFunc = func() time.Time { return now.Add(time.Minute + time.Second) }
-
-	log = &attemptLog{}
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 0, 1); err != nil {
-		t.Fatal(err)
+	_, err := dispatchTo(ctx, r, Call{}, log, &statusError{status: 500}, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 
 	assertIntSlice(t, log.seen(), []int{0})
 
-	if s := r.Stats()[0]; s.Status != "active" || s.ErrorCount != 0 {
-		t.Fatalf("stats after a successful probe = %+v, want active/0", s)
+	if s := r.Stats()[0]; s.Status != "available" {
+		t.Fatalf("an interrupted retry must not judge the endpoint, got %q", s.Status)
 	}
 }
 
-// A non-429 4xx is the caller's fault, not the endpoint's: it is attributed and
-// failed over, but the endpoint stays healthy.
-func TestDispatch_4xxDoesNotDowngradeHealth(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("badreq"))
-	log := &attemptLog{}
+// Many callers watching the same active endpoint fail must produce exactly one
+// switch between them, not one per caller.
+func TestDispatch_ConcurrentFailureSwitchesOnce(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("dying", "healthy"))
 
-	_, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 400})
+	var wg sync.WaitGroup
 
-	var endpointErr *EndpointError
-	if !errors.As(err, &endpointErr) || endpointErr.Alias != "badreq" {
-		t.Fatalf("expected an attributed EndpointError for badreq, got %v", err)
+	for range 40 {
+		wg.Go(func() {
+			log := &attemptLog{}
+
+			got, err := dispatchTo(context.Background(), r, Call{}, log, &statusError{status: 500}, 1)
+			if err != nil {
+				t.Errorf("dispatch: %v", err)
+
+				return
+			}
+
+			if got != 1 {
+				t.Errorf("served by %d, want 1", got)
+			}
+		})
 	}
 
-	if s := r.Stats()[0]; s.Status != "active" || s.ErrorCount != 0 || s.LastError != nil {
-		t.Fatalf("stats after 4xx = %+v, want active/0/nil", s)
-	}
-}
+	wg.Wait()
 
-// A transport failure carries no status and is treated as an endpoint fault.
-func TestDispatch_TransportFailureErrorsEndpoint(t *testing.T) {
-	r := newTestRouter(t, StrategyFailover, endpointsNamed("gone", "ok"))
-	log := &attemptLog{}
-
-	if _, err := dispatchTo(context.Background(), r, Call{}, log, errors.New("connection refused"), 1); err != nil {
-		t.Fatal(err)
+	// One commit selected "dying", one replaced it with "healthy". Every other
+	// caller found the replacement already committed and reused it.
+	if r.commits != 2 {
+		t.Fatalf("commits = %d, want 2 (initial selection plus a single switch)", r.commits)
 	}
 
-	if s := r.Stats()[0]; s.Status != "error" || s.ErrorCount != 1 {
-		t.Fatalf("stats after a transport failure = %+v, want error/1", s)
+	if alias := activeAlias(r); alias != "healthy" {
+		t.Fatalf("active = %q, want healthy", alias)
 	}
 }
 
@@ -509,6 +870,22 @@ func TestStats_ImmutableSnapshot(t *testing.T) {
 	}
 }
 
+// Before the first call nothing is active: Active is a fact about the pool, not
+// a default applied to the first endpoint.
+func TestStats_NoActiveBeforeFirstDispatch(t *testing.T) {
+	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
+
+	for _, s := range r.Stats() {
+		if s.Active {
+			t.Fatalf("%s reports active before any dispatch", s.Alias)
+		}
+
+		if s.Status != "available" {
+			t.Fatalf("%s status = %q, want available", s.Alias, s.Status)
+		}
+	}
+}
+
 func TestStats_ConcurrentWithDispatch(t *testing.T) {
 	r := newTestRouter(t, StrategyRandom, endpointsNamed("ok", "flaky"))
 
@@ -548,6 +925,20 @@ func TestErrorStrings(t *testing.T) {
 	if !strings.Contains(capErr.Error(), "vision") || !strings.Contains(capErr.Error(), "text-only") {
 		t.Fatalf("CapabilityError.Error() = %q", capErr.Error())
 	}
+}
+
+func equalDurations(got, want []time.Duration) bool {
+	if len(got) != len(want) {
+		return false
+	}
+
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func assertStringSlice(t *testing.T, got, want []string) {

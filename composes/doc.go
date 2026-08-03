@@ -16,8 +16,9 @@
  */
 
 // Package composes is the protocol-neutral routing core shared by every
-// multi-backend wrapper in this module: candidate ordering, endpoint health,
-// recovery probes, alias identity, observation and failure attribution.
+// multi-backend wrapper in this module: the pool's active endpoint, selection
+// strategies, in-call retries, endpoint health, alias identity, observation and
+// failure attribution.
 //
 // It has no client, no request type and no provider dependency. A wrapper
 // package binds the protocol — [github.com/vogo/aimodel/composes/openais] for
@@ -34,7 +35,19 @@
 // options and errors:
 //
 //	cc, err := openais.NewFromEndpoints(composes.StrategyWeight, specs,
-//	    composes.WithRecoveryInterval(30*time.Second))
+//	    composes.WithRetryPolicy(time.Second, 3),
+//	    composes.WithRecoverTime(5*time.Minute))
+//
+// # One active endpoint
+//
+// A pool serves its calls from a single active endpoint. The strategy chooses
+// that endpoint when the pool has none or the current one is judged dead; it
+// does not run per call, so successive successful calls stay on one backend even
+// under [StrategyRandom] or [StrategyWeight]. A failing endpoint is retried in
+// place with exponential waits, then marked dead and replaced — and a dead
+// endpoint returns to candidacy after the recover time without displacing
+// whoever took its place. See
+// doc/adr/0009-stateful-active-endpoint-with-in-call-retry.md.
 //
 // # The boundary
 //

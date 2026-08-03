@@ -16,8 +16,8 @@
  */
 
 // Package anthropics dispatches Anthropic Messages calls across several
-// Anthropic-compatible backends, with failover, health tracking, recovery
-// probes, capability filtering and economic routing.
+// Anthropic-compatible backends, with a stable active endpoint, in-call
+// retries, health tracking, capability filtering and economic routing.
 //
 // It is the Anthropic half of a two-layer split: the operational machinery
 // lives in the protocol-neutral [github.com/vogo/aimodel/composes] core, and
@@ -55,8 +55,8 @@ type ComposeClient struct {
 }
 
 // NewComposeClient creates a ComposeClient with the given strategy and model
-// entries. Options are the neutral core's ([composes.WithRecoveryInterval],
-// [composes.WithAttemptObserver], …).
+// entries. Options are the neutral core's ([composes.WithRetryPolicy],
+// [composes.WithRecoverTime], [composes.WithAttemptObserver], …).
 func NewComposeClient(
 	strategy composes.Strategy, entries []ModelEntry, opts ...composes.Option,
 ) (*ComposeClient, error) {

@@ -23,8 +23,8 @@ import (
 	"strings"
 )
 
-// ErrNoActiveModels reports that every endpoint is currently unavailable —
-// cooling or errored — and none is due for a recovery probe.
+// ErrNoActiveModels reports that a dispatch found nothing to try: every
+// endpoint that could have served it was dead and none had recovered yet.
 //
 // The aggregate failure of a dispatch that did try endpoints is a *MultiError,
 // not this sentinel.
@@ -73,8 +73,11 @@ func (e *EndpointError) Error() string {
 
 func (e *EndpointError) Unwrap() error { return e.Err }
 
-// MultiError aggregates every endpoint failure from one dispatch, in attempt
-// order. Endpoints serving the same model are distinguished by alias (via
+// MultiError aggregates the endpoint failures of one dispatch, one entry per
+// endpoint in the order they were tried. An endpoint that was retried
+// contributes the error it finally failed with, not one entry per retry, so the
+// aggregate reads as "these backends were tried and this is how each ended".
+// Endpoints serving the same model are distinguished by alias (via
 // EndpointError). It implements Go 1.20+ multi-error unwrapping so errors.Is/As
 // match any underlying endpoint error.
 type MultiError struct {

@@ -31,7 +31,8 @@ func testFailover(entries []openais.ModelEntry) {
 	fmt.Println("=== Compose Failover ===")
 
 	cc, err := openais.NewComposeClient(composes.StrategyFailover, entries,
-		composes.WithRecoveryInterval(30*time.Second))
+		composes.WithRetryPolicy(time.Second, 2),
+		composes.WithRecoverTime(30*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}

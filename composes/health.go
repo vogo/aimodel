@@ -29,60 +29,57 @@ import (
 // module wraps without importing any of them.
 type statusCoder interface{ StatusCode() int }
 
-// endpointState represents the health state of an endpoint.
+// endpointState is the health of one endpoint. There are exactly two states:
 //
-//   - active:  participating in regular selection.
-//   - cooling: a 429 rate-limit response put the endpoint to sleep; it is
-//     skipped until the cooling interval elapses, then rejoins regular
-//     rotation. Cooling never counts toward the consecutive-failure backoff.
-//   - error:   a 5xx (or transport) failure; the endpoint is skipped until an
-//     exponential-backoff recovery probe is due.
+//   - available: the endpoint may be selected — as the pool's active endpoint,
+//     as its replacement, or as a temporary pick for a call the active cannot
+//     serve.
+//   - dead: the endpoint exhausted its in-call retries, or answered with a
+//     credential failure. It is not selectable until the recover time elapses,
+//     at which point it becomes available again on the clock alone — there is no
+//     recovery probe and no exponential health backoff.
 type endpointState string
 
 const (
-	stateActive  endpointState = "active"
-	stateCooling endpointState = "cooling"
-	stateError   endpointState = "error"
+	stateAvailable endpointState = "available"
+	stateDead      endpointState = "dead"
 )
 
-// healthOutcome classifies how a failed attempt affects endpoint health.
-type healthOutcome int
+// failureOutcome classifies how a failed attempt is handled.
+type failureOutcome int
 
 const (
-	// outcomeError marks the endpoint errored (5xx or transport failure) and
-	// advances the consecutive-failure backoff.
-	outcomeError healthOutcome = iota
-	// outcomeCooling puts the endpoint into rate-limit cooling (HTTP 429); it
-	// does not count as a health failure.
-	outcomeCooling
-	// outcomeRequestFailure is a client-side request failure (non-429 4xx). The
-	// error is attributed and failover continues, but the endpoint is not
-	// marked unhealthy.
-	outcomeRequestFailure
+	// outcomeRetryable is every failure that may be transient: 429, 5xx, 400 and
+	// other 4xx, and transport errors alike. The attempt is repeated against the
+	// same endpoint under the exponential retry policy, and the endpoint is only
+	// judged dead once those retries are exhausted.
+	outcomeRetryable failureOutcome = iota
+	// outcomeCredential is HTTP 401/403: the endpoint's credentials do not work,
+	// so repeating the same call cannot help. It skips retries entirely and the
+	// endpoint is judged dead at once.
+	outcomeCredential
 )
 
-// classifyHealth decides how an attempt error affects endpoint health.
+// classifyFailure decides how an attempt error is handled.
 //
-//   - HTTP 429                       → cooling
-//   - HTTP 5xx (or status 0, e.g. an
-//     error embedded in a 2xx body)  → error
-//   - other HTTP 4xx                 → request failure (endpoint stays healthy)
-//   - no status-carrying error
-//     (transport, etc.)              → error
-func classifyHealth(err error) healthOutcome {
+//   - HTTP 401 / 403 → credential failure (no retry, immediate death)
+//   - anything else  → retryable
+//
+// The deliberate simplicity here is a reversal of the older three-way split
+// (cooling / error / request-failure): 429 no longer has its own short cooling
+// window, and a 4xx no longer leaves the endpoint healthy while still failing
+// the call. One retry path and one recovery timer describe the whole model.
+func classifyFailure(err error) failureOutcome {
 	var sc statusCoder
 	if !errors.As(err, &sc) {
-		return outcomeError
+		return outcomeRetryable
 	}
 
-	switch code := sc.StatusCode(); {
-	case code == 429:
-		return outcomeCooling
-	case code >= 400 && code < 500:
-		return outcomeRequestFailure
+	switch sc.StatusCode() {
+	case 401, 403:
+		return outcomeCredential
 	default:
-		// 5xx, or status 0 (an error carried in a body the HTTP layer accepted).
-		return outcomeError
+		return outcomeRetryable
 	}
 }
 
@@ -96,77 +93,46 @@ type endpointHealth struct {
 }
 
 func newEndpointHealth() *endpointHealth {
-	return &endpointHealth{state: stateActive}
+	return &endpointHealth{state: stateAvailable}
 }
 
-// markActive records a successful attempt: the endpoint returns to active and
-// all failure accounting is cleared.
-func (h *endpointHealth) markActive() {
+// markSuccess records a successful attempt: the endpoint is available and all
+// failure accounting is cleared.
+func (h *endpointHealth) markSuccess() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.state = stateActive
+	h.state = stateAvailable
 	h.lastError = nil
 	h.errorCount = 0
 	h.errorTime = time.Time{}
 }
 
-// markError records a health-relevant failure (5xx / transport): the endpoint
-// enters the error state and the consecutive-failure count advances.
-func (h *endpointHealth) markError(err error, now time.Time) {
+// markDead records the failure that took the endpoint out of rotation: either a
+// credential rejection or the last error of an exhausted retry round. The
+// timestamp starts the recovery window.
+func (h *endpointHealth) markDead(err error, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.state = stateError
+	h.state = stateDead
 	h.lastError = err
 	h.errorTime = now
 	h.errorCount++
 }
 
-// markCooling records a rate-limit (429) failure: the endpoint enters cooling
-// with the error and timestamp recorded, but the consecutive-failure count is
-// left untouched so cooling never drives the error backoff.
-//
-// An endpoint already in the error state stays there: a 429 answering a recovery
-// probe must not demote a long backoff to the much shorter cooling interval. The
-// probe's timestamp is recorded so the next probe waits another full backoff at
-// the current level, and errorCount still does not advance.
-func (h *endpointHealth) markCooling(err error, now time.Time) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.lastError = err
-	h.errorTime = now
-
-	if h.state != stateError {
-		h.state = stateCooling
-	}
-}
-
-// isActive reports whether the endpoint is in the active state.
-func (h *endpointHealth) isActive() bool {
+// available reports whether the endpoint may be selected now. A dead endpoint
+// becomes available again purely on the clock, once recover has elapsed since
+// the failure — recovery restores candidacy, nothing more.
+func (h *endpointHealth) available(now time.Time, recover time.Duration) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	return h.state == stateActive
-}
-
-// available reports whether the endpoint may be selected now. An active
-// endpoint is always available; a cooling endpoint becomes available again once
-// the cooling interval has elapsed; an errored endpoint is never available
-// through this path (it returns via recovery probes instead).
-func (h *endpointHealth) available(now time.Time, cooling time.Duration) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	switch h.state {
-	case stateActive:
+	if h.state == stateAvailable {
 		return true
-	case stateCooling:
-		return now.Sub(h.errorTime) >= cooling
-	default:
-		return false
 	}
+
+	return now.Sub(h.errorTime) >= recover
 }
 
 // healthSnapshot is a consistent copy of one endpoint's health accounting.
@@ -188,27 +154,4 @@ func (h *endpointHealth) snapshot() healthSnapshot {
 		lastError:  h.lastError,
 		errorTime:  h.errorTime,
 	}
-}
-
-// maxBackoffShift caps exponential backoff at 2^6 = 64x the base interval.
-const maxBackoffShift = 6
-
-// shouldProbe returns true if enough time has passed since the last error
-// for a recovery probe attempt. The required wait time grows exponentially
-// with consecutive errors, capped at 64x the base interval. Only the error
-// state is probed; cooling endpoints rejoin rotation on their own timer.
-func (h *endpointHealth) shouldProbe(now time.Time, interval time.Duration) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	if h.state != stateError {
-		return false
-	}
-
-	shift := max(h.errorCount-1, 0)
-	shift = min(shift, maxBackoffShift)
-
-	backoff := interval * time.Duration(1<<shift)
-
-	return now.Sub(h.errorTime) >= backoff
 }

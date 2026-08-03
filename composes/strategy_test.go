@@ -18,7 +18,6 @@
 package composes
 
 import (
-	"context"
 	"errors"
 	"math"
 	"testing"
@@ -26,13 +25,19 @@ import (
 )
 
 // selectAll runs the capability filter plus strategy ordering for a bare call,
-// which is the routing decision every dispatch starts from.
+// which is the decision the router makes whenever it needs an active endpoint.
 func selectAll(r *Router) []int {
 	return selectFor(r, Call{})
 }
 
 func selectFor(r *Router, call Call) []int {
-	return r.selectEndpoints(context.Background(), call, r.capableIndices(call))
+	return r.selectEndpoints(call, r.capableIndices(call))
+}
+
+// markDeadNow takes an endpoint out of rotation for the ordering tests, which
+// are about who is *eligible* to become active rather than about dispatch.
+func markDeadNow(r *Router, idx int) {
+	r.health[idx].markDead(errors.New("fail"), r.nowFunc())
 }
 
 func TestSelectFailover_AllActive(t *testing.T) {
@@ -41,18 +46,17 @@ func TestSelectFailover_AllActive(t *testing.T) {
 	assertIntSlice(t, selectAll(r), []int{0, 1, 2})
 }
 
-func TestSelectFailover_SkipError(t *testing.T) {
+func TestSelectFailover_SkipDead(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b", "c"))
-	r.health[1].markError(errors.New("fail"), time.Now())
+	markDeadNow(r, 1)
 
 	assertIntSlice(t, selectAll(r), []int{0, 2})
 }
 
-func TestSelectFailover_AllError(t *testing.T) {
+func TestSelectFailover_AllDead(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, endpointsNamed("a", "b"))
-	now := time.Now()
-	r.health[0].markError(errors.New("fail"), now)
-	r.health[1].markError(errors.New("fail"), now)
+	markDeadNow(r, 0)
+	markDeadNow(r, 1)
 
 	if got := selectAll(r); len(got) != 0 {
 		t.Fatalf("expected empty list, got %v", got)
@@ -79,9 +83,9 @@ func TestSelectRandom_AllActive(t *testing.T) {
 	}
 }
 
-func TestSelectRandom_SkipError(t *testing.T) {
+func TestSelectRandom_SkipDead(t *testing.T) {
 	r := newTestRouter(t, StrategyRandom, endpointsNamed("a", "b", "c"))
-	r.health[0].markError(errors.New("fail"), time.Now())
+	markDeadNow(r, 0)
 
 	got := selectAll(r)
 	if len(got) != 2 {
@@ -90,7 +94,7 @@ func TestSelectRandom_SkipError(t *testing.T) {
 
 	for _, idx := range got {
 		if idx == 0 {
-			t.Fatal("should not include errored endpoint 0")
+			t.Fatal("should not include dead endpoint 0")
 		}
 	}
 }
@@ -153,12 +157,12 @@ func TestSelectWeighted_ZeroWeightTreatedAsOne(t *testing.T) {
 	}
 }
 
-func TestSelectWeighted_SkipError(t *testing.T) {
+func TestSelectWeighted_SkipDead(t *testing.T) {
 	r := newTestRouter(t, StrategyWeight, []Endpoint{
 		{Alias: "a", Weight: 10},
 		{Alias: "b", Weight: 1},
 	})
-	r.health[0].markError(errors.New("fail"), time.Now())
+	markDeadNow(r, 0)
 
 	got := selectAll(r)
 	if len(got) != 1 || got[0] != 1 {
@@ -257,13 +261,13 @@ func TestLatencyStrategy_AliasTieBreak(t *testing.T) {
 }
 
 // The capability filter runs before health: a healthy but incapable endpoint is
-// excluded, and an errored capable one is unavailable — so nothing is left.
+// excluded, and a dead capable one is unavailable — so nothing is left.
 func TestCapabilityFilter_RunsBeforeHealth(t *testing.T) {
 	r := newTestRouter(t, StrategyFailover, []Endpoint{
 		{Alias: "healthy-incapable", Declares: Declare()},
-		{Alias: "errored-capable", Declares: Declare("tools")},
+		{Alias: "dead-capable", Declares: Declare("tools")},
 	})
-	r.health[1].markError(errors.New("down"), time.Now())
+	markDeadNow(r, 1)
 
 	if got := selectFor(r, Call{Requires: []string{"tools"}}); len(got) != 0 {
 		t.Fatalf("expected no available capable candidates, got %v", got)

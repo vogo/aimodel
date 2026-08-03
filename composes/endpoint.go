@@ -27,12 +27,13 @@ import (
 // metadata, and an opaque set of labels. There is no client here and no address
 // — the wrapper package owns those, keyed by this endpoint's index.
 type Endpoint struct {
-	// Alias is the endpoint's operational identity, used for health snapshots,
-	// sticky routing and error attribution. An empty alias is derived as
-	// "entry-<index>"; explicit aliases must be unique across the router.
+	// Alias is the endpoint's operational identity, used for health snapshots
+	// and error attribution. An empty alias is derived as "entry-<index>";
+	// explicit aliases must be unique across the router.
 	Alias string
 
-	// Weight is used by StrategyWeight. Zero or negative is treated as 1.
+	// Weight is used by StrategyWeight when it selects an active endpoint. Zero
+	// or negative is treated as 1.
 	Weight int
 
 	// Tags carry operational attributes (region/tier/workspace) for observation
@@ -78,12 +79,18 @@ func Declare(labels ...string) []string {
 type EndpointStat struct {
 	// Alias is the endpoint's operational identity.
 	Alias string
-	// Status is "active", "cooling", or "error".
+	// Status is "available" or "dead". A dead endpoint whose recover time has
+	// elapsed already reports as available.
 	Status string
-	// ErrorCount is the consecutive health-failure count (5xx/transport); it
-	// does not advance on cooling or request failures.
+	// Active reports whether this endpoint is the one currently serving the
+	// pool. It is independent of Status: exactly one endpoint is active once the
+	// pool has selected one, and a call the active cannot serve is routed
+	// elsewhere without moving it.
+	Active bool
+	// ErrorCount counts how many times the endpoint has been judged dead since
+	// its last success. A retry round contributes one, not one per retry.
 	ErrorCount int
-	// LastError is the most recent health-relevant error, or nil if the
+	// LastError is the failure that judged the endpoint dead, or nil if the
 	// endpoint has never failed or has since recovered.
 	LastError error
 	// ErrorTime is when LastError occurred; the zero value means never/recovered.
@@ -94,7 +101,11 @@ type EndpointStat struct {
 // to the observer registered via WithAttemptObserver when each attempt finishes:
 // for plain calls, when the call returns; for stream-establishing calls, when
 // the stream is established or fails to establish. Errors surfaced after
-// establishment belong to the stream itself and are not re-reported here.
+// establishment belong to the stream itself and are not re-reported here — and
+// are never retried.
+//
+// Every real network attempt is reported, so a retried endpoint produces one
+// result per attempt under the same alias.
 type AttemptResult struct {
 	// Alias is the endpoint that was attempted.
 	Alias string

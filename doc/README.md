@@ -25,12 +25,11 @@ This directory holds the design documentation. The root [README.md](../README.md
 
 | Document | Contents |
 |---|---|
-| [design/compose.md](./design/compose.md) | Dispatch across several OpenAI-compatible backends: selection strategies, health tracking, recovery probes, cancellation, aggregate errors |
+| [design/compose.md](./design/compose.md) | Dispatch across several backends: the active endpoint, selection strategies, in-call retries, health and recovery, cancellation, aggregate errors |
 
 ## Root documents
 
 - [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API, multi-backend compose.
-- [../MIGRATION.md](../MIGRATION.md) — migrating off the canonical API removed in v0.7.0.
 - [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
 - [../CHANGES.md](../CHANGES.md) — release index and the merged timeline of both protocols' change logs.
 

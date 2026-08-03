@@ -31,7 +31,7 @@ import (
 
 // anthropicKeyVars names the environment variables that each carry one
 // Anthropic credential. Several keys for the same model is the common shape:
-// multi-key aggregation with failover and 429 cooling between them.
+// multi-key aggregation, one key serving until it is judged dead.
 var anthropicKeyVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_2", "ANTHROPIC_API_KEY_3"}
 
 // testMessages dispatches Anthropic Messages across several Anthropic
