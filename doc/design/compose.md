@@ -207,13 +207,14 @@ endpoint the pool settles on*, without the core ever seeing the request. Dynamic
 
 ## 5. Retries, health and recovery
 
-The core records `state`, `lastError`, `errorTime` and `errorCount` per endpoint. There are exactly two
-states:
+The core records `state`, `lastError`, `errorTime` and `errorCount` per endpoint. Two states are stored,
+and a third is derived from the clock at read time:
 
 | State | Entered by | Selection behavior |
 |---|---|---|
 | `available` | success, or start | selectable — as the active endpoint, its replacement, or a temporary pick |
 | `dead` | exhausted retries, or HTTP **401/403** | not selectable until `recover_time` has elapsed |
+| `probation` *(derived)* | `recover_time` elapsing on a dead endpoint | selectable, but attempted **once** — the retry policy does not apply |
 
 Failure classification reads the status code through the structural `interface{ StatusCode() int }` — which is
 how one state machine classifies failures from *every* protocol without importing any of them:
@@ -227,11 +228,20 @@ how one state machine classifies failures from *every* protocol without importin
 endpoint is attempted at most `1 + maxRetries` times and the worst-case **synchronous** wait a caller pays is
 `base × (2^maxRetries − 1)`. The waits are interruptible: a cancelled context ends the wait and the call. This
 is the one retry in this module — provider packages remain retry-free ([ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md),
-[ADR 0004](../adr/0004-stateful-active-endpoint-with-in-call-retry.md)).
+[ADR 0004](../adr/0004-stateful-active-endpoint-with-in-call-retry.md)). The policy applies to confirmed
+endpoints only; one on probation is attempted once.
 
 **Recovery.** `composes.WithRecoverTime(d)` sets how long a dead endpoint stays out. When `d` has elapsed it is
 a candidate again — that is *all*: recovery never takes the pool back from a healthy incumbent, so an endpoint
 returning causes no switch of its own. Recovery runs on the clock alone: no probe request is issued.
+
+**Probation.** Because the clock proves nothing, an endpoint comes back *on probation* and the first call
+routed to it is attempted **once**, ignoring `maxRetries`. Success promotes it to `available` and clears its
+failure accounting; failure judges it dead again and restarts the recover window — for the price of one
+request rather than a whole retry round with its `base × (2^maxRetries − 1)` of caller-visible wait. The
+confirming request is the caller's real call, not a synthetic probe, so the evidence is exactly the workload
+that matters and the pool never issues traffic of its own
+([ADR 0005](../adr/0005-clock-recovery-is-provisional.md)). `Stats()` reports the interim as `probation`.
 
 `NewRouter` (and therefore both wrappers' constructors) rejects `recover_time <= base × 2^maxRetries`, along
 with a non-positive base or recover time and a negative retry count. A recovery window shorter than the backoff
@@ -280,7 +290,10 @@ non-blocking.
 
 `Stats()` returns an immutable `[]composes.EndpointStat{Alias, Status, Active, ErrorCount, LastError,
 ErrorTime}` snapshot, safe to call concurrently with dispatch. `Status` reflects routing behavior: a dead
-endpoint whose recover time has elapsed is already reported `available`. `Active` marks the one endpoint
+endpoint whose recover time has elapsed is already selectable and reports `probation` — selectable, but
+unconfirmed, so an operator can tell "verified working" from "back on the clock". Compare against the exported
+`composes.StatusAvailable` / `StatusDead` / `StatusProbation` rather than literals: *selectable* means available
+**or** probation, and only `dead` is out of rotation. `Active` marks the one endpoint
 currently serving the pool, and is independent of `Status` — a call routed around the active endpoint on
 capability grounds does not move it.
 

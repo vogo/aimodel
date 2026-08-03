@@ -74,13 +74,28 @@ func Declare(labels ...string) []string {
 	return append(make([]string, 0, len(labels)), labels...)
 }
 
+// Endpoint status values reported by [EndpointStat.Status]. Compare against
+// these rather than against string literals: the set grew once already, and a
+// consumer that tests Status == StatusAvailable to mean "selectable" would
+// silently start reading a recovered endpoint as unusable.
+const (
+	// StatusAvailable is an endpoint a call has succeeded against.
+	StatusAvailable = "available"
+	// StatusDead is an endpoint out of rotation until its recover time elapses.
+	StatusDead = "dead"
+	// StatusProbation is an endpoint whose recover time elapsed but which nothing
+	// has confirmed since: selectable, and attempted once rather than under the
+	// retry policy.
+	StatusProbation = "probation"
+)
+
 // EndpointStat is an immutable per-endpoint health snapshot returned by
 // [Router.Stats].
 type EndpointStat struct {
 	// Alias is the endpoint's operational identity.
 	Alias string
-	// Status is "available" or "dead". A dead endpoint whose recover time has
-	// elapsed already reports as available.
+	// Status is one of [StatusAvailable], [StatusDead] or [StatusProbation].
+	// Selectable means available or probation; only dead is out of rotation.
 	Status string
 	// Active reports whether this endpoint is the one currently serving the
 	// pool. It is independent of Status: exactly one endpoint is active once the

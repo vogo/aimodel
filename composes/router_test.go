@@ -464,11 +464,11 @@ func TestDispatch_RetriesThenReplacesTheActiveEndpoint(t *testing.T) {
 	}
 
 	stats := r.Stats()
-	if stats[0].Status != "dead" || stats[0].Active || stats[0].ErrorCount != 1 {
+	if stats[0].Status != StatusDead || stats[0].Active || stats[0].ErrorCount != 1 {
 		t.Fatalf("flaky stats = %+v, want dead/not-active/1", stats[0])
 	}
 
-	if stats[1].Status != "available" || !stats[1].Active {
+	if stats[1].Status != StatusAvailable || !stats[1].Active {
 		t.Fatalf("ok stats = %+v, want available and active", stats[1])
 	}
 
@@ -502,7 +502,7 @@ func TestDispatch_CredentialFailureSkipsRetries(t *testing.T) {
 				t.Fatalf("a credential failure must not wait, got %v", waits)
 			}
 
-			if s := r.Stats()[0]; s.Status != "dead" {
+			if s := r.Stats()[0]; s.Status != StatusDead {
 				t.Fatalf("expired endpoint status = %q, want dead", s.Status)
 			}
 		})
@@ -537,7 +537,7 @@ func TestDispatch_RetryablesExhaustRetriesBeforeDying(t *testing.T) {
 				t.Fatalf("waits = %v, want %v", waits, wantWaits)
 			}
 
-			if s := r.Stats()[0]; s.Status != "dead" || s.LastError == nil {
+			if s := r.Stats()[0]; s.Status != StatusDead || s.LastError == nil {
 				t.Fatalf("stats = %+v, want dead with the recorded failure", s)
 			}
 		})
@@ -565,8 +565,8 @@ func TestDispatch_RecoveryDoesNotDisplaceTheActiveEndpoint(t *testing.T) {
 	// The recovery window elapses: "first" is a candidate again...
 	clock.advance(2 * time.Minute)
 
-	if s := r.Stats()[0]; s.Status != "available" || s.Active {
-		t.Fatalf("recovered endpoint stats = %+v, want available and not active", s)
+	if s := r.Stats()[0]; s.Status != StatusProbation || s.Active {
+		t.Fatalf("recovered endpoint stats = %+v, want probation and not active", s)
 	}
 
 	// ...but the healthy active endpoint keeps every call.
@@ -584,6 +584,189 @@ func TestDispatch_RecoveryDoesNotDisplaceTheActiveEndpoint(t *testing.T) {
 	if r.generation != generationAfterSwitch || r.commits != commitsAfterSwitch {
 		t.Fatalf("recovery moved the active endpoint: generation %d→%d, commits %d→%d",
 			generationAfterSwitch, r.generation, commitsAfterSwitch, r.commits)
+	}
+}
+
+// An endpoint back on the clock alone is on probation: the call that picks it up
+// spends one attempt on it, not another 1 + maxRetries round with its waits.
+// Failing that one attempt restarts the recover window.
+func TestDispatch_ProbationSpendsOneAttemptNotARetryRound(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("only"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
+	log := &attemptLog{}
+	boom := &statusError{status: 500}
+
+	// The round that judges a confirmed endpoint is the full policy.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom); err == nil {
+		t.Fatal("expected the endpoint to be judged dead")
+	}
+
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0})
+
+	if got := len(clock.waited()); got != 3 {
+		t.Fatalf("waits in the first round = %d, want 3", got)
+	}
+
+	clock.advance(2 * time.Hour)
+
+	if s := r.Stats()[0]; s.Status != StatusProbation {
+		t.Fatalf("status after the recover window = %q, want probation", s.Status)
+	}
+
+	// The probation attempt costs one request and no wait.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom); err == nil {
+		t.Fatal("expected the endpoint to be judged dead again")
+	}
+
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0, 0})
+
+	if got := len(clock.waited()); got != 3 {
+		t.Fatalf("waits after the probation attempt = %d, want 3 — probation must not retry", got)
+	}
+
+	// And it restarts the recover window rather than leaving the endpoint up.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom); !errors.Is(err, ErrNoActiveModels) {
+		t.Fatalf("expected ErrNoActiveModels while the new window runs, got %v", err)
+	}
+}
+
+// One successful call is what ends probation: the endpoint is available outright
+// again, failure accounting cleared, and its next failure gets the whole policy.
+func TestDispatch_ProbationEndsOnASuccessfulCall(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("only"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
+	log := &attemptLog{}
+	boom := &statusError{status: 500}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom); err == nil {
+		t.Fatal("expected the endpoint to be judged dead")
+	}
+
+	clock.advance(2 * time.Hour)
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, nil, 0); err != nil {
+		t.Fatalf("the probation attempt should have succeeded: %v", err)
+	}
+
+	if s := r.Stats()[0]; s.Status != StatusAvailable || s.ErrorCount != 0 || s.LastError != nil {
+		t.Fatalf("stats after a confirming call = %+v, want available with cleared accounting", s)
+	}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom); err == nil {
+		t.Fatal("expected the endpoint to be judged dead")
+	}
+
+	// 4 + 1 + 4: the confirmed endpoint is retried again like any other.
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0, 0, 0, 0, 0, 0})
+}
+
+// A probation endpoint that is still down does not hold the call up: it answers
+// with one attempt and the walk continues to the next candidate at once.
+func TestDispatch_ProbationFailureFallsThroughImmediately(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("flaky", "backup", "spare"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
+	log := &attemptLog{}
+	boom := &statusError{status: 500}
+
+	// "flaky" dies the slow way; "backup" takes the pool.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0, 1})
+
+	clock.advance(2 * time.Hour)
+
+	// Now "backup" dies too, so the walk reaches "flaky" on probation and then
+	// "spare": four attempts for the incumbent, one for the probationer, one that
+	// succeeds.
+	got, err := dispatchTo(context.Background(), r, Call{}, log, boom, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != 2 {
+		t.Fatalf("served by %d, want spare (2)", got)
+	}
+
+	assertIntSlice(t, log.seen(), []int{0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 2})
+
+	if waits := len(clock.waited()); waits != 6 {
+		t.Fatalf("waits = %d, want 6 — the probation attempt must add none", waits)
+	}
+}
+
+// A probation endpoint reached as a temporary pick — because the healthy active
+// endpoint cannot serve this call's labels — is still attempted once, and its
+// failure leaves the pool's active endpoint alone.
+func TestDispatch_ProbationAppliesToATemporaryCapabilityPick(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, []Endpoint{
+		{Alias: "generalist", Declares: Declare("basic")},
+		{Alias: "specialist", Declares: Declare("basic", "special")},
+	}, WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
+	log := &attemptLog{}
+	boom := &statusError{status: 500}
+	special := Call{Requires: []string{"special"}}
+
+	// The only endpoint that can serve "special" dies the slow way.
+	if _, err := dispatchTo(context.Background(), r, special, log, boom); err == nil {
+		t.Fatal("expected the specialist to be judged dead")
+	}
+
+	assertIntSlice(t, log.seen(), []int{1, 1, 1, 1})
+
+	// A plain call settles the pool on the generalist.
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, boom, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	clock.advance(2 * time.Hour)
+
+	waitsBefore := len(clock.waited())
+
+	// The active endpoint is healthy but incapable, so the specialist is picked
+	// temporarily — on probation, for one attempt.
+	if _, err := dispatchTo(context.Background(), r, special, log, boom); err == nil {
+		t.Fatal("expected the probation attempt to fail")
+	}
+
+	assertIntSlice(t, log.seen(), []int{1, 1, 1, 1, 0, 1})
+
+	if got := len(clock.waited()); got != waitsBefore {
+		t.Fatalf("waits = %d, want %d — a temporary probation pick must not retry", got, waitsBefore)
+	}
+
+	if alias := activeAlias(r); alias != "generalist" {
+		t.Fatalf("active = %q — a temporary pick must not move the pool", alias)
+	}
+}
+
+// A credential rejection is already retry-free, so probation changes nothing
+// about how it is judged: one attempt, dead again, a fresh recover window.
+func TestDispatch_ProbationCredentialFailure(t *testing.T) {
+	r, clock := newClockedRouter(t, StrategyFailover, endpointsNamed("only"),
+		WithRetryPolicy(time.Second, 3), WithRecoverTime(time.Hour))
+	log := &attemptLog{}
+	rejected := &statusError{status: 401}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, rejected); err == nil {
+		t.Fatal("expected a credential failure to kill the endpoint at once")
+	}
+
+	clock.advance(2 * time.Hour)
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, rejected); err == nil {
+		t.Fatal("expected the probation attempt to fail")
+	}
+
+	assertIntSlice(t, log.seen(), []int{0, 0})
+
+	if s := r.Stats()[0]; s.Status != StatusDead || s.ErrorCount != 2 {
+		t.Fatalf("stats = %+v, want dead with two judgements", s)
+	}
+
+	if _, err := dispatchTo(context.Background(), r, Call{}, log, rejected); !errors.Is(err, ErrNoActiveModels) {
+		t.Fatalf("expected ErrNoActiveModels while the new window runs, got %v", err)
 	}
 }
 
@@ -773,7 +956,7 @@ func TestDispatch_FailedTemporaryPickLeavesTheActiveEndpointAlone(t *testing.T) 
 		t.Fatalf("a failing temporary pick moved the active endpoint (%d → %d)", commitsBefore, r.commits)
 	}
 
-	if s := r.Stats()[1]; s.Status != "dead" {
+	if s := r.Stats()[1]; s.Status != StatusDead {
 		t.Fatalf("special-a status = %q, want dead", s.Status)
 	}
 }
@@ -823,7 +1006,7 @@ func TestDispatch_CancelledBeforeAttempt(t *testing.T) {
 		t.Fatalf("no attempt should be made on a cancelled context, saw %v", log.seen())
 	}
 
-	if s := r.Stats()[0]; s.Status != "available" {
+	if s := r.Stats()[0]; s.Status != StatusAvailable {
 		t.Fatalf("health must not be poisoned by cancellation, got %q", s.Status)
 	}
 }
@@ -853,7 +1036,7 @@ func TestDispatch_CancelledMidAttemptAttributesButKeepsHealth(t *testing.T) {
 		t.Fatalf("observations = %+v, want one failed attempt for slow", seen)
 	}
 
-	if s := r.Stats()[0]; s.Status != "available" || s.ErrorCount != 0 {
+	if s := r.Stats()[0]; s.Status != StatusAvailable || s.ErrorCount != 0 {
 		t.Fatalf("cancellation changed health: %+v", s)
 	}
 
@@ -886,7 +1069,7 @@ func TestDispatch_CancelledDuringRetryWait(t *testing.T) {
 
 	assertIntSlice(t, log.seen(), []int{0})
 
-	if s := r.Stats()[0]; s.Status != "available" {
+	if s := r.Stats()[0]; s.Status != StatusAvailable {
 		t.Fatalf("an interrupted retry must not judge the endpoint, got %q", s.Status)
 	}
 }
@@ -1205,7 +1388,7 @@ func TestStats_NoActiveBeforeFirstDispatch(t *testing.T) {
 			t.Fatalf("%s reports active before any dispatch", s.Alias)
 		}
 
-		if s.Status != "available" {
+		if s.Status != StatusAvailable {
 			t.Fatalf("%s status = %q, want available", s.Alias, s.Status)
 		}
 	}
