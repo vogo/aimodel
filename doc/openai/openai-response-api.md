@@ -8,7 +8,6 @@
   - streaming events: https://platform.openai.com/docs/api-reference/responses-streaming
   - conversation state: https://platform.openai.com/docs/guides/conversation-state
   - hosted tools: [web search](https://platform.openai.com/docs/guides/tools-web-search) · [file search](https://platform.openai.com/docs/guides/tools-file-search) · [code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter)
-  - migration from Assistants (retired 2026-08-26): https://platform.openai.com/docs/assistants/migration
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
 - **Code**: `provider/openai/responses.go` · `responses_wire.go` · `responses_events.go` · `responses_const.go`; root capability in `responder.go`
 

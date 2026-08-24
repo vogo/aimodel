@@ -181,6 +181,8 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests { /* bac
 Facts about the protocol that this wrapper passes through rather than resolves:
 
 - **`max_tokens` is deprecated by OpenAI** and rejected outright by reasoning models (the o-series, GPT-5.x, …), which require `max_completion_tokens`. Both fields exist here; pick per model.
+- **Programmatic tool calling is not accepted on Chat Completions.** OpenAI's programmatic tool calling is a Responses-API capability; this endpoint rejects it. `tools` / `tool_choice` pass through unchanged, so whether a backend accepts the combination is the server's decision.
+- **On GPT-5.4 and later, `reasoning_effort: "none"` disables tool calling.** Pick `low` or higher while tools are active, or use the Responses API where the combination is fully supported. Both fields stay plain strings here; the caller avoids the conflicting combination.
 - **`top_k` is not an OpenAI parameter.** It is modelled because several OpenAI-compatible backends accept it. Against OpenAI itself it is an unknown field.
 - **`thinking` is not an OpenAI parameter either.** It is the shared reasoning control of several compatible backends (Qwen, GLM, DeepSeek-style). OpenAI's own control is `reasoning_effort`.
 - **`functions` / `function_call` are the deprecated pre-tools API**, retained for backends that still serve them.
