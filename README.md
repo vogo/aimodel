@@ -187,7 +187,7 @@ request.CacheControl = &anthropic.CacheControl{
 
 ```go
 response, err := client.Responses(ctx, &openai.ResponsesRequest{
-    Model:        "gpt-5",
+    Model:        openai.ModelGPT55,
     Instructions: "Answer in one sentence.",
     Input:        openai.NewResponseTextInput("What changed in the Responses API?"),
     Tools:        []openai.ResponseTool{{Type: openai.ResponseToolTypeWebSearch}},
@@ -242,7 +242,7 @@ import (
 )
 
 cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEntry{
-    {Name: "gpt-4o",       Client: openai.NewClient(openaiKey), Weight: 3},
+    {Name: "gpt-5.5",      Client: openai.NewClient(openaiKey), Weight: 3},
     {Name: "qwen3.7-plus", Client: openai.NewClient(qwenKey, openai.WithBaseURL(qwenURL)), Weight: 1},
 })
 

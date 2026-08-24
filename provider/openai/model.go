@@ -25,6 +25,8 @@ package openai
 
 // OpenAI model names.
 const (
+	ModelGPT55      = "gpt-5.5"
+	ModelGPT55Pro   = "gpt-5.5-pro"
 	ModelGPT56      = "gpt-5.6"
 	ModelGPT56Sol   = "gpt-5.6-sol"
 	ModelGPT56Terra = "gpt-5.6-terra"
@@ -89,6 +91,8 @@ const (
 
 // ReasoningEffort values constrain how many reasoning tokens a model spends.
 // GPT-5.1 and later default to ReasoningEffortNone.
+// On GPT-5.4 and later, ReasoningEffortNone also disables tool calling — pick a
+// higher effort when tools are active, or use the Responses API.
 // ChatCompletionRequest.ReasoningEffort stays a plain string, so a value an
 // OpenAI-compatible backend defines on its own passes through unchanged.
 const (

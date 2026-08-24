@@ -12,6 +12,22 @@ Newest first.
 
 ---
 
+## 2026-08-24 — Model recommendations move to the gpt-5.5 family; tool-calling constraints documented
+
+**Official change**: OpenAI deprecates the first-gen gpt-5 / o3 dated snapshots — `gpt-5-2025-08-07`, `gpt-5-mini-2025-08-07`, `gpt-5-nano-2025-08-07`, `gpt-5-pro-2025-10-06`, `o3-2025-04-16`, `o3-pro-2025-06-10` — with retirement on **2026-12-11**, replaced by `gpt-5.5` / `gpt-5.5-pro`; the previous image-generation line (`gpt-image-1-mini`, `gpt-image-1.5`, `chatgpt-image-latest`) closes on **2026-12-01** in favour of `gpt-image-2`; the realtime preview models retired **2026-05-07**; and `gpt-4o` / `o3` / `o4-mini` are marked deprecated. On the Chat Completions endpoint, programmatic tool calling is not accepted, and on GPT-5.4+ setting `reasoning_effort` to `none` disables tool calling.
+
+Verified **2026-08-24** against OpenAI's release notes and deprecation schedule: https://openai.com/index/introducing-gpt-5-5/ · https://platform.openai.com/docs/deprecations
+
+**Wrapper change**
+
+- **`ModelGPT55` / `ModelGPT55Pro` constants** added (`gpt-5.5` / `gpt-5.5-pro`); no further gpt-5.5 aliases are added because the official docs list none (mini / nano stay on the gpt-5.4 line). Existing constants, including the deprecated-but-still-served `gpt-4o` / `o3` / `o4-mini`, are kept as protocol facts.
+- **Examples and recommended models** in `README.md`, `provider/openai/README.md` and `doc/design/compose.md` now recommend the gpt-5.5 family instead of `gpt-5` / `gpt-4o`.
+- **Tool-calling constraints documented** in `doc/openai/openai-chat-api.md` §7 and the `ReasoningEffortNone` comment in `model.go`: both `tools` and `reasoning_effort` stay plain pass-throughs, and the conflicting combination is resolved server-side.
+- **Assistants references cleaned up**: the migration link in `openai-response-api.md` is removed, and the 2026-08-01 entry now states the past-tense retirement date. Only out-of-scope boundary notes and the retired record remain.
+- **Zero-reference audit**: `gpt-image-1*`, `chatgpt-image*` and `gpt-4o-realtime*` appear nowhere in this repo's code, examples or docs (this entry's retirement record aside) — confirmed, so no code change was needed.
+
+---
+
 ## 2026-08-02 — Native-only public API: `ExtraBody`, stream accumulation, timeouts, structural errors
 
 **Official change**: none — this is a change to the wrapper's own surface, recorded here because it changes how every OpenAI-side capability is reached.
@@ -30,7 +46,7 @@ Newest first.
 
 ## 2026-08-01 — Support the Responses API: native `/v1/responses` client
 
-**Official change**: OpenAI positions the Responses API (`POST /v1/responses`) as its primary interface. The Assistants API retires **2026-08-26**, and hosted tools (`web_search` / `file_search` / `code_interpreter`), `previous_response_id` chaining, server-side conversations, reasoning items with encrypted content, and the newer prompt-cache controls exist only on Responses. Chat Completions keeps working but receives no new capabilities.
+**Official change**: OpenAI positions the Responses API (`POST /v1/responses`) as its primary interface. The Assistants API retired on **2026-08-26**, and hosted tools (`web_search` / `file_search` / `code_interpreter`), `previous_response_id` chaining, server-side conversations, reasoning items with encrypted content, and the newer prompt-cache controls exist only on Responses. Chat Completions keeps working but receives no new capabilities.
 
 **Wire baseline verified 2026-08-01** — full inventory, official links and verification method in [openai-response-api.md](./openai-response-api.md).
 

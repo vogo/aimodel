@@ -109,7 +109,7 @@ marshal time — before any network I/O.
 
 ```go
 response, err := client.Responses(ctx, &openai.ResponsesRequest{
-    Model:        "gpt-5",
+    Model:        openai.ModelGPT55,
     Instructions: "Answer in one sentence.",
     Input:        openai.NewResponseTextInput("What changed in the Responses API?"),
     Tools:        []openai.ResponseTool{{Type: openai.ResponseToolTypeWebSearch}},
