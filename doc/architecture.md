@@ -124,7 +124,6 @@ Serves the Messages API:
 
 ```go
 client := anthropic.NewClient(apiKey,
-    anthropic.WithBeta("context-1m-2025-08-07"),
     anthropic.WithVersion("2023-06-01"),
     anthropic.WithUserProfileID("user_abc123"),
 )

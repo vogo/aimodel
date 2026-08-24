@@ -18,6 +18,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -149,6 +150,46 @@ func TestEveryExportedTypeIsClassified(t *testing.T) {
 		if !declared[name] {
 			t.Errorf("wireTypes lists %s, which no longer exists", name)
 		}
+	}
+}
+
+// TestAdaptiveThinkingRoundTrips pins the Claude 5 thinking shape: the family
+// rejects manual enabled+budget_tokens with a 400, so adaptive thinking must
+// marshal losslessly and never carry a budget_tokens beside it.
+func TestAdaptiveThinkingRoundTrips(t *testing.T) {
+	request := MessagesRequest{
+		Model:        ModelClaudeOpus5,
+		MaxTokens:    4096,
+		Messages:     []MessagesMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Thinking:     &MessagesThinking{Type: ThinkingTypeAdaptive},
+		OutputConfig: &OutputConfig{Effort: EffortHigh},
+	}
+
+	first, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded MessagesRequest
+	if err = json.Unmarshal(first, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if decoded.Thinking == nil || decoded.Thinking.Type != ThinkingTypeAdaptive {
+		t.Errorf("decoded thinking = %+v, want type %q", decoded.Thinking, ThinkingTypeAdaptive)
+	}
+
+	second, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+
+	if string(first) != string(second) {
+		t.Errorf("adaptive thinking round trip is lossy\n first: %s\nsecond: %s", first, second)
+	}
+
+	if bytes.Contains(first, []byte("budget_tokens")) {
+		t.Errorf("adaptive request carried budget_tokens: %s", first)
 	}
 }
 

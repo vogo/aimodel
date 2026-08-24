@@ -8,8 +8,7 @@
   ],
   "max_tokens": 4096,
   "thinking": {
-    "type": "enabled",
-    "budget_tokens": 2048,
+    "type": "adaptive",
     "display": "omitted"
   },
   "output_config": {

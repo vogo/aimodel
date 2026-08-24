@@ -12,6 +12,27 @@ Newest first.
 
 ---
 
+## 2026-08-24 — Claude 5 family compatibility: adaptive thinking, 400 semantics, model retirements
+
+**Official change**: Claude Sonnet 5 (2026-06-30) and Claude Opus 5 (2026-07-24) shipped breaking Messages API changes, recorded here at the 2026-08 baseline:
+
+- Manual extended thinking (`thinking:{enabled,budget_tokens}`) returns **400** on the Claude 5 family; adaptive thinking (`thinking:{type:"adaptive"}`) is the on-mode and is the default when `thinking` is omitted. Opus 4.7/4.8 also reject `budget_tokens`.
+- Non-default sampling parameters (`temperature`/`top_p`/`top_k`) return **400** on the Claude 5 family (and on Opus 4.7/4.8); only the 4.6 family and older accept them.
+- On Opus 5, `thinking:{type:"disabled"}` is accepted only at effort `low`/`medium`/`high`; pairing it with `xhigh`/`max` returns 400.
+- The 1M-context beta header `context-1m-2025-08-07` is retired (2026-04-30) — 1M context is GA and needs no beta header.
+- Prompt-cache minimums lowered: 512 tokens (Opus 5 / Fable 5 / Mythos 5), 1024 (Sonnet 5), 4096 (Haiku 4.5); the new tokenizer yields roughly 30% more tokens for the same text.
+- Retired models: `claude-3-7-sonnet-20250219`, `claude-3-5-haiku-20241022` (2026-02-19), `claude-3-haiku-20240307` (2026-04-20), `claude-sonnet-4-20250514`, `claude-opus-4-20250514` (2026-06-15).
+
+**Wrapper change**
+
+- **`ModelClaudeOpus5` constant added** (`provider/anthropic/model.go`).
+- **Golden baseline corrected**: `TestNativeThinkingMatchesGoldenBaseline` now sends the Claude 5 shape — Sonnet 5 + `thinking:{type:"adaptive", display:"omitted"}` + `output_config.effort:"high"` — replacing the manual `enabled`+`budget_tokens` form, which returns 400 on the Claude 5 family. `testdata/golden/thinking.json` updated to match, and a round-trip test pins the adaptive shape (no `budget_tokens` beside it).
+- **400 semantics documented, not intercepted.** The wrapper stays a zero-validation pass-through: `Thinking`/`BudgetTokens`/`Temperature`/`TopP`/`TopK`/`OutputConfig.Effort` are unchanged and are not rejected by model name. The per-family rules are recorded in `anthropic-message-api.md` §2.3 (thinking/effort table) and §7 (sampling), with model, cache-minimum and tokenizer notes.
+- **Retired beta example removed**: the `context-1m-2025-08-07` value is gone from the three doc examples; `WithBeta` infrastructure stays.
+- **Wire format unchanged**: existing requests serialize exactly as before, so 4.x-family usage is unaffected.
+
+---
+
 ## 2026-08-02 — Native-only public API: observable stream usage merging, timeouts, structural errors
 
 **Official change**: none — this is a change to the wrapper's own surface, recorded here because it changes how every Anthropic-side capability is reached.
