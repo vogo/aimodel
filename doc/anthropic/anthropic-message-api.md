@@ -14,7 +14,6 @@ How `provider/anthropic` wraps `POST {baseURL}/v1/messages`.
 client := anthropic.NewClient(apiKey,
     anthropic.WithBaseURL("https://api.anthropic.com"),   // optional
     anthropic.WithVersion("2023-06-01"),                  // optional
-    anthropic.WithBeta("context-1m-2025-08-07"),          // optional
     anthropic.WithUserProfileID("user_abc123"),           // optional
     anthropic.WithTimeout(90*time.Second),                // optional
 )
@@ -28,7 +27,7 @@ client := anthropic.NewClient(apiKey,
 | `anthropic-beta` | `WithBeta` values comma-joined, empty strings dropped; the header is omitted entirely when empty |
 | `anthropic-user-profile-id` | `WithUserProfileID`; omitted when empty |
 
-`anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context editing, structured outputs, fast mode, advisor, …). This SDK emits the header; it models no specific beta capability's fields.
+`anthropic-beta` is generic infrastructure for opting into beta capabilities (compaction, context editing, structured outputs, fast mode, advisor, …). This SDK emits the header; it models no specific beta capability's fields. The former `context-1m-2025-08-07` value is retired — 1M context windows are GA and need no beta header.
 
 `WithTimeout` bounds a whole call, including reading a streaming body. It copies the client configured so far, so the caller's own `*http.Client` is never mutated and a transport installed by an earlier `WithHTTPClient` survives; apply it after `WithHTTPClient`.
 
@@ -110,6 +109,24 @@ Two independent controls:
 
 `OutputConfig.Format` carries structured outputs; the caller's JSON Schema is passed through unvalidated.
 
+**Claude 5 family (2026-08 baseline).** This wrapper passes every field through unvalidated and does not branch on the model name — the server is authoritative, so a request that violates its family's constraints comes back as a 400. The rules differ per family:
+
+| Family | Omitting `Thinking` | Manual `enabled`+`budget_tokens` | Non-default `temperature`/`top_p`/`top_k` | `thinking:disabled` + effort |
+|---|---|---|---|---|
+| Claude 5 (Sonnet 5 / Opus 5 / Fable 5) | **adaptive thinking on** | 400 | 400 | Opus 5: effort ≤ `high` only; others OK |
+| Opus 4.7 / 4.8 | no thinking — set `adaptive` explicitly | 400 | 400 | OK |
+| Opus 4.6 / Sonnet 4.6 | no thinking — set `adaptive` explicitly | deprecated, still accepted | allowed | OK |
+| Haiku 4.5 and older | no thinking | supported | allowed | — |
+
+`BudgetTokens` is therefore only for the 4.6 family and below; on Claude 5 the correct shape is `thinking:{type:"adaptive"}` (or omit `Thinking` and rely on the default) with `OutputConfig.Effort` sizing the depth:
+
+```go
+Thinking:     &anthropic.MessagesThinking{Type: anthropic.ThinkingTypeAdaptive},
+OutputConfig: &anthropic.OutputConfig{Effort: anthropic.EffortHigh},
+```
+
+Do not copy Claude 5's "omit `Thinking`" habit to Opus 4.7/4.8 — there, omitting it means **no** thinking, and `adaptive` must be set explicitly.
+
 ## 3. Response
 
 ```go
@@ -150,6 +167,9 @@ req.CacheControl = &anthropic.CacheControl{
     Type: anthropic.CacheControlTypeEphemeral,
     TTL:  anthropic.CacheControlTTL1h,   // empty = the default 5-minute cache
 }
+```
+
+The minimum cacheable prefix varies by model (2026-08): 512 tokens on Opus 5 / Fable 5 / Mythos 5, 1024 on Sonnet 5, 4096 on Haiku 4.5 — a shorter prefix silently won't cache.
 ```
 
 Accounting comes back on `MessagesUsage`:
@@ -251,6 +271,8 @@ Facts about the protocol that this wrapper passes through rather than resolves:
 - **No `system` role.** A system prompt is the top-level `System` field. A conversation that tries to send one as a message will be rejected.
 - **No standalone tool role.** Tool results are `user` turns carrying `tool_result` blocks, and consecutive `user` turns are rejected — batch parallel results into one message.
 - **`top_k` is native here**, unlike on Chat Completions where it depends on the backend.
+- **Sampling limits are per-family.** Non-default `temperature`/`top_p`/`top_k` return 400 on the Claude 5 family and on Opus 4.7/4.8; only the 4.6 family and older accept them. The wrapper passes these through unvalidated — see §2.3 for the full table.
 - **Thinking blocks come back as content**, alongside text, rather than in a separate field.
+- **New tokenizer.** Claude 5 and Opus 4.7+ tokenize the same text to roughly 30% more tokens than older models — re-baseline `max_tokens` and token budgets when migrating.
 - **Unmodelled blocks and events are preserved verbatim** (`ResponseContentBlock.Raw`, `ContentBlockDelta.Raw`, `StreamEvent.Raw`), because this protocol adds block and event kinds faster than a wrapper can model them.
-- **Model names are strings.** `model.go` names the current Claude models; a model released tomorrow works without an SDK update.
+- **Model landscape (2026-08).** Current and recommended: `claude-sonnet-5`, `claude-opus-5` (mainstays), plus `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`. Retired — do not use: `claude-3-7-sonnet-20250219`, `claude-3-5-haiku-20241022` (2026-02-19), `claude-3-haiku-20240307` (2026-04-20), `claude-sonnet-4-20250514`, `claude-opus-4-20250514` (2026-06-15). `model.go` names the current models; a newer model works without an SDK update.

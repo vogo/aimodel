@@ -149,10 +149,12 @@ func TestNativeImageContentMatchesGoldenBaseline(t *testing.T) {
 
 func TestNativeThinkingMatchesGoldenBaseline(t *testing.T) {
 	request := &MessagesRequest{
-		Model:        ModelClaudeSonnet5,
-		MaxTokens:    4096,
-		Messages:     []MessagesMessage{{Role: "user", Content: json.RawMessage(`"Solve it step by step."`)}},
-		Thinking:     &MessagesThinking{Type: ThinkingTypeEnabled, BudgetTokens: 2048, Display: ThinkingDisplayOmitted},
+		Model:     ModelClaudeSonnet5,
+		MaxTokens: 4096,
+		Messages:  []MessagesMessage{{Role: "user", Content: json.RawMessage(`"Solve it step by step."`)}},
+		// The Claude 5 family rejects manual enabled+budget_tokens with a 400;
+		// adaptive is the only on-mode, with depth sized by output_config.effort.
+		Thinking:     &MessagesThinking{Type: ThinkingTypeAdaptive, Display: ThinkingDisplayOmitted},
 		OutputConfig: &OutputConfig{Effort: EffortHigh},
 	}
 

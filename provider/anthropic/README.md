@@ -66,6 +66,19 @@ fmt.Println(response.Content[0].Text)
 protocol accepts both a bare string and a content-block array there — pass a quoted string, or a
 marshalled `[]anthropic.ContentBlock`. A system prompt is the top-level `System` field, not a role.
 
+### Extended thinking (Claude 5)
+
+The Claude 5 family runs adaptive thinking by default; manual `enabled`+`budget_tokens` and
+non-default sampling return 400 on it. The correct shape:
+
+```go
+Thinking:     &anthropic.MessagesThinking{Type: anthropic.ThinkingTypeAdaptive},
+OutputConfig: &anthropic.OutputConfig{Effort: anthropic.EffortHigh},
+```
+
+The wrapper passes every field through unvalidated — the per-family rules live in
+[doc/anthropic/anthropic-message-api.md](../../doc/anthropic/anthropic-message-api.md) §2.3.
+
 ### Streaming
 
 The stream accumulates while you read:

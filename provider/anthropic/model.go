@@ -25,6 +25,7 @@ package anthropic
 const (
 	ModelClaudeFable5  = "claude-fable-5"
 	ModelClaudeOpus48  = "claude-opus-4-8"
+	ModelClaudeOpus5   = "claude-opus-5"
 	ModelClaudeSonnet5 = "claude-sonnet-5"
 	ModelClaudeHaiku45 = "claude-haiku-4-5"
 )
