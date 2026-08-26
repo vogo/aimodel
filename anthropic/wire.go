@@ -94,6 +94,8 @@ type ContentBlock struct {
 	Source    *ContentSource  `json:"source,omitempty"`
 	// ResultContent holds the content for tool_result blocks.
 	ResultContent string `json:"content,omitempty"`
+	// IsError identifies a tool_result block as an unsuccessful invocation.
+	IsError bool `json:"is_error,omitempty"`
 	// CacheControl, when set, marks this block as a prompt-cache
 	// boundary. Anthropic caches everything up to and including this
 	// block for the ephemeral TTL (default 5 minutes).

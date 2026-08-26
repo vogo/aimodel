@@ -12,6 +12,17 @@ Newest first.
 
 ---
 
+## 2026-08-26 — tool_result 错误语义补全
+
+**Official change**:无新增协议变更;`tool_result.is_error` 是 Messages API 已有的 request-side 字段。
+
+**Wrapper change**
+
+- `ContentBlock` 新增 `IsError bool`,以 `is_error,omitempty` 原样表达失败工具结果。
+- 增加 marshal/unmarshal round-trip 测试,确保 `is_error:true` 不在请求构建过程中丢失。
+
+---
+
 ## 2026-08-24 — Claude 5 family compatibility: adaptive thinking, 400 semantics, model retirements
 
 **Official change**: Claude Sonnet 5 (2026-06-30) and Claude Opus 5 (2026-07-24) shipped breaking Messages API changes, recorded here at the 2026-08 baseline:

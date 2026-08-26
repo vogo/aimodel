@@ -62,16 +62,18 @@ The stream flag is set on a copy of the request, so a call never mutates the cal
 | `thinking` | `Thinking` |
 | `image` / `document` | `Source` — `base64` (with `MediaType` + `Data`), `url`, `text` or nested `content` |
 | `tool_use` | `ID`, `Name`, `Input` (raw JSON) |
-| `tool_result` | `ToolUseID`, `ResultContent` |
+| `tool_result` | `ToolUseID`, `ResultContent`, `IsError` |
 
 A **tool result is a `user` turn** in this protocol, not a role of its own:
 
 ```go
 {Role: anthropic.RoleUser, Content: blocks(
     anthropic.ContentBlock{Type: anthropic.ContentBlockTypeToolResult,
-        ToolUseID: "toolu_1", ResultContent: `{"temp_c":18}`},
+        ToolUseID: "toolu_1", ResultContent: `{"temp_c":18}`, IsError: false},
 )}
 ```
+
+工具执行失败时设置 `IsError: true`,wire 会输出 `is_error:true`;成功结果保持 false 并省略该字段。
 
 Several parallel tool results belong in **one** user message as several blocks — the API rejects consecutive `user` turns.
 

@@ -169,7 +169,7 @@ SSE scanning is bounded the same way (1 MB per line). A line beyond that limit s
 What this wrapper deliberately does not do on this path:
 
 - **The chat methods do not widen.** Responses is its own method set, so nothing about it changes the Chat Completions request, response or stream.
-- Multi-backend routing for Responses is provided by [vage/largemodel/composes/openais](https://github.com/vogo/vage), not by aimodel.
+- Multi-backend routing for Responses is provided by [vage/largemodel/provider/openais](https://github.com/vogo/vage), not by aimodel.
 - **No client-side conveniences.** Requests are not validated, background responses are not polled, and nothing is retried — consistent with [ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md).
 - **Endpoint support is the server's business.** An OpenAI-*compatible* base URL is not assumed to implement `/responses`; a backend without the endpoint fails with its own HTTP error.
 
