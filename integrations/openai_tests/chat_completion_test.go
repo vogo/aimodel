@@ -22,7 +22,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/vogo/aimodel/provider/openai"
+	"github.com/vogo/aimodel/openai"
 )
 
 func TestNativeChatCompletions(t *testing.T) {

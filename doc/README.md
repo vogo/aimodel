@@ -4,6 +4,8 @@
 
 This directory holds the design documentation. The root [README.md](../README.md) covers usage.
 
+Multi-backend routing and endpoint health belong to [vage/largemodel](https://github.com/vogo/vage), not this module.
+
 ## Architecture
 
 | Document | Contents |
@@ -21,24 +23,18 @@ This directory holds the design documentation. The root [README.md](../README.md
 | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) | Anthropic Messages API: client and headers, content blocks, tools, prompt caching, SSE events, two-part usage merging, errors |
 | [anthropic/anthropic-api-changes.md](./anthropic/anthropic-api-changes.md) | Anthropic change log — official changes and how the wrapper followed |
 
-## Tools
-
-| Document | Contents |
-|---|---|
-| [design/compose.md](./design/compose.md) | Dispatch across several backends: the active endpoint, selection strategies, in-call retries, health and recovery, cancellation, aggregate errors |
-
 ## Root documents
 
-- [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API, multi-backend compose.
+- [../README.md](../README.md) — usage: installation, chat completions, streaming, tools, multimodal input, the Anthropic protocol, the Responses API.
 - [../CLAUDE.md](../CLAUDE.md) — build/test commands, repository rules, and a map from code area to the document covering it (for AI assistants).
 
 ## Official API references
 
 | Protocol | Official docs | Provider package |
 |---|---|---|
-| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `provider/openai/` |
-| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | `provider/openai/` |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `provider/anthropic/` |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | `openai/` |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | `openai/` |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | `anthropic/` |
 
 ## Maintenance convention
 

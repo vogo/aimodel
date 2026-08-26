@@ -1,4 +1,4 @@
-# provider/anthropic
+# anthropic
 
 A complete client for the Anthropic Messages API over Anthropic's own wire types. It imports no
 other package in this module.
@@ -150,7 +150,7 @@ the event sequence.
 ## Boundaries
 
 - This package imports nothing else from this module, and nothing in this module sits between it
-  and `provider/openai`. Duplication between the two is expected — see
+  and `openai`. Duplication between the two is expected — see
   [ADR 0002](../../doc/adr/0002-provider-native-as-the-only-public-interface.md).
 - Tool results are `user` turns carrying `tool_result` blocks; batch parallel results into one
   message, because consecutive `user` turns are rejected.

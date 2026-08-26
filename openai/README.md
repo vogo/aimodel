@@ -1,4 +1,4 @@
-# provider/openai
+# openai
 
 A complete client for OpenAI's HTTP API over OpenAI's own wire types, serving OpenAI and every
 OpenAI-compatible backend. It imports no other package in this module.
@@ -136,7 +136,7 @@ type statusCoder interface{ StatusCode() int }
 ## Boundaries
 
 - This package imports nothing else from this module, and nothing in this module sits between it
-  and `provider/anthropic`. Duplication between the two is expected — see
+  and `anthropic`. Duplication between the two is expected — see
   [ADR 0002](../../doc/adr/0002-provider-native-as-the-only-public-interface.md).
 - `Model` is required on every request; there is no client-level default and no environment
   fallback.

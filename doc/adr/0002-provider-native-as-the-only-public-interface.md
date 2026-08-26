@@ -2,7 +2,6 @@
 
 - Status: Accepted
 - Date: 2026-08-02
-- Refined by: [ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md) for multi-backend routing
 - Unaffected: [ADR 0001](./0001-keep-the-sdk-a-thin-wrapper.md)
 
 ## Context
@@ -13,8 +12,7 @@ because it costs more than it returns.
 
 1. **Its one differentiating capability has no demand.** A shared request model exists so the same
    request can be delivered to different protocols. No caller in this repository does that — the
-   compose pools and every documented strategy dispatch within a single protocol. The real requirement
-   is failover across several backends speaking *one* wire format.
+   real requirement is failover across several backends speaking *one* wire format.
 
 2. **It is lossy by construction, and the loss grows.** A shared type can only admit a field when two
    or more providers have a real, verifiable mapping for it. That rule is correct for a shared type
@@ -40,9 +38,9 @@ because it costs more than it returns.
 **The public interface of `aimodel` is the set of provider-native clients. There is no
 vendor-neutral request/response model, no canonical translation, and no provider registry.**
 
-1. **Each provider package is complete and self-contained.** `provider/openai` owns Chat
+1. **Each provider package is complete and self-contained.** `openai` owns Chat
    Completions and Responses — client, wire types, SSE, usage aggregation, errors and options.
-   `provider/anthropic` owns Messages the same way. Neither imports the other, the root package,
+   `anthropic` owns Messages the same way. Neither imports the other, the root package,
    or any shared semantic layer.
 
 2. **Fidelity replaces universality.** A provider package expresses its official API completely
@@ -56,21 +54,16 @@ vendor-neutral request/response model, no canonical translation, and no provider
    canonical layer, and is rejected. Duplicating a small amount of logic between the
    two providers is the accepted price.
 
-   [ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md) applies this test to
-   multi-backend routing and states the mechanism/semantics distinction that follows from it.
-
 4. **Errors are matched structurally, not nominally.** There is no shared error type. Each
    provider's `*HTTPError` implements `interface { StatusCode() int }`, which a consumer declares
-   locally and matches with `errors.As`. This is how `composes` classifies backend failures from
-   every protocol without importing any provider.
+   locally and matches with `errors.As`.
 
    One gap, stated so it is not mistaken for a bug: the structural match only classifies errors
    that carry an HTTP status. An error surfaced *mid-stream* (OpenAI delivers a chunk-level `error`
    object as an `*HTTPError` with status 0; Anthropic delivers it as `StreamEvent.Error`, not a Go
    error at all) is not an HTTP-level rejection, and `StatusCode()` returns 0 there. A consumer
    testing `sc.StatusCode() == 429` will not match a mid-stream failure — that is intentional.
-   Connection-establishment failures and non-2xx responses do carry their real status, so the
-   4xx/5xx classification works for the cases `composes` acts on.
+   Connection-establishment failures and non-2xx responses do carry their real status.
 
 5. **Vendor parameters are ordinary fields.** A vendor-specific parameter is a field of that
    vendor's native type. The single escape hatch is `openai.ChatCompletionRequest.ExtraBody`, for
@@ -88,7 +81,7 @@ vendor-neutral request/response model, no canonical translation, and no provider
 The decision is enforced by tests rather than by convention, because the failure mode is the gradual
 growth of a shared layer:
 
-1. `provider/openai` and `provider/anthropic` import neither each other nor the root package.
+1. `openai` and `anthropic` import neither each other nor the root package.
 2. No public API mentions a shared semantic package.
 3. Both `*HTTPError` types satisfy `interface { StatusCode() int }` (compile-time assertion).
 4. Packages declared vendor-neutral contain no identifier carrying protocol semantics
@@ -97,15 +90,13 @@ growth of a shared layer:
 5. Every public wire type survives a marshal → unmarshal → marshal round trip unchanged. This
    states the fidelity principle as an executable check.
 
-[ADR 0003](./0003-shared-routing-core-across-protocol-wrappers.md) adds two further guards and
-settles which packages guard 4 applies to.
-
 ## Consequences
 
 - **Delivering one request to two protocols is not possible, and is not a goal.** A caller needing
   that writes the mapping, where it has the context to decide what each field should become — the
-  decision a shared layer would have to make blindly. A deployment that must fail a request over from
-  an OpenAI-compatible backend to Anthropic runs two pools and maps the request itself.
+  decision a shared layer would have to make blindly. Multi-backend failover across several
+  backends of one wire format is handled by [vage/largemodel](https://github.com/vogo/vage), not
+  by mapping one request across protocols.
 
 - **Duplication is expected.** Timeout options, stream aggregation, SSE scanning and error parsing
   exist twice. The honest risk is that someone factors them into a shared package and a canonical
@@ -124,4 +115,3 @@ settles which packages guard 4 applies to.
 
 - [Architecture](../architecture.md)
 - [ADR 0001 — keep the SDK a thin wrapper](./0001-keep-the-sdk-a-thin-wrapper.md)
-- [ADR 0003 — a shared routing core, protocol wrappers on top](./0003-shared-routing-core-across-protocol-wrappers.md)

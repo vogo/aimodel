@@ -5,7 +5,7 @@
 
 Go clients for AI model APIs — one complete, independent client per protocol. Zero external dependencies.
 
-This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include rate limiting, request validation, caching / persistence, or logging / metrics. Control mechanisms belong in the layer above, where you have full context over your application's requirements. The single exception is the multi-backend `composes` layer, which retries an endpoint before judging it dead.
+This SDK is a **thin API wrapper**: it builds requests, manages connections, and decodes responses. It intentionally does **not** include rate limiting, request validation, caching / persistence, logging / metrics, or multi-backend routing. Control mechanisms belong in the layer above — for agent applications, see [github.com/vogo/vage/largemodel](https://github.com/vogo/vage) for routed callers with retry and failover.
 
 There is no unified client and no shared schema. You pick a protocol by importing its package, and that package expresses its official API completely rather than the part another vendor happens to share. Architecture: [doc/architecture.md](./doc/architecture.md).
 
@@ -19,20 +19,19 @@ This README covers usage. The design lives under [`doc/`](./doc/):
 | OpenAI Chat Completions | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) |
 | OpenAI Responses API | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) |
 | Anthropic Messages API | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) |
-| Multi-backend composition | [doc/design/compose.md](./doc/design/compose.md) |
 
 | Protocol | Official docs | Package |
 |---|---|---|
-| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [`provider/openai/`](./provider/openai/README.md) |
-| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [`provider/openai/`](./provider/openai/README.md) |
-| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [`provider/anthropic/`](./provider/anthropic/README.md) |
+| OpenAI Chat Completions (OpenAI-compatible) | https://platform.openai.com/docs/api-reference/chat | [`openai/`](./openai/README.md) |
+| OpenAI Responses | https://platform.openai.com/docs/api-reference/responses | [`openai/`](./openai/README.md) |
+| Anthropic Messages API | https://platform.claude.com/docs/en/api/messages | [`anthropic/`](./anthropic/README.md) |
 
 ## Usage
 
 ### Chat Completions (OpenAI and OpenAI-compatible)
 
 ```go
-import "github.com/vogo/aimodel/provider/openai"
+import "github.com/vogo/aimodel/openai"
 
 client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 
@@ -124,7 +123,7 @@ request.ToolChoice = "auto"
 ### Anthropic Messages
 
 ```go
-import "github.com/vogo/aimodel/provider/anthropic"
+import "github.com/vogo/aimodel/anthropic"
 
 client := anthropic.NewClient(os.Getenv("ANTHROPIC_API_KEY"))
 
@@ -229,26 +228,3 @@ if errors.As(err, &sc) && sc.StatusCode() == http.StatusTooManyRequests {
     // back off
 }
 ```
-
-### Multi-backend composition
-
-Dispatch across several backends: a pool serves its calls from one active endpoint, retries it in place when it fails, and moves to another only once it is judged dead. `composes` is the protocol-neutral routing core; a wrapper package binds it to one protocol's wire types:
-
-```go
-import (
-    "github.com/vogo/aimodel/composes"
-    "github.com/vogo/aimodel/composes/openais"
-)
-
-cc, err := openais.NewComposeClient(composes.StrategyFailover, []openais.ModelEntry{
-    {Name: "gpt-5.5",      Client: openai.NewClient(openaiKey), Weight: 3},
-    {Name: "qwen3.7-plus", Client: openai.NewClient(qwenKey, openai.WithBaseURL(qwenURL)), Weight: 1},
-})
-
-response, err := cc.ChatCompletions(ctx, request)          // Chat Completions
-answer, err := cc.Responses(ctx, responsesRequest)         // Responses — same pool, same health
-```
-
-A pool belongs to one conversation and serves it one call at a time: a concurrent second call is rejected with `composes.ErrCallInProgress` rather than queued, so parallel work means one pool per conversation.
-
-Anthropic backends use `composes/anthropics` the same way, with `Messages` / `MessagesStream`. The two pools are separate: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover.

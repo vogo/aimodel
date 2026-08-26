@@ -18,14 +18,12 @@
 // Package aimodel is the module root and exports nothing. A caller picks a
 // protocol by importing its client package:
 //
-//   - [github.com/vogo/aimodel/provider/openai] — Chat Completions and
+//   - [github.com/vogo/aimodel/openai] — Chat Completions and
 //     Responses, for OpenAI and every OpenAI-compatible backend.
-//   - [github.com/vogo/aimodel/provider/anthropic] — the Messages API.
-//   - [github.com/vogo/aimodel/composes] — the protocol-neutral routing core
-//     (strategies, health tracking, failover), with
-//     [github.com/vogo/aimodel/composes/openais] and
-//     [github.com/vogo/aimodel/composes/anthropics] binding it to their wire
-//     types.
+//   - [github.com/vogo/aimodel/anthropic] — the Messages API.
+//
+// Multi-backend routing, retries and failover live in
+// [github.com/vogo/vage/largemodel] (vage framework), not in this SDK.
 //
 // This package holds no unified client and no vendor-neutral request/response
 // model: the two protocols are expressed completely and independently, rather

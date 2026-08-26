@@ -1,9 +1,9 @@
 # Anthropic Messages API — Wrapper Design & Implementation
 
-How `provider/anthropic` wraps `POST {baseURL}/v1/messages`.
+How `anthropic` wraps `POST {baseURL}/v1/messages`.
 
 - **Official reference**: https://platform.claude.com/docs/en/api/messages
-- **Code**: `provider/anthropic/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly, usage merge), `model.go` / `const.go` (constants)
+- **Code**: `anthropic/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly, usage merge), `model.go` / `const.go` (constants)
 - **Change log**: [anthropic-api-changes.md](./anthropic-api-changes.md)
 
 ---

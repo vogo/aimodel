@@ -3,12 +3,14 @@
 ## Project
 
 `github.com/vogo/aimodel` — Go clients for AI model APIs, one complete and independent client per
-protocol: `provider/openai` (Chat Completions + Responses) and `provider/anthropic` (Messages).
+protocol: `openai` (Chat Completions + Responses) and `anthropic` (Messages).
 Zero external dependencies.
 
 A **thin API wrapper**: builds requests, manages connections, decodes responses. Deliberately
 excluded — rate limiting, request validation, caching / persistence, logging / metrics, and retry.
-The single exception is `composes`, which retries an endpoint before judging it dead (ADR 0004).
+One SDK call produces one HTTP request.
+
+Multi-backend routing lives in [vage/largemodel](https://github.com/vogo/vage), not here.
 
 ## Rules
 
@@ -24,7 +26,7 @@ Three principles arbitrate every interface decision, in this order:
 1. **Fidelity (协议保真性)** — a provider package expresses its official API completely and
    losslessly; no field is dropped, renamed or withheld because another vendor lacks it. Unmodelled
    response shapes are preserved verbatim as raw JSON.
-2. **Isolation (隔离性)** — `provider/openai` and `provider/anthropic` import neither each other nor
+2. **Isolation (隔离性)** — `openai` and `anthropic` import neither each other nor
    the root package; a vendor API change touches only that vendor's subpackage. The one escape hatch
    is `openai.ChatCompletionRequest.ExtraBody`, for private top-level parameters of
    OpenAI-*compatible* backends — additive only, collision with a modelled field is a marshal error.
@@ -48,13 +50,9 @@ Consequences that override the usual instincts:
   bodies are protocol facts owned by their provider package.
 - **Errors are matched structurally.** No shared error type: both `*HTTPError` types implement
   `interface { StatusCode() int }`, and consumers declare that interface locally for `errors.As`.
-- **Routing mechanism may be shared; protocol semantics may not.** `composes` is protocol-neutral —
-  its interface is endpoint indices, opaque strings, scalars and closures. Test for any shared type:
-  *if I add a field to it, must a provider package learn about it?* Pools never mix protocols and
-  there is no cross-protocol failover ([ADR 0003](./doc/adr/0003-shared-routing-core-across-protocol-wrappers.md)).
 
-Guard tests in CI enforce the above (import boundaries, structural errors, AST-level neutrality of
-`composes`, wire-type round trips) — run `make test` after touching package boundaries.
+Guard tests in CI enforce the above (import boundaries, structural errors, wire-type round trips) —
+run `make test` after touching package boundaries.
 
 **Three-way sync** when an official API changes: ① provider wire types and client → ② the relevant
 `doc/` page → ③ the protocol's change log (`doc/*/*-api-changes.md`). State explicitly when a step
@@ -73,13 +71,12 @@ superseded document is deleted once nothing depends on it, its record staying in
 
 | If you are touching… | Read | Code |
 |---|---|---|
-| Package boundaries, what may be shared, why there is no unified client | [doc/architecture.md](./doc/architecture.md) | `provider/*/`, `composes/` |
-| OpenAI Chat Completions: wire types, client, SSE, usage, errors, `ExtraBody` | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `provider/openai/native.go`, `wire.go` |
-| OpenAI Responses: wire types, typed SSE events, hosted tools | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `provider/openai/responses*.go` |
-| Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `provider/anthropic/native.go`, `wire.go` |
-| Multi-backend dispatch, health tracking, adding a protocol wrapper | [doc/design/compose.md](./doc/design/compose.md) | `composes/`, `composes/openais/`, `composes/anthropics/` |
+| Package boundaries, what may be shared, why there is no unified client | [doc/architecture.md](./doc/architecture.md) | `openai/`, `anthropic/` |
+| OpenAI Chat Completions: wire types, client, SSE, usage, errors, `ExtraBody` | [doc/openai/openai-chat-api.md](./doc/openai/openai-chat-api.md) | `openai/native.go`, `wire.go` |
+| OpenAI Responses: wire types, typed SSE events, hosted tools | [doc/openai/openai-response-api.md](./doc/openai/openai-response-api.md) | `openai/responses*.go` |
+| Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [doc/anthropic/anthropic-message-api.md](./doc/anthropic/anthropic-message-api.md) | `anthropic/native.go`, `wire.go` |
 
-Also: `integrations/` — integration tests and usage examples per provider and for compose patterns.
+Also: `integrations/` — integration tests and usage examples per provider.
 
 ## Official API References
 

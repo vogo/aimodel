@@ -1,9 +1,9 @@
 # OpenAI Chat Completions — Wrapper Design & Implementation
 
-How `provider/openai` wraps `POST {baseURL}/chat/completions`, for OpenAI and for every OpenAI-compatible backend.
+How `openai` wraps `POST {baseURL}/chat/completions`, for OpenAI and for every OpenAI-compatible backend.
 
 - **Official reference**: https://platform.openai.com/docs/api-reference/chat
-- **Code**: `provider/openai/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly), `model.go` (constants)
+- **Code**: `openai/native.go` (client, SSE), `wire.go` (types), `accumulate.go` (stream assembly), `model.go` (constants)
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
 - **Responses API**: [openai-response-api.md](./openai-response-api.md) — a separate interaction form on the same client
 

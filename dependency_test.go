@@ -26,8 +26,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vogo/aimodel/provider/anthropic"
-	"github.com/vogo/aimodel/provider/openai"
+	"github.com/vogo/aimodel/anthropic"
+	"github.com/vogo/aimodel/openai"
 )
 
 // These tests enforce provider isolation in CI rather than by convention,
@@ -86,7 +86,7 @@ func packageImports(t *testing.T, dir string) map[string]bool {
 
 func hasProviderImport(imports map[string]bool, want string) bool {
 	for path := range imports {
-		if path == "github.com/vogo/aimodel/provider/"+want {
+		if path == "github.com/vogo/aimodel/"+want {
 			return true
 		}
 	}
@@ -97,22 +97,21 @@ func hasProviderImport(imports map[string]bool, want string) bool {
 // TestProvidersAreIndependent verifies the two built-in provider subpackages do
 // not depend on each other — a vendor API change touches only its own package.
 func TestProvidersAreIndependent(t *testing.T) {
-	openaiImports := packageImports(t, "provider/openai")
+	openaiImports := packageImports(t, "openai")
 	if hasProviderImport(openaiImports, "anthropic") {
-		t.Error("provider/openai must not import provider/anthropic")
+		t.Error("openai must not import anthropic")
 	}
 
-	anthropicImports := packageImports(t, "provider/anthropic")
+	anthropicImports := packageImports(t, "anthropic")
 	if hasProviderImport(anthropicImports, "openai") {
-		t.Error("provider/anthropic must not import provider/openai")
+		t.Error("anthropic must not import openai")
 	}
 }
 
 // TestProvidersDoNotDependOnRoot verifies providers depend only on the shared
-// api foundation, never on the root package (which would create a cycle) or on
-// composes.
+// api foundation, never on the root package.
 func TestProvidersDoNotDependOnRoot(t *testing.T) {
-	for _, dir := range []string{"provider/openai", "provider/anthropic"} {
+	for _, dir := range []string{"openai", "anthropic"} {
 		imports := packageImports(t, dir)
 
 		if imports["github.com/vogo/aimodel"] {
@@ -125,135 +124,7 @@ func TestProvidersDoNotDependOnRoot(t *testing.T) {
 	}
 }
 
-// TestComposesCoreImportsNoProvider verifies the routing core is what it claims
-// to be: protocol-neutral machinery, not a wire-format tool.
-//
-// Once the core serves more than one protocol, importing any single provider
-// would make one wire format privileged — and importing two would be a
-// canonical layer with extra steps.
-func TestComposesCoreImportsNoProvider(t *testing.T) {
-	imports := packageImports(t, "composes")
-
-	for path := range imports {
-		if strings.HasPrefix(path, "github.com/vogo/aimodel") {
-			t.Errorf("the composes core must import nothing from this module, found %q", path)
-		}
-	}
-}
-
-// TestComposeWrappersAreIsolated verifies the two protocol wrappers stay
-// independent of each other: each sees exactly its own provider, neither sees
-// the other's package, and neither reaches the module root. A wrapper that
-// imported the other would be the first half of a cross-protocol request model.
-func TestComposeWrappersAreIsolated(t *testing.T) {
-	wrappers := map[string]struct{ own, forbidden string }{
-		"composes/openais":    {own: "openai", forbidden: "anthropic"},
-		"composes/anthropics": {own: "anthropic", forbidden: "openai"},
-	}
-
-	for dir, want := range wrappers {
-		imports := packageImports(t, dir)
-
-		if !hasProviderImport(imports, want.own) {
-			t.Errorf("%s should import provider/%s, the protocol it wraps", dir, want.own)
-		}
-
-		if hasProviderImport(imports, want.forbidden) {
-			t.Errorf("%s must not import provider/%s", dir, want.forbidden)
-		}
-
-		if !imports["github.com/vogo/aimodel/composes"] {
-			t.Errorf("%s should build on the neutral composes core", dir)
-		}
-
-		if imports["github.com/vogo/aimodel"] {
-			t.Errorf("%s must not depend on the root package", dir)
-		}
-
-		for other := range wrappers {
-			if other != dir && imports["github.com/vogo/aimodel/"+other] {
-				t.Errorf("%s must not import %s; the two pools share routing, never types", dir, other)
-			}
-		}
-	}
-}
-
-// TestComposesCoreExportsNoProviderType verifies the routing core's public API
-// carries no provider request or response type. The import check above already
-// makes that impossible today; this guard states the invariant directly, so a
-// future import of a provider fails here as a *public API* violation rather
-// than looking like a mere dependency question.
-func TestComposesCoreExportsNoProviderType(t *testing.T) {
-	fset := token.NewFileSet()
-
-	//nolint:staticcheck // ParseDir is sufficient here; this SDK stays zero-dependency.
-	pkgs, err := parser.ParseDir(fset, "composes", func(fi fs.FileInfo) bool {
-		name := fi.Name()
-
-		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
-	}, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse composes: %v", err)
-	}
-
-	for _, pkg := range pkgs {
-		for path, file := range pkg.Files {
-			// Local names bound to a package inside this module. A qualified
-			// identifier using one of these in an exported declaration is a
-			// module type crossing into the neutral API.
-			moduleAliases := map[string]string{}
-
-			for _, imp := range file.Imports {
-				importPath, err := strconv.Unquote(imp.Path.Value)
-				if err != nil {
-					t.Fatalf("unquote import %s: %v", imp.Path.Value, err)
-				}
-
-				if !strings.HasPrefix(importPath, "github.com/vogo/aimodel") {
-					continue
-				}
-
-				name := importPath[strings.LastIndex(importPath, "/")+1:]
-				if imp.Name != nil {
-					name = imp.Name.Name
-				}
-
-				moduleAliases[name] = importPath
-			}
-
-			if len(moduleAliases) == 0 {
-				continue
-			}
-
-			for _, decl := range file.Decls {
-				if _, exported := exportedDeclName(decl); !exported {
-					continue
-				}
-
-				ast.Inspect(decl, func(node ast.Node) bool {
-					sel, ok := node.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-
-					ident, ok := sel.X.(*ast.Ident)
-					if !ok {
-						return true
-					}
-
-					if importPath, found := moduleAliases[ident.Name]; found {
-						t.Errorf("%s: exported API references %s.%s from %q; the routing core's public API is protocol-neutral",
-							path, ident.Name, sel.Sel.Name, importPath)
-					}
-
-					return true
-				})
-			}
-		}
-	}
-}
-
-// TestRootPackageExportsNothing verifies the root package stays empty. It has
+// TestRootPackageExportsNothing verifies the root package stays empty.
 // no unified client, no shared schema and no provider imports: a caller reaches
 // a protocol by importing its own package, which is what makes the two
 // protocols independent.
@@ -320,14 +191,11 @@ func exportedDeclName(decl ast.Decl) (string, bool) {
 // from this module. A type both of them reach for is a canonical layer by
 // another name, whatever it is called.
 //
-// The compose wrappers do share one package — the neutral routing core — and
-// that is not a loophole in this check: the core is downstream of both, imports
-// neither, and carries no type either provider names. The rule this test
-// enforces is about what a provider depends on, which is what a canonical layer
+// The rule this test enforces is about what a provider depends on, which is what a canonical layer
 // would have to change.
 func TestNoSharedSemanticPackage(t *testing.T) {
-	openaiImports := packageImports(t, "provider/openai")
-	anthropicImports := packageImports(t, "provider/anthropic")
+	openaiImports := packageImports(t, "openai")
+	anthropicImports := packageImports(t, "anthropic")
 
 	for path := range openaiImports {
 		if anthropicImports[path] && strings.HasPrefix(path, "github.com/vogo/aimodel") {
@@ -343,11 +211,9 @@ var protocolSemanticWords = []string{
 	"message", "content", "tool", "usage", "completion", "chat", "prompt", "token", "choice",
 }
 
-// neutralPackages are the packages this module declares vendor-neutral. composes
-// is one of them: its OpenAI-wire surface lives in composes/openais, leaving a
-// routing core that may not name a protocol concept. The wrappers are
-// deliberately absent — naming their own protocol is their whole job.
-var neutralPackages = []string{".", "composes"}
+// neutralPackages are the packages this module declares vendor-neutral. Multi-backend
+// routing moved to github.com/vogo/vage/largemodel/router.
+var neutralPackages = []string{"."}
 
 // TestNeutralPackagesDeclareNoProtocolSemantics checks declared identifiers
 // over the AST, so a word inside a comment or a string literal cannot fail the

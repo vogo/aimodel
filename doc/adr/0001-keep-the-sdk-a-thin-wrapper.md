@@ -9,7 +9,7 @@ Cross-provider SDKs can accumulate retries, rate limiting, validation, caching, 
 
 ## Decision
 
-The SDK is limited to request translation, HTTP connection management, and response normalization. Policy mechanisms such as retry, rate limiting, validation, caching, persistence, logging, and metrics remain the caller's responsibility. One SDK call produces one HTTP request, except for the explicitly multi-model compose path.
+The SDK is limited to request translation, HTTP connection management, and response normalization. Policy mechanisms such as retry, rate limiting, validation, caching, persistence, logging, and metrics remain the caller's responsibility. One SDK call produces one HTTP request.
 
 ## Consequences
 
@@ -21,4 +21,3 @@ The SDK is limited to request translation, HTTP connection management, and respo
 ## References
 
 - [Architecture §1](../architecture.md#1-design-scope)
-- [ADR 0004 — the compose path's bounded retry exception](./0004-stateful-active-endpoint-with-in-call-retry.md)

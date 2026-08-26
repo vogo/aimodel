@@ -15,42 +15,49 @@
  * limitations under the License.
  */
 
-package openai_tests
+package anthropic_tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"testing"
 
-	"github.com/vogo/aimodel/provider/openai"
+	"github.com/vogo/aimodel/anthropic"
 )
 
-func TestNativeChatCompletionsStream(t *testing.T) {
-	apiKey, model := os.Getenv("OPENAI_API_KEY"), os.Getenv("OPENAI_MODEL")
+func TestNativeMessagesStream(t *testing.T) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	model := os.Getenv("ANTHROPIC_MODEL")
 	if apiKey == "" || model == "" {
-		t.Skip("OPENAI_API_KEY and OPENAI_MODEL are required")
+		t.Skip("ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required")
 	}
-	options := []openai.ClientOption{}
-	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
-		options = append(options, openai.WithBaseURL(baseURL))
+	options := []anthropic.ClientOption{}
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		options = append(options, anthropic.WithBaseURL(baseURL))
 	}
-	stream, err := openai.NewClient(apiKey, options...).ChatCompletionsStream(context.Background(), &openai.ChatCompletionRequest{
-		Model: model, Messages: []openai.ChatCompletionMessage{{Role: "user", Content: openai.NewTextContent("Count from one to three.")}},
+	stream, err := anthropic.NewClient(apiKey, options...).MessagesStream(context.Background(), &anthropic.MessagesRequest{
+		Model:     model,
+		MaxTokens: 64,
+		Messages: []anthropic.MessagesMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`"Count from one to three."`),
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = stream.Close() }()
 	for {
-		chunk, recvErr := stream.Recv()
+		event, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			return
 		}
 		if recvErr != nil {
 			t.Fatal(recvErr)
 		}
-		t.Logf("native chunk: %+v", chunk)
+		t.Logf("%s: %s", event.Type, event.Raw)
 	}
 }

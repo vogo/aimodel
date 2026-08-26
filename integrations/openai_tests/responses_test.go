@@ -24,7 +24,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/vogo/aimodel/provider/openai"
+	"github.com/vogo/aimodel/openai"
 )
 
 // nativeResponsesClient builds the native client the Responses examples use, or

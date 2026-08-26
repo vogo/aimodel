@@ -1,6 +1,6 @@
 # OpenAI Responses API — Wrapper Design & Implementation
 
-> **Wire baseline verified 2026-08-01.** Everything below describes the official `POST /v1/responses` surface as of that date, and what `provider/openai` does with it. When the official API moves, follow the four-way sync in [architecture.md](../architecture.md) §6.
+> **Wire baseline verified 2026-08-01.** Everything below describes the official `POST /v1/responses` surface as of that date, and what `openai` does with it. When the official API moves, follow the four-way sync in [architecture.md](../architecture.md) §6.
 
 - **Official protocol**: OpenAI Responses API (`POST /v1/responses`; no standalone version number — keyed by the endpoint)
 - **Official docs**: https://platform.openai.com/docs/api-reference/responses
@@ -9,7 +9,7 @@
   - conversation state: https://platform.openai.com/docs/guides/conversation-state
   - hosted tools: [web search](https://platform.openai.com/docs/guides/tools-web-search) · [file search](https://platform.openai.com/docs/guides/tools-file-search) · [code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter)
 - **Change log**: [openai-api-changes.md](./openai-api-changes.md)
-- **Code**: `provider/openai/responses.go` · `responses_wire.go` · `responses_events.go` · `responses_const.go`; root capability in `responder.go`
+- **Code**: `openai/responses.go` · `responses_wire.go` · `responses_events.go` · `responses_const.go`; root capability in `responder.go`
 
 **How the baseline was verified.** `platform.openai.com` is not directly fetchable from the build environment, so the field-level inventory below was taken from OpenAI's own OpenAPI-generated type definitions — `openai/openai-python`, `src/openai/types/responses/`, commit `cbdc98b`, dated 2026-08-01 — which are generated from the same OpenAPI spec that backs the public reference. The links above are the human-readable source of record; re-check them, not this file, when syncing.
 
@@ -169,7 +169,7 @@ SSE scanning is bounded the same way (1 MB per line). A line beyond that limit s
 What this wrapper deliberately does not do on this path:
 
 - **The chat methods do not widen.** Responses is its own method set, so nothing about it changes the Chat Completions request, response or stream.
-- **`composes` does not dispatch it.** Multi-backend dispatch covers the chat method set; a Responses pool would be its own loop.
+- Multi-backend routing for Responses is provided by [vage/largemodel/composes/openais](https://github.com/vogo/vage), not by aimodel.
 - **No client-side conveniences.** Requests are not validated, background responses are not polled, and nothing is retried — consistent with [ADR 0001](../adr/0001-keep-the-sdk-a-thin-wrapper.md).
 - **Endpoint support is the server's business.** An OpenAI-*compatible* base URL is not assumed to implement `/responses`; a backend without the endpoint fails with its own HTTP error.
 
@@ -177,6 +177,6 @@ What this wrapper deliberately does not do on this path:
 
 Offline only — no credentials, no network:
 
-- `provider/openai/responses_test.go` — request round-trip across every documented union (including unmodeled item and tool types), the complete-response fixture (ordered items, all three hosted tools, reasoning, function-call exchange, annotations, logprobs, usage details, derived `OutputText`), failed/incomplete preservation, `httptest` non-streaming call (path, headers, forced non-stream, caller immutability), the full 53-event SSE sweep, typed payload dispatch with multi-line data and comments, unknown-event preservation, terminal `io.EOF`, idempotent `Close`, `error` event, malformed known event, invalid JSON, oversized-line scan failure, and structured/unstructured non-2xx bodies.
-- `provider/openai/roundtrip_test.go` — every exported Responses wire type survives marshal → unmarshal → marshal unchanged, and no exported type is left unclassified.
+- `openai/responses_test.go` — request round-trip across every documented union (including unmodeled item and tool types), the complete-response fixture (ordered items, all three hosted tools, reasoning, function-call exchange, annotations, logprobs, usage details, derived `OutputText`), failed/incomplete preservation, `httptest` non-streaming call (path, headers, forced non-stream, caller immutability), the full 53-event SSE sweep, typed payload dispatch with multi-line data and comments, unknown-event preservation, terminal `io.EOF`, idempotent `Close`, `error` event, malformed known event, invalid JSON, oversized-line scan failure, and structured/unstructured non-2xx bodies.
+- `openai/roundtrip_test.go` — every exported Responses wire type survives marshal → unmarshal → marshal unchanged, and no exported type is left unclassified.
 - `integrations/openai_tests/native_responses_test.go` — runnable examples, non-streaming and streaming, skipped without `OPENAI_API_KEY` / `OPENAI_MODEL`.

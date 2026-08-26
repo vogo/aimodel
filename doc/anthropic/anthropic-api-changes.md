@@ -39,7 +39,7 @@ Newest first.
 
 **Wrapper change**
 
-- **`provider/anthropic` is the entry point.** `anthropic.NewClient(apiKey, ...)` with `Messages` / `MessagesStream`; there is no unified client and no translation in front of them. Every Anthropic-specific surface is an ordinary field of the native types — `MessagesRequest.CacheControl` / `Container` / `InferenceGeo`, per-block and per-tool `cache_control`, `MessagesResponse.StopDetails` / `Container`, and the cache/server-tool/geography counts on `MessagesUsage`. Reasoning: [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md).
+- **`anthropic` is the entry point.** `anthropic.NewClient(apiKey, ...)` with `Messages` / `MessagesStream`; there is no unified client and no translation in front of them. Every Anthropic-specific surface is an ordinary field of the native types — `MessagesRequest.CacheControl` / `Container` / `InferenceGeo`, per-block and per-tool `cache_control`, `MessagesResponse.StopDetails` / `Container`, and the cache/server-tool/geography counts on `MessagesUsage`. Reasoning: [ADR 0002](../adr/0002-provider-native-as-the-only-public-interface.md).
 - **`MessageStream.Usage()` makes the two-part usage merge observable.** Anthropic reports a baseline on `message_start` and the final counts on the terminal `message_delta`; the merge is field-wise, so a terminal event carrying only `output_tokens` does not blank out the input, cache, geography, tier or server-tool numbers.
 - **`MessageStream.Message()`** returns the assembled message: content blocks in index order, text and thinking deltas concatenated, tool inputs reassembled from their partial-JSON fragments. `ResponseContentBlock.Raw` still holds each block as it first arrived.
 - **Unmodelled blocks are the response's own blocks.** A server-tool result or a future block type is an element of `MessagesResponse.Content` with its verbatim JSON in `Raw`.
@@ -58,7 +58,7 @@ None. This release exposes the already-audited 2026-07-21 Messages API baseline 
 
 **Wrapper change**
 
-`provider/anthropic` now exports `MessagesRequest`, `MessagesResponse`, their content/tool/thinking/output/cache/container/usage/error types, and all Messages SSE payload types. `NewClient` returns a `Client` with `Messages` and `MessagesStream`; these methods force the appropriate stream flag on a copy and apply no defaults of their own. Unknown native events retain their complete JSON payload. This does not add Batches, Files, Token Counting, retries, validation, or automatic beta enablement.
+`anthropic` now exports `MessagesRequest`, `MessagesResponse`, their content/tool/thinking/output/cache/container/usage/error types, and all Messages SSE payload types. `NewClient` returns a `Client` with `Messages` and `MessagesStream`; these methods force the appropriate stream flag on a copy and apply no defaults of their own. Unknown native events retain their complete JSON payload. This does not add Batches, Files, Token Counting, retries, validation, or automatic beta enablement.
 
 ## 2026-07-21 — `output_config`, usage extensions, `container`/`inference_geo`, tool fields, unknown-block preservation, profile header
 

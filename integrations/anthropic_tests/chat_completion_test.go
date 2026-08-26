@@ -15,36 +15,39 @@
  * limitations under the License.
  */
 
-package compose_tests
+package anthropic_tests
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"time"
+	"encoding/json"
+	"os"
+	"testing"
 
-	"github.com/vogo/aimodel/composes"
-	"github.com/vogo/aimodel/composes/openais"
+	"github.com/vogo/aimodel/anthropic"
 )
 
-func testFailover(entries []openais.ModelEntry) {
-	fmt.Println("=== Compose Failover ===")
-
-	cc, err := openais.NewComposeClient(composes.StrategyFailover, entries,
-		composes.WithRetryPolicy(time.Second, 2),
-		composes.WithRecoverTime(30*time.Second))
+func TestNativeMessages(t *testing.T) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	model := os.Getenv("ANTHROPIC_MODEL")
+	if apiKey == "" || model == "" {
+		t.Skip("ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required")
+	}
+	options := []anthropic.ClientOption{}
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		options = append(options, anthropic.WithBaseURL(baseURL))
+	}
+	response, err := anthropic.NewClient(apiKey, options...).Messages(context.Background(), &anthropic.MessagesRequest{
+		Model:     model,
+		MaxTokens: 64,
+		Messages: []anthropic.MessagesMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`"Say hello in one sentence."`),
+		}},
+	})
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
-
-	response, err := cc.ChatCompletions(context.Background(), helloRequest())
-	if err != nil {
-		log.Fatal(err)
+	if response.ID == "" {
+		t.Fatal("empty message id")
 	}
-
-	if len(response.Choices) == 0 {
-		log.Fatal("no choices in response")
-	}
-
-	fmt.Printf("[%s] %s\n", response.Model, response.Choices[0].Message.Content.Text())
 }

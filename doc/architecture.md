@@ -9,7 +9,6 @@ This document covers the **cross-cutting architecture**: what the SDK is for, wh
 | OpenAI Chat Completions: wire types, client, SSE, usage, errors, `ExtraBody` | [openai/openai-chat-api.md](./openai/openai-chat-api.md) |
 | OpenAI Responses: wire types, typed SSE events, hosted tools | [openai/openai-response-api.md](./openai/openai-response-api.md) |
 | Anthropic Messages: wire types, client, SSE events, usage merging, prompt caching | [anthropic/anthropic-message-api.md](./anthropic/anthropic-message-api.md) |
-| Multi-backend dispatch and health tracking | [design/compose.md](./design/compose.md) |
 
 The decisions behind this architecture are recorded in the [ADR index](./adr.md); [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md) is the one that shapes everything below.
 
@@ -23,29 +22,29 @@ aimodel is a **thin API wrapper**. Its responsibilities are strictly limited to 
 2. **Connection management** — HTTP client, timeouts, auth headers, SSE reading;
 3. **Response decoding** — decode that protocol's responses and stream events, losslessly.
 
-It **deliberately excludes** rate limiting, request validation, caching / persistence, and logging / metrics. Those belong to the caller or a framework above: putting them in the SDK introduces implicit behavior and costs the caller cannot control. Retry is excluded from the provider clients on the same grounds — one call, one HTTP request — with one bounded exception: `composes` retries an endpoint before judging it dead, because deciding that a backend is unusable is the whole job of that layer ([ADR 0004](./adr/0004-stateful-active-endpoint-with-in-call-retry.md)).
+It **deliberately excludes** rate limiting, request validation, caching / persistence, logging / metrics, and multi-backend routing. Those belong to the caller or a framework above ([vage/largemodel](https://github.com/vogo/vage) provides routed callers for agent applications). Provider clients perform one HTTP request per call with no retry ([ADR 0001](./adr/0001-keep-the-sdk-a-thin-wrapper.md)).
 
 Consequences that follow directly:
 
 - Open-string parameters (`ReasoningEffort`, `Model`, stop/finish reasons, tool types) are **not** enum-validated. Constants exist for convenience; a value the SDK has never heard of still reaches the backend.
 - Request structures carry no side-effecting state — a request value is safe to reuse, and a client never mutates the one it is given.
-- One call = one HTTP request. The multi-backend failover path is the only exception ([design/compose.md](./design/compose.md)).
+- One call = one HTTP request.
 
 ## 2. Two independent protocol clients
 
 There is no unified client and no shared request/response model. A caller picks a protocol by importing its package:
 
 ```
-  caller ──▶ provider/openai   ──▶ POST {baseURL}/chat/completions
+  caller ──▶ openai   ──▶ POST {baseURL}/chat/completions
          │                     └──▶ POST {baseURL}/responses
          │
-         ├──▶ provider/anthropic ──▶ POST {baseURL}/v1/messages
-         │
-         └──▶ composes ─┬─▶ composes/openais    ──▶ several OpenAI-compatible backends
-                        └─▶ composes/anthropics ──▶ several Anthropic backends
+         └──▶ anthropic ──▶ POST {baseURL}/v1/messages
 ```
 
-Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `provider/openai` and `provider/anthropic` import neither each other nor the root package, and no third package sits between them.
+Multi-backend routing (several endpoints, failover, health) lives in
+**[vage/largemodel](https://github.com/vogo/vage)** — not in this module.
+
+Each package owns its whole surface: client, options, wire types, SSE decoding, stream accumulation, usage and errors. `openai` and `anthropic` import neither each other nor the root package, and no third package sits between them.
 
 There is deliberately no vendor-neutral layer holding a shared schema for both protocols to translate to and from. Its one differentiating capability — delivering one request to either protocol — is needed nowhere here, while its admission rule ("a field is shared when ≥ 2 providers map it") keeps most of each vendor's API out of reach, and everything excluded has to travel through a `map[string]any` side channel. The reasoning, the evidence and the trade-offs accepted are in [ADR 0002](./adr/0002-provider-native-as-the-only-public-interface.md).
 
@@ -78,23 +77,19 @@ Applied consequences:
   }
   ```
 
-- **Routing mechanism may be shared; protocol semantics may not.** `composes` is a neutral routing core — the active endpoint, strategies, retries, health, aliases, attribution — whose entire interface is endpoint indices, opaque strings, scalars and closures. `composes/openais` and `composes/anthropics` bind it to their own wire types and never meet. The test to apply to any shared type: *if I add a field to it, does a provider package have to learn about it?* ([ADR 0003](./adr/0003-shared-routing-core-across-protocol-wrappers.md))
-
 ### 2.3 Guards
 
-The failure mode this architecture risks is gradual: duplicated helpers get factored into a shared package, and the shared package acquires a request type. Each step reads as reasonable, so the boundary is enforced by tests rather than by review (`dependency_test.go`, `provider/*/roundtrip_test.go`):
+The failure mode this architecture risks is gradual: duplicated helpers get factored into a shared package, and the shared package acquires a request type. Each step reads as reasonable, so the boundary is enforced by tests rather than by review (`dependency_test.go`, `openai/roundtrip_test.go`, `anthropic/roundtrip_test.go`):
 
 1. Providers import neither each other nor the root package.
 2. No package from this module is imported by both providers.
 3. Both `*HTTPError` types satisfy `interface { StatusCode() int }` (compile-time assertion).
-4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. `composes` is one of those packages; its two wrappers deliberately are not.
+4. Packages declared vendor-neutral declare no protocol-semantic identifier (`message`, `content`, `tool`, `usage`, `chat`, `prompt`, `token`, `choice`, `completion`), checked over the AST so comments and string literals cannot trip it. The root package is the only neutral package in this module.
 5. Every exported wire type round-trips losslessly, and every exported struct is either round-tripped or explicitly declared not to be a wire type.
-6. The routing core imports nothing from this module — not one provider, not two — and its exported API references no type from this module.
-7. The two compose wrappers import neither each other nor the other's provider, and neither imports the root package.
 
 ## 3. Provider packages
 
-### 3.1 `provider/openai`
+### 3.1 `openai`
 
 Serves OpenAI and every OpenAI-compatible backend, over two interaction forms:
 
@@ -118,7 +113,7 @@ client := openai.NewClient(apiKey,
 
 `NewClient` does not return an error: there is nothing left to validate at construction. `Model` is required on the request.
 
-### 3.2 `provider/anthropic`
+### 3.2 `anthropic`
 
 Serves the Messages API:
 
@@ -143,30 +138,16 @@ Both native streams accumulate while the caller reads. Every `Recv` folds its ev
 
 Before the stream ends both accessors return a live snapshot, in which a tool call's arguments may still be a partial JSON fragment. `Close` is idempotent and safe to call concurrently with `Recv`.
 
-## 4. `composes` and its wrappers
-
-Multi-backend dispatch is two layers. `composes` is the protocol-neutral routing core: the pool's single active endpoint, the five selection strategies that choose it, in-call exponential retries, the health machine on a fixed recovery timer (`available` / `dead` stored, `probation` derived for an endpoint the clock restored but nothing has confirmed), alias identity, capability filtering over opaque labels, attempt observers, `Stats()` snapshots and `MultiError` attribution. It sees no request, response or stream type — a wrapper hands it `Dispatch[T](ctx, router, call, attempt)` and owns everything protocol-shaped inside that closure.
-
-| Package | Pool | Methods |
-|---|---|---|
-| `composes/openais` | OpenAI-compatible backends | `ChatCompletions`, `ChatCompletionsStream`, `Responses`, `ResponsesStream` |
-| `composes/anthropics` | Anthropic backends | `Messages`, `MessagesStream` |
-
-`ModelEntry.Client` is the wrapper's own interface, satisfied by that provider's native client and by the wrapper's `*ComposeClient`, so pools nest. The two pools are disjoint: they share how a candidate is chosen and how health is recorded, never what a request is, so there is no cross-protocol failover. Details: [design/compose.md](./design/compose.md).
-
-## 5. Repository layout
+## 4. Repository layout
 
 | Path | Contents |
 |---|---|
 | Root package `aimodel` | Package clause and the module's architectural guard tests. Exports nothing |
-| `provider/openai/` | Chat Completions and Responses: client and options (`native.go`, `responses.go`), wire types (`wire.go`, `responses_wire.go`), typed stream events (`responses_events.go`), stream accumulation (`accumulate.go`), model and discriminator constants (`model.go`, `responses_const.go`) |
-| `provider/anthropic/` | Messages: client and options (`native.go`), wire types (`wire.go`), stream accumulation and usage merging (`accumulate.go`), model and discriminator constants (`model.go`, `const.go`) |
-| `composes/` | The neutral routing core: selection strategies (`strategy.go`), the two-state health machine (`health.go`), the active endpoint, retries and dispatch loop (`router.go`), endpoint metadata and capability filtering (`endpoint.go`), aggregate errors (`errors.go`) |
-| `composes/openais/` | OpenAI-wire wrapper: compose client and both interaction forms (`openais.go`), entries and declarative specs (`endpoint.go`), capability predicates (`capability.go`) |
-| `composes/anthropics/` | Anthropic-wire wrapper, same file layout |
+| `openai/` | Chat Completions and Responses: client and options (`native.go`, `responses.go`), wire types (`wire.go`, `responses_wire.go`), typed stream events (`responses_events.go`), stream accumulation (`accumulate.go`), model and discriminator constants (`model.go`, `responses_const.go`) |
+| `anthropic/` | Messages: client and options (`native.go`), wire types (`wire.go`), stream accumulation and usage merging (`accumulate.go`), model and discriminator constants (`model.go`, `const.go`) |
 | `integrations/` | Per-provider examples and offline integration tests |
 
-## 6. Maintenance convention
+## 5. Maintenance convention
 
 When an official API changes, update these in sync:
 
